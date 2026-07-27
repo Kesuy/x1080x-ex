@@ -126,7 +126,7 @@
     const title = parseThreadTitle(rawTitle);
     const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
     const content = firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost;
-    const attachmentLinks = content ? [...content.querySelectorAll('a[href*="mod=attachment"], a[href*="attachment.php"]')] : [];
+    const attachmentLinks = firstPost ? [...firstPost.querySelectorAll('a[href*="mod=attachment"], a[href*="attachment.php"]')] : [];
     const attachments = attachmentLinks.map((link) => ({
       url: absoluteUrl(document2, link.getAttribute("href")),
       sourceName: attachmentSourceName(link)

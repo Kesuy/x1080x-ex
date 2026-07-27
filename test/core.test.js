@@ -12,12 +12,12 @@ import {
 
 test('清理编号后的发布参数并保留正文中的括号', () => {
   const result = parseThreadTitle(
-    'SNOS-325 (HD1080P_60fps)(S1)(snos00325)スーパー絶倫（完全版）の暴走教師 桜乃りの'
+    'SNOS-325 (HD1080P_60fps)(S1)(snos00325)スーパー絶倫 (完全版) の暴走教師 桜乃りの'
   );
 
   assert.deepEqual(result, {
     code: 'SNOS-325',
-    cleanTitle: 'SNOS-325 スーパー絶倫（完全版）の暴走教師 桜乃りの',
+    cleanTitle: 'SNOS-325 スーパー絶倫 (完全版) の暴走教師 桜乃りの',
     hasExternalSubtitle: false,
   });
 });
@@ -55,8 +55,8 @@ test('只读取主楼附件并选择第二张正文图片的大图地址', () =>
           <img src="static/image/smiley.gif" class="smilie">
           <img id="aimg_1" class="zoom" src="data/attachment/forum/cover-thumb.jpg" zoomfile="data/attachment/forum/cover.jpg">
           <a href="data/attachment/forum/gallery-large.jpg"><img id="aimg_2" class="zoom" src="data/attachment/forum/gallery-thumb.jpg"></a>
-          <p class="attnm"><a href="forum.php?mod=attachment&aid=abc">snos00325.rar</a></p>
         </td></tr></table>
+        <div class="pattl"><p class="attnm"><a href="forum.php?mod=attachment&aid=abc">snos00325.rar</a></p></div>
       </div>
       <div id="post_101"><div class="t_f">
         <a href="forum.php?mod=attachment&aid=reply">reply.rar</a>
