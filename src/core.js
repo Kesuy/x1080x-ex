@@ -23,8 +23,36 @@ export function isAllowedHost(hostname, domains) {
   return domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
+export function triggerBrowserImageDownload(document, url, filename) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.rel = 'noopener';
+  link.style.display = 'none';
+  (document.body || document.documentElement).append(link);
+  link.click();
+  link.remove();
+}
+
 export function parseThreadTitle(rawTitle) {
   const normalized = String(rawTitle ?? '').replace(/\s+/g, ' ').trim();
+  let fc2Remainder = normalized;
+  let fc2Number = '';
+  while (/^\(([^)]*)\)\s*/u.test(fc2Remainder)) {
+    const groupMatch = fc2Remainder.match(/^\(([^)]*)\)\s*/u);
+    const numberMatch = groupMatch[1].match(/^fc(\d+)$/i);
+    if (numberMatch) fc2Number = numberMatch[1];
+    fc2Remainder = fc2Remainder.slice(groupMatch[0].length);
+  }
+  if (fc2Number) {
+    const code = `FC2-${fc2Number}`;
+    return {
+      code,
+      cleanTitle: `${code}${fc2Remainder ? ` ${fc2Remainder.trim()}` : ''}`,
+      hasExternalSubtitle: false,
+    };
+  }
+
   const codeMatch = normalized.match(CODE_PATTERN);
   if (!codeMatch) {
     return { code: '', cleanTitle: normalized, hasExternalSubtitle: false };
@@ -98,13 +126,22 @@ function isContentImage(image) {
   if (/\b(?:smilie|avatar|qqemoji)\b/i.test(className)) return false;
   if (/(?:static\/image\/(?:smiley|common)|uc_server\/avatar)/i.test(src)) return false;
   const parentHref = image.closest('a')?.getAttribute('href') || '';
+  const width = image.naturalWidth || image.width || Number(image.getAttribute('width')) || 0;
+  const height = image.naturalHeight || image.height || Number(image.getAttribute('height')) || 0;
   return Boolean(
     image.getAttribute('zoomfile') ||
     image.getAttribute('file') ||
     /^aimg_/i.test(image.id) ||
     /data\/attachment/i.test(src) ||
-    /\.(?:jpe?g|png|webp|gif)(?:[?#]|$)/i.test(parentHref)
+    /\.(?:jpe?g|png|webp|gif)(?:[?#]|$)/i.test(parentHref) ||
+    (width >= 200 && height >= 200)
   );
+}
+
+function imageSize(image) {
+  const width = image.naturalWidth || image.width || Number(image.getAttribute('width')) || 0;
+  const height = image.naturalHeight || image.height || Number(image.getAttribute('height')) || 0;
+  return { width, height, area: width * height };
 }
 
 function largeImageUrl(document, image) {
@@ -121,6 +158,27 @@ function largeImageUrl(document, image) {
     if (url) return url;
   }
   return '';
+}
+
+function cachedImageUrl(document, image) {
+  return absoluteUrl(
+    document,
+    image.currentSrc || image.getAttribute('src') || image.getAttribute('data-original')
+  );
+}
+
+function contentImages(document, content) {
+  if (!content) return [];
+  const seen = new Set();
+  return [...content.querySelectorAll('img')]
+    .filter(isContentImage)
+    .map((image, order) => ({
+      url: largeImageUrl(document, image),
+      cacheUrl: cachedImageUrl(document, image),
+      ...imageSize(image),
+      order,
+    }))
+    .filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
 }
 
 export function extractThreadResources(document) {
@@ -143,13 +201,18 @@ export function extractThreadResources(document) {
     }))
     .filter((attachment) => attachment.url);
 
-  const images = content ? [...content.querySelectorAll('img')].filter(isContentImage) : [];
-  const imageUrl = images.length >= 2 ? largeImageUrl(document, images[1]) : '';
+  const images = contentImages(document, content);
+  const largestImage = images.reduce((largest, image) => {
+    if (!largest) return image;
+    return image.area > largest.area ? image : largest;
+  }, null);
 
   return {
     title,
     attachments,
-    imageUrl,
+    images,
+    imageUrl: largestImage?.url || '',
+    imageCacheUrl: largestImage?.cacheUrl || '',
     imageFilename: title.code ? `${sanitizeFilename(title.code)}.jpg` : 'thread-image.jpg',
   };
 }
@@ -161,10 +224,24 @@ export function buildDownloadJobs(document) {
     url: attachment.url,
     name: buildAttachmentFilename(resources.title, attachment.sourceName),
   }));
+  if (resources.title.code.startsWith('FC2-')) {
+    const multipleImages = resources.images.length > 1;
+    resources.images.forEach((image, index) => {
+      const preferredUrl = image.cacheUrl || image.url;
+      jobs.push({
+        kind: 'image',
+        url: preferredUrl,
+        name: `${sanitizeFilename(resources.title.code)}${multipleImages ? ` (${index + 1})` : ''}.jpg`,
+      });
+    });
+    return jobs;
+  }
+
   if (resources.imageUrl) {
+    const preferredUrl = resources.imageCacheUrl || resources.imageUrl;
     jobs.push({
       kind: 'image',
-      url: resources.imageUrl,
+      url: preferredUrl,
       name: resources.imageFilename,
     });
   }

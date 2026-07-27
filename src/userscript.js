@@ -2,6 +2,7 @@ import {
   buildDownloadJobs,
   isAllowedHost,
   parseDomainList,
+  triggerBrowserImageDownload,
 } from './core.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
@@ -54,11 +55,11 @@ function isThreadPage() {
     || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
 }
 
-function download(job) {
+function gmDownload(url, name) {
   return new Promise((resolve, reject) => {
     GM_download({
-      url: job.url,
-      name: job.name,
+      url,
+      name,
       saveAs: false,
       headers: { Referer: location.href },
       onload: resolve,
@@ -68,10 +69,18 @@ function download(job) {
   });
 }
 
+async function download(job) {
+  if (job.kind === 'image') {
+    triggerBrowserImageDownload(document, job.url, job.name);
+    return;
+  }
+  await gmDownload(job.url, job.name);
+}
+
 async function downloadAll(button) {
   const jobs = buildDownloadJobs(document);
   if (!jobs.length) {
-    window.alert('主楼中没有找到附件或第二张正文图片。');
+    window.alert('主楼中没有找到附件或可下载图片。');
     return;
   }
 
@@ -107,7 +116,7 @@ function addDownloadButton() {
   button.id = BUTTON_ID;
   button.type = 'button';
   button.textContent = '⬇ 下载附件和主楼图片';
-  button.title = '下载主楼附件，并下载主楼第二张正文图片';
+  button.title = '下载主楼附件和正文大图；普通帖子取最大图，FC2 帖子取全部大图';
   Object.assign(button.style, {
     float: 'right',
     position: 'relative',

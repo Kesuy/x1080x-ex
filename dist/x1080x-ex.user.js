@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.0.0
-// @description  一键下载 x1080x/Discuz 主楼附件与第二张大图，并按番号和标题自动重命名
+// @version      1.1.0
+// @description  一键下载 x1080x/Discuz 主楼附件与大图，支持 FC2 多图及自动重命名
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues
@@ -34,8 +34,34 @@
     const host = String(hostname ?? "").toLowerCase().replace(/\.$/, "");
     return domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
   }
+  function triggerBrowserImageDownload(document2, url, filename) {
+    const link = document2.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener";
+    link.style.display = "none";
+    (document2.body || document2.documentElement).append(link);
+    link.click();
+    link.remove();
+  }
   function parseThreadTitle(rawTitle) {
     const normalized = String(rawTitle ?? "").replace(/\s+/g, " ").trim();
+    let fc2Remainder = normalized;
+    let fc2Number = "";
+    while (/^\(([^)]*)\)\s*/u.test(fc2Remainder)) {
+      const groupMatch = fc2Remainder.match(/^\(([^)]*)\)\s*/u);
+      const numberMatch = groupMatch[1].match(/^fc(\d+)$/i);
+      if (numberMatch) fc2Number = numberMatch[1];
+      fc2Remainder = fc2Remainder.slice(groupMatch[0].length);
+    }
+    if (fc2Number) {
+      const code2 = `FC2-${fc2Number}`;
+      return {
+        code: code2,
+        cleanTitle: `${code2}${fc2Remainder ? ` ${fc2Remainder.trim()}` : ""}`,
+        hasExternalSubtitle: false
+      };
+    }
     const codeMatch = normalized.match(CODE_PATTERN);
     if (!codeMatch) {
       return { code: "", cleanTitle: normalized, hasExternalSubtitle: false };
@@ -102,9 +128,16 @@
     if (/\b(?:smilie|avatar|qqemoji)\b/i.test(className)) return false;
     if (/(?:static\/image\/(?:smiley|common)|uc_server\/avatar)/i.test(src)) return false;
     const parentHref = image.closest("a")?.getAttribute("href") || "";
+    const width = image.naturalWidth || image.width || Number(image.getAttribute("width")) || 0;
+    const height = image.naturalHeight || image.height || Number(image.getAttribute("height")) || 0;
     return Boolean(
-      image.getAttribute("zoomfile") || image.getAttribute("file") || /^aimg_/i.test(image.id) || /data\/attachment/i.test(src) || /\.(?:jpe?g|png|webp|gif)(?:[?#]|$)/i.test(parentHref)
+      image.getAttribute("zoomfile") || image.getAttribute("file") || /^aimg_/i.test(image.id) || /data\/attachment/i.test(src) || /\.(?:jpe?g|png|webp|gif)(?:[?#]|$)/i.test(parentHref) || width >= 200 && height >= 200
     );
+  }
+  function imageSize(image) {
+    const width = image.naturalWidth || image.width || Number(image.getAttribute("width")) || 0;
+    const height = image.naturalHeight || image.height || Number(image.getAttribute("height")) || 0;
+    return { width, height, area: width * height };
   }
   function largeImageUrl(document2, image) {
     const parentHref = image.closest("a")?.getAttribute("href");
@@ -121,6 +154,22 @@
     }
     return "";
   }
+  function cachedImageUrl(document2, image) {
+    return absoluteUrl(
+      document2,
+      image.currentSrc || image.getAttribute("src") || image.getAttribute("data-original")
+    );
+  }
+  function contentImages(document2, content) {
+    if (!content) return [];
+    const seen = /* @__PURE__ */ new Set();
+    return [...content.querySelectorAll("img")].filter(isContentImage).map((image, order) => ({
+      url: largeImageUrl(document2, image),
+      cacheUrl: cachedImageUrl(document2, image),
+      ...imageSize(image),
+      order
+    })).filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
+  }
   function extractThreadResources(document2) {
     const rawTitle = document2.querySelector("#thread_subject")?.textContent || document2.querySelector("h1.ts, .vwthd h1, h1")?.textContent || document2.title;
     const title = parseThreadTitle(rawTitle);
@@ -131,12 +180,17 @@
       url: absoluteUrl(document2, link.getAttribute("href")),
       sourceName: attachmentSourceName(link)
     })).filter((attachment) => attachment.url);
-    const images = content ? [...content.querySelectorAll("img")].filter(isContentImage) : [];
-    const imageUrl = images.length >= 2 ? largeImageUrl(document2, images[1]) : "";
+    const images = contentImages(document2, content);
+    const largestImage = images.reduce((largest, image) => {
+      if (!largest) return image;
+      return image.area > largest.area ? image : largest;
+    }, null);
     return {
       title,
       attachments,
-      imageUrl,
+      images,
+      imageUrl: largestImage?.url || "",
+      imageCacheUrl: largestImage?.cacheUrl || "",
       imageFilename: title.code ? `${sanitizeFilename(title.code)}.jpg` : "thread-image.jpg"
     };
   }
@@ -147,10 +201,23 @@
       url: attachment.url,
       name: buildAttachmentFilename(resources.title, attachment.sourceName)
     }));
+    if (resources.title.code.startsWith("FC2-")) {
+      const multipleImages = resources.images.length > 1;
+      resources.images.forEach((image, index) => {
+        const preferredUrl = image.cacheUrl || image.url;
+        jobs.push({
+          kind: "image",
+          url: preferredUrl,
+          name: `${sanitizeFilename(resources.title.code)}${multipleImages ? ` (${index + 1})` : ""}.jpg`
+        });
+      });
+      return jobs;
+    }
     if (resources.imageUrl) {
+      const preferredUrl = resources.imageCacheUrl || resources.imageUrl;
       jobs.push({
         kind: "image",
-        url: resources.imageUrl,
+        url: preferredUrl,
         name: resources.imageFilename
       });
     }
@@ -203,11 +270,11 @@ ${domains.join("\n")}
     const url = new URL(location.href);
     return url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid") || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
   }
-  function download(job) {
+  function gmDownload(url, name) {
     return new Promise((resolve, reject) => {
       GM_download({
-        url: job.url,
-        name: job.name,
+        url,
+        name,
         saveAs: false,
         headers: { Referer: location.href },
         onload: resolve,
@@ -216,10 +283,17 @@ ${domains.join("\n")}
       });
     });
   }
+  async function download(job) {
+    if (job.kind === "image") {
+      triggerBrowserImageDownload(document, job.url, job.name);
+      return;
+    }
+    await gmDownload(job.url, job.name);
+  }
   async function downloadAll(button) {
     const jobs = buildDownloadJobs(document);
     if (!jobs.length) {
-      window.alert("\u4E3B\u697C\u4E2D\u6CA1\u6709\u627E\u5230\u9644\u4EF6\u6216\u7B2C\u4E8C\u5F20\u6B63\u6587\u56FE\u7247\u3002");
+      window.alert("\u4E3B\u697C\u4E2D\u6CA1\u6709\u627E\u5230\u9644\u4EF6\u6216\u53EF\u4E0B\u8F7D\u56FE\u7247\u3002");
       return;
     }
     button.disabled = true;
@@ -254,7 +328,7 @@ ${failures.join("\n")}
     button.id = BUTTON_ID;
     button.type = "button";
     button.textContent = "\u2B07 \u4E0B\u8F7D\u9644\u4EF6\u548C\u4E3B\u697C\u56FE\u7247";
-    button.title = "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\uFF0C\u5E76\u4E0B\u8F7D\u4E3B\u697C\u7B2C\u4E8C\u5F20\u6B63\u6587\u56FE\u7247";
+    button.title = "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\u548C\u6B63\u6587\u5927\u56FE\uFF1B\u666E\u901A\u5E16\u5B50\u53D6\u6700\u5927\u56FE\uFF0CFC2 \u5E16\u5B50\u53D6\u5168\u90E8\u5927\u56FE";
     Object.assign(button.style, {
       float: "right",
       position: "relative",
