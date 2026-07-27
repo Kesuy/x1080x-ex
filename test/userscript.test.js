@@ -3,15 +3,25 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 function installDomGlobals(window) {
-  const previous = new Map();
-  for (const name of ['window', 'document', 'location', 'URL', 'GM_getValue', 'GM_setValue', 'GM_registerMenuCommand', 'GM_download']) {
-    previous.set(name, globalThis[name]);
-  }
+  const names = [
+    'window', 'document', 'location', 'URL', 'Blob', 'FileReader', 'AbortController',
+    'GM_info', 'GM_getValue', 'GM_setValue', 'GM_registerMenuCommand',
+    'GM_xmlhttpRequest',
+  ];
+  const previous = new Map(names.map((name) => [name, globalThis[name]]));
 
   globalThis.window = window;
   globalThis.document = window.document;
   globalThis.location = window.location;
   globalThis.URL = window.URL;
+  globalThis.Blob = window.Blob;
+  globalThis.FileReader = window.FileReader;
+  globalThis.AbortController = window.AbortController;
+  globalThis.GM_info = {
+    downloadMode: 'default',
+    scriptHandler: 'Tampermonkey',
+    version: '5.5.0',
+  };
   globalThis.GM_getValue = (_key, fallback) => fallback;
   globalThis.GM_setValue = () => {};
   globalThis.GM_registerMenuCommand = () => {};
@@ -24,8 +34,8 @@ function installDomGlobals(window) {
   };
 }
 
-test('点击下载按钮后，Discuz X1.5 附件和图片都交给 GM_download，不触发页面链接导航', async () => {
-  const dom = new JSDOM(`
+function threadDom() {
+  return new JSDOM(`
     <h1 class="ts"><span id="thread_subject">ABCD-123 (HD1080P)(abcd00123)本文タイトル</span></h1>
     <div id="postlist"><div id="post_1">
       <div id="postmessage_1">
@@ -34,33 +44,200 @@ test('点击下载按钮后，Discuz X1.5 附件和图片都交给 GM_download�
       <div class="pattl"><a href="attachment.php?aid=encoded-x15-id">abcd00123.rar</a></div>
     </div></div>
   `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806' });
+}
+
+async function waitFor(predicate, message) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.fail(message);
+}
+
+test('附件和图片先请求 Blob，再用指定 download 文件名保存；跳转地址不改名且 Object URL 被回收', async () => {
+  const dom = threadDom();
   const restore = installDomGlobals(dom.window);
-  const calls = [];
-  globalThis.GM_download = (details) => {
-    calls.push(details);
-    queueMicrotask(() => details.onload?.());
+  const requests = [];
+  const saved = [];
+  const revoked = [];
+  let objectUrlIndex = 0;
+  dom.window.URL.createObjectURL = () => `blob:test-${++objectUrlIndex}`;
+  dom.window.URL.revokeObjectURL = (url) => revoked.push(url);
+  dom.window.HTMLAnchorElement.prototype.click = function click() {
+    saved.push({ href: this.href, name: this.download });
+  };
+  dom.window.fetch = async (url, details) => {
+    requests.push({ transport: 'fetch', url, ...details });
+    return {
+      status: 200,
+      url: 'https://agaghhh.cc/forum.php?mod=attachment&aid=redirected',
+      headers: new Map([
+        ['content-type', 'application/vnd.rar'],
+        ['content-disposition', 'attachment; filename="server-name.bin"'],
+      ]),
+      blob: async () => new dom.window.Blob(
+        [new Uint8Array([0x52, 0x61, 0x72, 0x21])],
+        { type: 'application/vnd.rar' }
+      ),
+    };
+  };
+  globalThis.GM_xmlhttpRequest = (details) => {
+    requests.push({ transport: 'gm', ...details });
+    const body = new Uint8Array([0xff, 0xd8, 0xff]);
+    queueMicrotask(() => details.onload({
+      status: 200,
+      finalUrl: details.url,
+      responseHeaders: 'Content-Type: image/jpeg\r\nContent-Disposition: attachment; filename="server-name.bin"',
+      response: new dom.window.Blob([body], { type: 'image/jpeg' }),
+    }));
   };
 
   try {
-    await import(`../src/userscript.js?test=${Date.now()}`);
+    await import(`../src/userscript.js?success=${Date.now()}`);
     const button = dom.window.document.querySelector('#x1080x-ex-download');
-    assert.ok(button, '帖子页应插入下载按钮');
-
+    assert.ok(button);
+    assert.equal(button.textContent, '⬇');
     button.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () => saved.length === 2 && revoked.length === 2,
+      'all Blob downloads should finish and revoke their Object URLs'
+    );
 
-    assert.deepEqual(calls.map(({ url, name }) => ({ url, name })), [
+    assert.deepEqual(requests.map(({
+      transport, method, url, responseType, timeout, anonymous, credentials, redirect,
+    }) => ({
+      transport, method, url, responseType, timeout, anonymous, credentials, redirect,
+    })), [
       {
+        transport: 'fetch',
+        method: 'GET',
         url: 'https://agaghhh.cc/attachment.php?aid=encoded-x15-id',
-        name: 'ABCD-123 本文タイトル.rar',
+        responseType: undefined,
+        timeout: undefined,
+        anonymous: undefined,
+        credentials: 'include',
+        redirect: 'follow',
       },
       {
+        transport: 'gm',
+        method: 'GET',
         url: 'https://agaghhh.cc/data/attachment/forum/cover.jpg',
-        name: 'ABCD-123.jpg',
+        responseType: 'blob',
+        timeout: 60000,
+        anonymous: undefined,
+        credentials: undefined,
+        redirect: undefined,
       },
     ]);
+    assert.deepEqual(saved, [
+      { href: 'blob:test-1', name: 'ABCD-123 本文タイトル.rar' },
+      { href: 'blob:test-2', name: 'ABCD-123.jpg' },
+    ]);
+    assert.deepEqual(revoked, ['blob:test-1', 'blob:test-2']);
     assert.equal(dom.window.location.href, 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806');
     assert.equal(dom.window.document.querySelector('a[download]'), null);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+test('附件返回登录 HTML 时拒绝保存并显示可操作原因', async () => {
+  const dom = threadDom();
+  const restore = installDomGlobals(dom.window);
+  const saved = [];
+  const alerts = [];
+  dom.window.URL.createObjectURL = () => {
+    saved.push('created');
+    return 'blob:should-not-exist';
+  };
+  dom.window.alert = (message) => alerts.push(message);
+  dom.window.fetch = async () => ({
+    status: 200,
+    url: 'https://agaghhh.cc/member.php?mod=logging&action=login',
+    headers: new Map([['content-type', 'text/html; charset=utf-8']]),
+    blob: async () => new dom.window.Blob(
+      ['<!doctype html><html><title>登录</title></html>'],
+      { type: 'text/html' }
+    ),
+  });
+  globalThis.GM_xmlhttpRequest = () => assert.fail('same-origin attachment should use page fetch');
+
+  try {
+    await import(`../src/userscript.js?html=${Date.now()}`);
+    dom.window.document.querySelector('#x1080x-ex-download').click();
+    await waitFor(() => alerts.length === 1, 'HTML rejection should show one failure summary');
+
+    assert.deepEqual(saved, []);
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /返回登录页/);
+    assert.match(alerts[0], /HTTP 200/);
+    assert.match(alerts[0], /Content-Type：text\/html/);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+test('网络请求失败时显示 error 和 details，但会脱敏 Cookie', async () => {
+  const dom = threadDom();
+  const restore = installDomGlobals(dom.window);
+  const alerts = [];
+  const errors = [];
+  dom.window.alert = (message) => alerts.push(message);
+  const originalConsoleError = console.error;
+  console.error = (...args) => errors.push(args);
+  dom.window.fetch = async () => {
+    const error = new Error('socket closed; Cookie=session-secret');
+    error.name = 'TypeError';
+    throw error;
+  };
+  globalThis.GM_xmlhttpRequest = () => assert.fail('same-origin attachment should use page fetch');
+
+  try {
+    await import(`../src/userscript.js?network=${Date.now()}`);
+    dom.window.document.querySelector('#x1080x-ex-download').click();
+    await waitFor(() => alerts.length === 1, 'network errors should show one failure summary');
+
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /error=TypeError/);
+    assert.match(alerts[0], /details=socket closed/);
+    assert.doesNotMatch(alerts[0], /session-secret/);
+    assert.doesNotMatch(JSON.stringify(errors), /session-secret/);
+  } finally {
+    console.error = originalConsoleError;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('GM_xmlhttpRequest 图片失败时保留 error 和 details 并脱敏 Cookie', async () => {
+  const dom = threadDom();
+  const restore = installDomGlobals(dom.window);
+  const alerts = [];
+  dom.window.alert = (message) => alerts.push(message);
+  dom.window.fetch = async () => ({
+    status: 200,
+    url: 'https://agaghhh.cc/attachment.php?aid=encoded-x15-id',
+    headers: new Map([['content-type', 'application/vnd.rar']]),
+    blob: async () => new dom.window.Blob(['Rar!'], { type: 'application/vnd.rar' }),
+  });
+  dom.window.URL.createObjectURL = () => 'blob:attachment';
+  dom.window.URL.revokeObjectURL = () => {};
+  dom.window.HTMLAnchorElement.prototype.click = () => {};
+  globalThis.GM_xmlhttpRequest = (details) => queueMicrotask(() => details.onerror({
+    error: 'xhr_failed',
+    details: 'socket closed; Cookie=session-secret',
+  }));
+
+  try {
+    await import(`../src/userscript.js?gm-network=${Date.now()}`);
+    dom.window.document.querySelector('#x1080x-ex-download').click();
+    await waitFor(() => alerts.length === 1, 'GM request errors should show one failure summary');
+
+    assert.match(alerts[0], /error=xhr_failed/);
+    assert.match(alerts[0], /details=socket closed/);
+    assert.doesNotMatch(alerts[0], /session-secret/);
   } finally {
     restore();
     dom.window.close();

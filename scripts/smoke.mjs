@@ -19,12 +19,54 @@ const dom = new JSDOM(`
 });
 
 const calls = [];
+const saved = [];
+const revoked = [];
 dom.window.GM_getValue = (_key, fallback) => fallback;
 dom.window.GM_setValue = () => {};
 dom.window.GM_registerMenuCommand = () => {};
-dom.window.GM_download = (details) => {
-  calls.push({ url: details.url, name: details.name });
-  queueMicrotask(() => details.onload?.());
+dom.window.GM_info = {
+  downloadMode: 'default',
+  scriptHandler: 'Tampermonkey',
+  version: '5.5.0',
+};
+dom.window.URL.createObjectURL = (blob) => {
+  const url = `blob:smoke-${calls.length}`;
+  calls.at(-1).blobSize = blob.size;
+  return url;
+};
+dom.window.URL.revokeObjectURL = (url) => revoked.push(url);
+dom.window.HTMLAnchorElement.prototype.click = function click() {
+  saved.push({ url: this.href, name: this.download });
+};
+dom.window.fetch = async (url, details) => {
+  calls.push({
+    transport: 'fetch',
+    method: details.method,
+    url,
+    credentials: details.credentials,
+    redirect: details.redirect,
+  });
+  return {
+    status: 200,
+    url: 'https://agaghhh.cc/forum.php?mod=attachment&aid=redirected',
+    headers: new Map([['content-type', 'application/vnd.rar']]),
+    blob: async () => new dom.window.Blob(['Rar!'], { type: 'application/vnd.rar' }),
+  };
+};
+dom.window.GM_xmlhttpRequest = (details) => {
+  calls.push({
+    transport: 'gm',
+    method: details.method,
+    url: details.url,
+    responseType: details.responseType,
+    anonymous: details.anonymous,
+  });
+  queueMicrotask(() => details.onload?.({
+    status: 200,
+    finalUrl: details.url,
+    responseHeaders: 'Content-Type: image/jpeg',
+    response: new dom.window.Blob(['jpg'], { type: 'image/jpeg' }),
+  }));
 };
 dom.window.alert = () => {};
 dom.window.prompt = () => null;
@@ -33,20 +75,37 @@ dom.window.eval(artifact);
 const button = dom.window.document.querySelector('#x1080x-ex-download');
 assert.ok(button, '构建产物应在 Discuz 帖子页插入下载按钮');
 button.click();
-await new Promise((resolve) => setTimeout(resolve, 0));
+for (let attempt = 0; attempt < 100 && (saved.length < 2 || revoked.length < 2); attempt += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+assert.equal(saved.length, 2, 'both Blob downloads should be saved');
+assert.equal(revoked.length, 2, 'both Object URLs should be revoked');
 
 assert.deepEqual(calls, [
   {
+    transport: 'fetch',
+    method: 'GET',
     url: 'https://agaghhh.cc/attachment.php?aid=encoded-x15-id',
-    name: 'ABCD-123 本文タイトル.rar',
+    credentials: 'include',
+    redirect: 'follow',
+    blobSize: 4,
   },
   {
+    transport: 'gm',
+    method: 'GET',
     url: 'https://agaghhh.cc/data/attachment/forum/cover.jpg',
-    name: 'ABCD-123.jpg',
+    responseType: 'blob',
+    anonymous: undefined,
+    blobSize: 3,
   },
 ]);
+assert.deepEqual(saved, [
+  { url: 'blob:smoke-1', name: 'ABCD-123 本文タイトル.rar' },
+  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },
+]);
+assert.deepEqual(revoked, ['blob:smoke-1', 'blob:smoke-2']);
 assert.equal(dom.window.location.href, 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806');
 assert.equal(dom.window.document.querySelector('a[download]'), null);
 
 dom.window.close();
-console.log('Built userscript smoke test passed: attachment and image use GM_download.');
+console.log('Built userscript smoke test passed: attachment and image use validated Blob downloads.');
