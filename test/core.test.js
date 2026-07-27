@@ -8,7 +8,6 @@ import {
   isAllowedHost,
   parseDomainList,
   parseThreadTitle,
-  triggerBrowserImageDownload,
 } from '../src/core.js';
 
 test('清理编号后的发布参数并保留正文中的括号', () => {
@@ -184,23 +183,4 @@ test('FC2 帖子下载主楼全部大图并按顺序编号', () => {
     { kind: 'image', url: 'https://agaghhh.cc/cached/fc2-b.jpg', name: 'FC2-4917072 (2).jpg' },
     { kind: 'image', url: 'https://agaghhh.cc/cached/fc2-c.jpg', name: 'FC2-4917072 (3).jpg' },
   ]);
-});
-
-test('已加载图片通过页面内 download 链接保存并清理临时节点', () => {
-  const dom = new JSDOM('<body></body>', { url: 'https://agaghhh.cc/' });
-  let clickedLink = null;
-  dom.window.document.addEventListener('click', (event) => {
-    event.preventDefault();
-    clickedLink = event.target;
-  });
-
-  triggerBrowserImageDownload(
-    dom.window.document,
-    'https://agaghhh.cc/data/attachment/loaded.jpg',
-    'FC2-4929786 (1).jpg'
-  );
-
-  assert.equal(clickedLink.href, 'https://agaghhh.cc/data/attachment/loaded.jpg');
-  assert.equal(clickedLink.download, 'FC2-4929786 (1).jpg');
-  assert.equal(dom.window.document.querySelector('a[download]'), null);
 });

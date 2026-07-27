@@ -3,8 +3,8 @@ import { build } from 'esbuild';
 const metadata = `// ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.1.0
-// @description  一键下载 x1080x/Discuz 主楼附件与大图，支持 FC2 多图及自动重命名
+// @version      1.1.1
+// @description  一键下载 x1080x/Discuz 主楼附件与大图，支持 Discuz X1.5、FC2 多图及自动重命名
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues

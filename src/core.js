@@ -23,17 +23,6 @@ export function isAllowedHost(hostname, domains) {
   return domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
-export function triggerBrowserImageDownload(document, url, filename) {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.rel = 'noopener';
-  link.style.display = 'none';
-  (document.body || document.documentElement).append(link);
-  link.click();
-  link.remove();
-}
-
 export function parseThreadTitle(rawTitle) {
   const normalized = String(rawTitle ?? '').replace(/\s+/g, ' ').trim();
   let fc2Remainder = normalized;

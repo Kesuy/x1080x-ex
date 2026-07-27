@@ -1,13 +1,14 @@
 {
   "name": "x1080x-ex",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "description": "x1080x 论坛附件与主楼图片下载增强油猴脚本",
   "scripts": {
     "test": "node --test",
     "build": "node scripts/build.mjs",
-    "check": "npm test && npm run build"
+    "smoke": "node scripts/smoke.mjs",
+    "check": "npm test && npm run build && npm run smoke"
   },
   "devDependencies": {
     "esbuild": ">=0.25.0 <0.26.0",

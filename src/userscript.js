@@ -2,7 +2,6 @@ import {
   buildDownloadJobs,
   isAllowedHost,
   parseDomainList,
-  triggerBrowserImageDownload,
 } from './core.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
@@ -70,10 +69,6 @@ function gmDownload(url, name) {
 }
 
 async function download(job) {
-  if (job.kind === 'image') {
-    triggerBrowserImageDownload(document, job.url, job.name);
-    return;
-  }
   await gmDownload(job.url, job.name);
 }
 

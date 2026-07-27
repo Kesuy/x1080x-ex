@@ -6,7 +6,7 @@
 
 - 下载**主楼附件**，不会误下载回复楼层的附件。
 - 普通帖子根据图片加载后的真实尺寸，下载主楼正文中**面积最大的图片**，不再固定选择第二张。
-- 图片优先使用网页已经加载的 `currentSrc/src`，通过页面内 `download` 链接保存，与右键“图片另存为”的逻辑一致，并可复用浏览器缓存。
+- 图片优先使用网页已经加载的 `currentSrc/src`，并与附件统一交给 Tampermonkey 的 `GM_download` 保存，避免页面内 `download` 链接被浏览器忽略后跳转到图片网址。
 - FC2 帖子下载主楼中的**全部有效大图**，排除表情、头像等小图。
 - 根据帖子标题删除番号之后、正文标题之前的发布参数：
   - `SNOS-325 (HD1080P_60fps)(S1)(snos00325)正文标题`
@@ -28,7 +28,7 @@
    **[安装 x1080x-ex](https://raw.githubusercontent.com/Kesuy/x1080x-ex/main/dist/x1080x-ex.user.js)**
 3. 打开帖子详情页，标题右侧会出现 **“⬇ 下载附件和主楼图片”** 按钮。
 
-> 附件使用 `GM_download`；图片使用当前页面已加载的地址直接保存。首次批量下载时，Tampermonkey 或浏览器可能会询问下载权限，请选择允许。
+> 附件和图片都使用 `GM_download` 保存到浏览器下载目录。首次批量下载时，Tampermonkey 或浏览器可能会询问下载权限，请选择允许。
 
 ## 网站更换域名时
 
@@ -68,6 +68,7 @@
 npm install
 npm test
 npm run build
+npm run smoke
 npm run check
 ```
 
