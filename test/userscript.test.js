@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { JSDOM } from 'jsdom';
 
 function installDomGlobals(window) {
@@ -238,6 +239,93 @@ test('GM_xmlhttpRequest 图片失败时保留 error 和 details 并脱敏 Cookie
     assert.match(alerts[0], /error=xhr_failed/);
     assert.match(alerts[0], /details=socket closed/);
     assert.doesNotMatch(alerts[0], /session-secret/);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+function integratedTorrentFixture() {
+  const infoBytes = new TextEncoder().encode('d4:name9:My Movie!e');
+  const torrentBytes = new TextEncoder().encode('d4:infod4:name9:My Movie!ee');
+  const hash = createHash('sha1').update(infoBytes).digest('hex').toUpperCase();
+  return { hash, torrentBytes };
+}
+
+test('内置种子下载按帖子标题保存且不修改原磁力脚本布局', async () => {
+  const { hash, torrentBytes } = integratedTorrentFixture();
+  const magnet = `magnet:?xt=urn:btih:${hash}&dn=FC2-PPV-4960963`;
+  const dom = new JSDOM(`
+    <h1 class="ts"><span id="thread_subject">FC2-PPV-4960963 [BT](FC2) 示例标题</span></h1>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">${magnet}</div></div></div>
+    <span id="original-mtt-layout" class="mtt-code-buttons" data-mtt-owned>
+      <a class="mtt-button" href="https://itorrents.net/torrent/${hash}.torrent" data-mtt-filename-support="1">📥 种子</a>
+    </span>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1057382' });
+  const restore = installDomGlobals(dom.window);
+  const originalLayout = dom.window.document.querySelector('#original-mtt-layout').outerHTML;
+  const saved = [];
+  dom.window.URL.createObjectURL = () => 'blob:integrated-torrent';
+  dom.window.URL.revokeObjectURL = () => {};
+  dom.window.HTMLAnchorElement.prototype.click = function click() {
+    if (this.download) saved.push({ href: this.href, name: this.download });
+  };
+  globalThis.GM_xmlhttpRequest = (details) => queueMicrotask(() => details.onload({
+    status: 200,
+    response: torrentBytes.buffer.slice(
+      torrentBytes.byteOffset,
+      torrentBytes.byteOffset + torrentBytes.byteLength
+    ),
+  }));
+
+  try {
+    await import(`../src/userscript.js?integrated-torrent=${Date.now()}`);
+    dom.window.document.querySelector('#x1080x-ex-download').click();
+    await waitFor(() => saved.length === 1, 'integrated torrent should be saved');
+
+    assert.deepEqual(saved, [{
+      href: 'blob:integrated-torrent',
+      name: 'FC2-4960963 示例标题.torrent',
+    }]);
+    assert.equal(
+      dom.window.document.querySelector('#original-mtt-layout').outerHTML,
+      originalLayout
+    );
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+test('没有安装磁力脚本时仍能独立下载并校验 torrent', async () => {
+  const { hash, torrentBytes } = integratedTorrentFixture();
+  const magnet = `magnet:?xt=urn:btih:${hash}&dn=FC2-PPV-4960963`;
+  const dom = new JSDOM(`
+    <h1 class="ts"><span id="thread_subject">FC2-PPV-4960963 [BT](FC2) 独立下载</span></h1>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">${magnet}</div></div></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1057382' });
+  const restore = installDomGlobals(dom.window);
+  const saved = [];
+  dom.window.URL.createObjectURL = () => 'blob:standalone-torrent';
+  dom.window.URL.revokeObjectURL = () => {};
+  dom.window.HTMLAnchorElement.prototype.click = function click() {
+    if (this.download) saved.push(this.download);
+  };
+  globalThis.GM_xmlhttpRequest = (details) => queueMicrotask(() => details.onload({
+    status: 200,
+    response: torrentBytes.buffer.slice(
+      torrentBytes.byteOffset,
+      torrentBytes.byteOffset + torrentBytes.byteLength
+    ),
+  }));
+
+  try {
+    await import(`../src/userscript.js?standalone-torrent=${Date.now()}`);
+    dom.window.document.querySelector('#x1080x-ex-download').click();
+    await waitFor(() => saved.length === 1, 'standalone torrent should be saved');
+
+    assert.deepEqual(saved, ['FC2-4960963 独立下载.torrent']);
+    assert.equal(dom.window.document.querySelector('.mtt-button'), null);
   } finally {
     restore();
     dom.window.close();

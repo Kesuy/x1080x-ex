@@ -3,6 +3,7 @@ import {
   isAllowedHost,
   parseDomainList,
 } from './core.js';
+import { requestTorrentBytes } from './torrent.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const DEFAULT_DOMAINS = 'agaghhh.cc';
@@ -234,6 +235,18 @@ function saveBlob(blob, name) {
 }
 
 async function download(job) {
+  if (job.kind === 'torrent') {
+    const result = await requestTorrentBytes(job.url);
+    saveBlob(new Blob([result.bytes], { type: 'application/x-bittorrent' }), job.name);
+    console.info('[x1080x-ex] integrated torrent download', {
+      name: job.name,
+      hash: result.hash,
+      torrentName: result.torrentName,
+      source: new URL(result.sourceUrl).hostname,
+      size: result.bytes.byteLength,
+    });
+    return;
+  }
   const result = await requestBlob(job);
   console.info('[x1080x-ex] response', {
     kind: job.kind,
@@ -290,7 +303,7 @@ function addDownloadButton() {
   button.id = BUTTON_ID;
   button.type = 'button';
   button.textContent = '⬇';
-  button.title = '下载主楼附件和正文大图；普通帖子取最大图，FC2 帖子取全部大图';
+  button.title = '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
   Object.assign(button.style, {
     float: 'right',
     position: 'relative',

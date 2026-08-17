@@ -1,10 +1,14 @@
 import { build } from 'esbuild';
+import { fileURLToPath } from 'node:url';
+
+const entryPoint = fileURLToPath(new URL('../src/userscript.js', import.meta.url));
+const outfile = fileURLToPath(new URL('../dist/x1080x-ex.user.js', import.meta.url));
 
 const metadata = `// ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.1.2
-// @description  一键下载 x1080x/Discuz 主楼附件与大图，支持 Discuz X1.5、FC2 多图及自动重命名
+// @version      1.3.0
+// @description  一键下载 x1080x/Discuz 主楼附件、大图与已校验磁力链种子，支持 FC2 自动重命名
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues
@@ -21,8 +25,8 @@ const metadata = `// ==UserScript==
 // ==/UserScript==`;
 
 await build({
-  entryPoints: ['src/userscript.js'],
-  outfile: 'dist/x1080x-ex.user.js',
+  entryPoints: [entryPoint],
+  outfile,
   bundle: true,
   format: 'iife',
   target: ['chrome100', 'firefox100'],

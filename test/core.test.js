@@ -161,6 +161,56 @@ test('FC2 标题从前置参数提取番号并生成附件文件名', () => {
   );
 });
 
+test('旧版 Discuz 的 FC2-PPV 标题提取番号并清理发布标签', () => {
+  const parsed = parseThreadTitle(
+    'FC2-PPV-4960963 [BT](FC2) 大久保公園カタログ 超有名嬢！立ったまま潮吹き撮影と鮮明畫像の秘貝を完全チェック～愛ちゃんの巻　第二弾～橋環奈似'
+  );
+
+  assert.deepEqual(parsed, {
+    code: 'FC2-4960963',
+    cleanTitle: 'FC2-4960963 大久保公園カタログ 超有名嬢！立ったまま潮吹き撮影と鮮明畫像の秘貝を完全チェック～愛ちゃんの巻 第二弾～橋環奈似',
+    hasExternalSubtitle: false,
+  });
+});
+
+test('FC2-PPV 页面生成指定 torrent 名和 A、B 图片名', () => {
+  const dom = new JSDOM(`
+    <span id="thread_subject">FC2-PPV-4960963 [BT](FC2) 大久保公園カタログ 超有名嬢！立ったまま潮吹き撮影と鮮明畫像の秘貝を完全チェック～愛ちゃんの巻　第二弾～橋環奈似</span>
+    <div id="postlist"><table id="post_2805886"><tbody><tr><td id="postmessage_2805886" class="t_f">
+      <img src="https://www.hxmmdd.com/pics/off_FC2-PPV-4960963.jpg" width="1200" height="943">
+      <img src="https://imgfor80.me/FC2-PPV-4960963_s.jpg" width="1200" height="907">
+      <div>下载地址：magnet:?xt=urn:btih:9611c19ab368f381c1e218a1b5d8716f7dff06e5&amp;dn=FC2-PPV-4960963</div>
+    </td></tr></tbody></table></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1057382' });
+
+  assert.deepEqual(buildDownloadJobs(dom.window.document), [
+    {
+      kind: 'torrent',
+      url: 'magnet:?xt=urn:btih:9611c19ab368f381c1e218a1b5d8716f7dff06e5&dn=FC2-PPV-4960963',
+      name: 'FC2-4960963 大久保公園カタログ 超有名嬢！立ったまま潮吹き撮影と鮮明畫像の秘貝を完全チェック～愛ちゃんの巻 第二弾～橋環奈似.torrent',
+    },
+    { kind: 'image', url: 'https://www.hxmmdd.com/pics/off_FC2-PPV-4960963.jpg', name: 'FC2-4960963 A.jpg' },
+    { kind: 'image', url: 'https://imgfor80.me/FC2-PPV-4960963_s.jpg', name: 'FC2-4960963 B.jpg' },
+  ]);
+});
+
+test('FC2-PPV 三张及以上图片从第二张开始使用 B1、B2 编号', () => {
+  const dom = new JSDOM(`
+    <span id="thread_subject">FC2-PPV-4960963 [BT](FC2) 示例标题</span>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">
+      <img src="/a.jpg" width="1200" height="900">
+      <img src="/b.jpg" width="1200" height="900">
+      <img src="/c.jpg" width="1200" height="900">
+    </div></div></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1057382' });
+
+  assert.deepEqual(buildDownloadJobs(dom.window.document).map((job) => job.name), [
+    'FC2-4960963 A.jpg',
+    'FC2-4960963 B1.jpg',
+    'FC2-4960963 B2.jpg',
+  ]);
+});
+
 test('FC2 帖子下载主楼全部大图并按顺序编号', () => {
   const dom = new JSDOM(`
     <span id="thread_subject">(HD1080P)(消された名作 D)(fc4917072)ハメ️羞恥と興奮でピンクのオマンコは大洪水️最後は初體験の顔射＆口內射精で恍惚の表情️ - FC2電子市場</span>
