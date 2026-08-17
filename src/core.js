@@ -1,5 +1,9 @@
 const CODE_PATTERN = /^([A-Z0-9]+-\d+)\s*/i;
 const SUBTITLE_TAG_PATTERN = /^\[(?:中文)?(?:外掛|外挂)字幕\]\s*/i;
+const DIRECT_FC2_PATTERN = /^FC2-(?:PPV-)?(\d+)\b\s*/i;
+const FC2_PPV_PATTERN = /^FC2-PPV-\d+\b/i;
+const FC2_RELEASE_TAG_PATTERN = /^(?:\[(?:BT|FC2|FC2HD)\]|\((?:BT|FC2|FC2HD)\))\s*/i;
+const MAGNET_PATTERN = /magnet:\?xt=urn:btih:[a-z0-9]+(?:&[^\s<>"']+)*/gi;
 
 export function parseDomainList(value) {
   const domains = String(value ?? '')
@@ -25,6 +29,20 @@ export function isAllowedHost(hostname, domains) {
 
 export function parseThreadTitle(rawTitle) {
   const normalized = String(rawTitle ?? '').replace(/\s+/g, ' ').trim();
+  const directFc2Match = normalized.match(DIRECT_FC2_PATTERN);
+  if (directFc2Match) {
+    const code = `FC2-${directFc2Match[1]}`;
+    let remainder = normalized.slice(directFc2Match[0].length).trimStart();
+    while (FC2_RELEASE_TAG_PATTERN.test(remainder)) {
+      remainder = remainder.replace(FC2_RELEASE_TAG_PATTERN, '');
+    }
+    return {
+      code,
+      cleanTitle: `${code}${remainder ? ` ${remainder.trim()}` : ''}`,
+      hasExternalSubtitle: false,
+    };
+  }
+
   let fc2Remainder = normalized;
   let fc2Number = '';
   while (/^\(([^)]*)\)\s*/u.test(fc2Remainder)) {
@@ -170,6 +188,23 @@ function contentImages(document, content) {
     .filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
 }
 
+function contentMagnets(content) {
+  const matches = String(content?.textContent ?? '').match(MAGNET_PATTERN) || [];
+  return [...new Set(matches.map((value) => value.replace(/[),.;，。；]+$/u, '')))];
+}
+
+function isFc2PpvTitle(rawTitle) {
+  return FC2_PPV_PATTERN.test(String(rawTitle ?? '').replace(/\s+/g, ' ').trim());
+}
+
+function fc2ImageFilename(code, index, total, useAbNames) {
+  const safeCode = sanitizeFilename(code);
+  if (!useAbNames) return `${safeCode}${total > 1 ? ` (${index + 1})` : ''}.jpg`;
+  if (index === 0) return `${safeCode} A.jpg`;
+  if (total === 2) return `${safeCode} B.jpg`;
+  return `${safeCode} B${index}.jpg`;
+}
+
 export function extractThreadResources(document) {
   const rawTitle = document.querySelector('#thread_subject')?.textContent
     || document.querySelector('h1.ts, .vwthd h1, h1')?.textContent
@@ -191,6 +226,7 @@ export function extractThreadResources(document) {
     .filter((attachment) => attachment.url);
 
   const images = contentImages(document, content);
+  const magnets = contentMagnets(content);
   const largestImage = images.reduce((largest, image) => {
     if (!largest) return image;
     return image.area > largest.area ? image : largest;
@@ -200,6 +236,8 @@ export function extractThreadResources(document) {
     title,
     attachments,
     images,
+    magnets,
+    useFc2AbImageNames: isFc2PpvTitle(rawTitle),
     imageUrl: largestImage?.url || '',
     imageCacheUrl: largestImage?.cacheUrl || '',
     imageFilename: title.code ? `${sanitizeFilename(title.code)}.jpg` : 'thread-image.jpg',
@@ -208,19 +246,28 @@ export function extractThreadResources(document) {
 
 export function buildDownloadJobs(document) {
   const resources = extractThreadResources(document);
-  const jobs = resources.attachments.map((attachment) => ({
+  const jobs = resources.magnets.map((magnet) => ({
+    kind: 'torrent',
+    url: magnet,
+    name: `${sanitizeFilename(resources.title.cleanTitle || resources.title.code || 'download')}.torrent`,
+  }));
+  jobs.push(...resources.attachments.map((attachment) => ({
     kind: 'attachment',
     url: attachment.url,
     name: buildAttachmentFilename(resources.title, attachment.sourceName),
-  }));
+  })));
   if (resources.title.code.startsWith('FC2-')) {
-    const multipleImages = resources.images.length > 1;
     resources.images.forEach((image, index) => {
       const preferredUrl = image.cacheUrl || image.url;
       jobs.push({
         kind: 'image',
         url: preferredUrl,
-        name: `${sanitizeFilename(resources.title.code)}${multipleImages ? ` (${index + 1})` : ''}.jpg`,
+        name: fc2ImageFilename(
+          resources.title.code,
+          index,
+          resources.images.length,
+          resources.useFc2AbImageNames
+        ),
       });
     });
     return jobs;

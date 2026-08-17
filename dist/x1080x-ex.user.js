@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.1.2
-// @description  一键下载 x1080x/Discuz 主楼附件与大图，支持 Discuz X1.5、FC2 多图及自动重命名
+// @version      1.3.0
+// @description  一键下载 x1080x/Discuz 主楼附件、大图与已校验磁力链种子，支持 FC2 自动重命名
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues
@@ -21,6 +21,10 @@
   // src/core.js
   var CODE_PATTERN = /^([A-Z0-9]+-\d+)\s*/i;
   var SUBTITLE_TAG_PATTERN = /^\[(?:中文)?(?:外掛|外挂)字幕\]\s*/i;
+  var DIRECT_FC2_PATTERN = /^FC2-(?:PPV-)?(\d+)\b\s*/i;
+  var FC2_PPV_PATTERN = /^FC2-PPV-\d+\b/i;
+  var FC2_RELEASE_TAG_PATTERN = /^(?:\[(?:BT|FC2|FC2HD)\]|\((?:BT|FC2|FC2HD)\))\s*/i;
+  var MAGNET_PATTERN = /magnet:\?xt=urn:btih:[a-z0-9]+(?:&[^\s<>"']+)*/gi;
   function parseDomainList(value) {
     const domains = String(value ?? "").split(/[\s,;，；]+/).map((entry) => entry.trim()).filter(Boolean).map((entry) => {
       try {
@@ -37,6 +41,19 @@
   }
   function parseThreadTitle(rawTitle) {
     const normalized = String(rawTitle ?? "").replace(/\s+/g, " ").trim();
+    const directFc2Match = normalized.match(DIRECT_FC2_PATTERN);
+    if (directFc2Match) {
+      const code2 = `FC2-${directFc2Match[1]}`;
+      let remainder2 = normalized.slice(directFc2Match[0].length).trimStart();
+      while (FC2_RELEASE_TAG_PATTERN.test(remainder2)) {
+        remainder2 = remainder2.replace(FC2_RELEASE_TAG_PATTERN, "");
+      }
+      return {
+        code: code2,
+        cleanTitle: `${code2}${remainder2 ? ` ${remainder2.trim()}` : ""}`,
+        hasExternalSubtitle: false
+      };
+    }
     let fc2Remainder = normalized;
     let fc2Number = "";
     while (/^\(([^)]*)\)\s*/u.test(fc2Remainder)) {
@@ -161,6 +178,20 @@
       order
     })).filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
   }
+  function contentMagnets(content) {
+    const matches = String(content?.textContent ?? "").match(MAGNET_PATTERN) || [];
+    return [...new Set(matches.map((value) => value.replace(/[),.;，。；]+$/u, "")))];
+  }
+  function isFc2PpvTitle(rawTitle) {
+    return FC2_PPV_PATTERN.test(String(rawTitle ?? "").replace(/\s+/g, " ").trim());
+  }
+  function fc2ImageFilename(code, index, total, useAbNames) {
+    const safeCode = sanitizeFilename(code);
+    if (!useAbNames) return `${safeCode}${total > 1 ? ` (${index + 1})` : ""}.jpg`;
+    if (index === 0) return `${safeCode} A.jpg`;
+    if (total === 2) return `${safeCode} B.jpg`;
+    return `${safeCode} B${index}.jpg`;
+  }
   function extractThreadResources(document2) {
     const rawTitle = document2.querySelector("#thread_subject")?.textContent || document2.querySelector("h1.ts, .vwthd h1, h1")?.textContent || document2.title;
     const title = parseThreadTitle(rawTitle);
@@ -172,6 +203,7 @@
       sourceName: attachmentSourceName(link)
     })).filter((attachment) => attachment.url);
     const images = contentImages(document2, content);
+    const magnets = contentMagnets(content);
     const largestImage = images.reduce((largest, image) => {
       if (!largest) return image;
       return image.area > largest.area ? image : largest;
@@ -180,6 +212,8 @@
       title,
       attachments,
       images,
+      magnets,
+      useFc2AbImageNames: isFc2PpvTitle(rawTitle),
       imageUrl: largestImage?.url || "",
       imageCacheUrl: largestImage?.cacheUrl || "",
       imageFilename: title.code ? `${sanitizeFilename(title.code)}.jpg` : "thread-image.jpg"
@@ -187,19 +221,28 @@
   }
   function buildDownloadJobs(document2) {
     const resources = extractThreadResources(document2);
-    const jobs = resources.attachments.map((attachment) => ({
+    const jobs = resources.magnets.map((magnet) => ({
+      kind: "torrent",
+      url: magnet,
+      name: `${sanitizeFilename(resources.title.cleanTitle || resources.title.code || "download")}.torrent`
+    }));
+    jobs.push(...resources.attachments.map((attachment) => ({
       kind: "attachment",
       url: attachment.url,
       name: buildAttachmentFilename(resources.title, attachment.sourceName)
-    }));
+    })));
     if (resources.title.code.startsWith("FC2-")) {
-      const multipleImages = resources.images.length > 1;
       resources.images.forEach((image, index) => {
         const preferredUrl = image.cacheUrl || image.url;
         jobs.push({
           kind: "image",
           url: preferredUrl,
-          name: `${sanitizeFilename(resources.title.code)}${multipleImages ? ` (${index + 1})` : ""}.jpg`
+          name: fc2ImageFilename(
+            resources.title.code,
+            index,
+            resources.images.length,
+            resources.useFc2AbImageNames
+          )
         });
       });
       return jobs;
@@ -213,6 +256,262 @@
       });
     }
     return jobs;
+  }
+
+  // src/torrent.js
+  var TORRENT_SOURCES = Object.freeze([
+    (hash) => `https://itorrents.net/torrent/${hash}.torrent`,
+    (hash) => `https://torrage.info/torrent/${hash}.torrent`,
+    (hash) => `https://itorrents.org/torrent/${hash}.torrent`
+  ]);
+  var BTIH_PATTERN = /urn:btih:([a-f\d]{40}|[a-z2-7]{32})/i;
+  var BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  function decodeSafely(value) {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+  function normalizeBtih(rawHash) {
+    const hash = String(rawHash ?? "").trim().toUpperCase();
+    if (/^[A-F\d]{40}$/.test(hash)) return hash;
+    if (!/^[A-Z2-7]{32}$/.test(hash)) return "";
+    let bits = "";
+    for (const character of hash) {
+      bits += BASE32.indexOf(character).toString(2).padStart(5, "0");
+    }
+    let hex = "";
+    for (let index = 0; index < bits.length; index += 8) {
+      hex += Number.parseInt(bits.slice(index, index + 8), 2).toString(16).padStart(2, "0");
+    }
+    return hex.toUpperCase();
+  }
+  function extractBtih(value) {
+    const match = decodeSafely(String(value ?? "")).match(BTIH_PATTERN);
+    return match ? normalizeBtih(match[1]) : "";
+  }
+  function parseBencode(input) {
+    const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+    const decoder = new TextDecoder();
+    let offset = 0;
+    function parseBytes() {
+      const lengthStart = offset;
+      while (offset < bytes.length && bytes[offset] >= 48 && bytes[offset] <= 57) offset += 1;
+      if (offset === lengthStart || bytes[offset] !== 58) throw new Error("\u65E0\u6548\u7684 bencode \u5B57\u7B26\u4E32");
+      const length = Number.parseInt(decoder.decode(bytes.subarray(lengthStart, offset)), 10);
+      offset += 1;
+      const end = offset + length;
+      if (!Number.isSafeInteger(length) || length < 0 || end > bytes.length) {
+        throw new Error("bencode \u5B57\u7B26\u4E32\u957F\u5EA6\u8D8A\u754C");
+      }
+      const value = bytes.subarray(offset, end);
+      offset = end;
+      return value;
+    }
+    function parseValue(depth = 0) {
+      if (depth > 100 || offset >= bytes.length) throw new Error("\u65E0\u6548\u7684 bencode \u6570\u636E");
+      const token = bytes[offset];
+      if (token >= 48 && token <= 57) return parseBytes();
+      if (token === 105) {
+        offset += 1;
+        const start = offset;
+        while (offset < bytes.length && bytes[offset] !== 101) offset += 1;
+        if (offset >= bytes.length) throw new Error("\u672A\u7ED3\u675F\u7684 bencode \u6574\u6570");
+        const value = Number.parseInt(decoder.decode(bytes.subarray(start, offset)), 10);
+        offset += 1;
+        if (!Number.isSafeInteger(value)) throw new Error("\u65E0\u6548\u7684 bencode \u6574\u6570");
+        return value;
+      }
+      if (token === 108) {
+        offset += 1;
+        const list = [];
+        while (offset < bytes.length && bytes[offset] !== 101) list.push(parseValue(depth + 1));
+        if (offset >= bytes.length) throw new Error("\u672A\u7ED3\u675F\u7684 bencode \u5217\u8868");
+        offset += 1;
+        return list;
+      }
+      if (token === 100) {
+        offset += 1;
+        const dictionary = /* @__PURE__ */ Object.create(null);
+        while (offset < bytes.length && bytes[offset] !== 101) {
+          const key = decoder.decode(parseBytes());
+          dictionary[key] = parseValue(depth + 1);
+        }
+        if (offset >= bytes.length) throw new Error("\u672A\u7ED3\u675F\u7684 bencode \u5B57\u5178");
+        offset += 1;
+        return dictionary;
+      }
+      throw new Error("\u672A\u77E5\u7684 bencode \u7C7B\u578B");
+    }
+    const result = parseValue();
+    if (offset !== bytes.length) throw new Error("bencode \u6570\u636E\u5C3E\u90E8\u5B58\u5728\u591A\u4F59\u5185\u5BB9");
+    return result;
+  }
+  function parseTorrentName(input) {
+    const root = parseBencode(input);
+    const rawName = root?.info?.["name.utf-8"] || root?.info?.name;
+    if (!(rawName instanceof Uint8Array)) throw new Error("torrent \u4E2D\u7F3A\u5C11 info.name");
+    const name = new TextDecoder("utf-8").decode(rawName).replace(/\0/g, "").trim();
+    if (!name) throw new Error("torrent \u540D\u79F0\u4E3A\u7A7A");
+    return name;
+  }
+  function extractInfoBytes(input) {
+    const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+    const decoder = new TextDecoder();
+    let offset = 0;
+    function skipBytes() {
+      const start = offset;
+      while (offset < bytes.length && bytes[offset] >= 48 && bytes[offset] <= 57) offset += 1;
+      if (offset === start || bytes[offset] !== 58) throw new Error("\u65E0\u6548\u7684 bencode \u5B57\u7B26\u4E32");
+      const length = Number.parseInt(decoder.decode(bytes.subarray(start, offset)), 10);
+      offset += 1 + length;
+      if (!Number.isSafeInteger(length) || length < 0 || offset > bytes.length) {
+        throw new Error("bencode \u5B57\u7B26\u4E32\u957F\u5EA6\u8D8A\u754C");
+      }
+    }
+    function skipValue(depth = 0) {
+      if (depth > 100 || offset >= bytes.length) throw new Error("\u65E0\u6548\u7684 bencode \u6570\u636E");
+      const token = bytes[offset];
+      if (token >= 48 && token <= 57) {
+        skipBytes();
+      } else if (token === 105) {
+        offset = bytes.indexOf(101, offset + 1);
+        if (offset < 0) throw new Error("\u672A\u7ED3\u675F\u7684 bencode \u6574\u6570");
+        offset += 1;
+      } else if (token === 108 || token === 100) {
+        offset += 1;
+        while (offset < bytes.length && bytes[offset] !== 101) {
+          if (token === 100) skipBytes();
+          skipValue(depth + 1);
+        }
+        if (offset >= bytes.length) throw new Error("\u672A\u7ED3\u675F\u7684 bencode \u5BB9\u5668");
+        offset += 1;
+      } else {
+        throw new Error("\u672A\u77E5\u7684 bencode \u7C7B\u578B");
+      }
+    }
+    if (bytes[offset] !== 100) throw new Error("torrent \u6839\u8282\u70B9\u4E0D\u662F\u5B57\u5178");
+    offset += 1;
+    while (offset < bytes.length && bytes[offset] !== 101) {
+      const keyStart = offset;
+      skipBytes();
+      const colon = bytes.indexOf(58, keyStart);
+      const key = decoder.decode(bytes.subarray(colon + 1, offset));
+      const valueStart = offset;
+      skipValue(1);
+      if (key === "info") return bytes.subarray(valueStart, offset);
+    }
+    throw new Error("torrent \u4E2D\u7F3A\u5C11 info \u5B57\u5178");
+  }
+  function sha1Hex(input) {
+    const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+    const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;
+    const padded = new Uint8Array(paddedLength);
+    padded.set(bytes);
+    padded[bytes.length] = 128;
+    const view = new DataView(padded.buffer);
+    const bitLength = bytes.length * 8;
+    view.setUint32(paddedLength - 8, Math.floor(bitLength / 4294967296));
+    view.setUint32(paddedLength - 4, bitLength >>> 0);
+    let h0 = 1732584193;
+    let h1 = 4023233417;
+    let h2 = 2562383102;
+    let h3 = 271733878;
+    let h4 = 3285377520;
+    const words = new Uint32Array(80);
+    const rotateLeft = (value, bits) => value << bits | value >>> 32 - bits;
+    for (let chunk = 0; chunk < paddedLength; chunk += 64) {
+      for (let index = 0; index < 16; index += 1) words[index] = view.getUint32(chunk + index * 4);
+      for (let index = 16; index < 80; index += 1) {
+        words[index] = rotateLeft(
+          words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16],
+          1
+        ) >>> 0;
+      }
+      let a = h0;
+      let b = h1;
+      let c = h2;
+      let d = h3;
+      let e = h4;
+      for (let index = 0; index < 80; index += 1) {
+        let f;
+        let k;
+        if (index < 20) {
+          f = b & c | ~b & d;
+          k = 1518500249;
+        } else if (index < 40) {
+          f = b ^ c ^ d;
+          k = 1859775393;
+        } else if (index < 60) {
+          f = b & c | b & d | c & d;
+          k = 2400959708;
+        } else {
+          f = b ^ c ^ d;
+          k = 3395469782;
+        }
+        const temporary = rotateLeft(a, 5) + f + e + k + words[index] >>> 0;
+        e = d;
+        d = c;
+        c = rotateLeft(b, 30) >>> 0;
+        b = a;
+        a = temporary;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4].map((value) => value.toString(16).padStart(8, "0")).join("").toUpperCase();
+  }
+  function verifyTorrentHash(input, expectedHash) {
+    const actualHash = sha1Hex(extractInfoBytes(input));
+    if (actualHash !== String(expectedHash).toUpperCase()) {
+      throw new Error(`torrent infohash \u4E0D\u5339\u914D\uFF08\u671F\u671B ${expectedHash}\uFF0C\u5B9E\u9645 ${actualHash}\uFF09`);
+    }
+    return true;
+  }
+  function requestTorrentUrl(url, gmRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      gmRequest({
+        method: "GET",
+        url,
+        responseType: "arraybuffer",
+        timeout: 3e4,
+        anonymous: true,
+        onload(response) {
+          if (response.status < 200 || response.status >= 300 || !response.response) {
+            reject(new Error(`\u4E0B\u8F7D torrent \u5931\u8D25\uFF08HTTP ${response.status}\uFF09`));
+            return;
+          }
+          resolve(new Uint8Array(response.response));
+        },
+        onerror: () => reject(new Error("\u4E0B\u8F7D torrent \u65F6\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF")),
+        ontimeout: () => reject(new Error("\u4E0B\u8F7D torrent \u8D85\u65F6"))
+      });
+    });
+  }
+  async function requestTorrentBytes(magnet, gmRequest = globalThis.GM_xmlhttpRequest) {
+    const hash = extractBtih(magnet);
+    if (!hash) throw new Error("\u78C1\u529B\u94FE\u4E2D\u6CA1\u6709\u6709\u6548\u7684 BTIH");
+    const errors = [];
+    for (const buildUrl of TORRENT_SOURCES) {
+      const url = buildUrl(hash);
+      try {
+        const bytes = await requestTorrentUrl(url, gmRequest);
+        const torrentName = parseTorrentName(bytes);
+        verifyTorrentHash(bytes, hash);
+        return { bytes, hash, torrentName, sourceUrl: url };
+      } catch (error) {
+        errors.push(`${new URL(url).hostname}: ${error?.message || error}`);
+      }
+    }
+    throw new Error(`\u6240\u6709 torrent \u7F13\u5B58\u6E90\u5747\u4E0D\u53EF\u7528\uFF1A${errors.join("\uFF1B")}`);
   }
 
   // src/userscript.js
@@ -420,6 +719,18 @@ ${domains.join("\n")}
     }
   }
   async function download(job) {
+    if (job.kind === "torrent") {
+      const result2 = await requestTorrentBytes(job.url);
+      saveBlob(new Blob([result2.bytes], { type: "application/x-bittorrent" }), job.name);
+      console.info("[x1080x-ex] integrated torrent download", {
+        name: job.name,
+        hash: result2.hash,
+        torrentName: result2.torrentName,
+        source: new URL(result2.sourceUrl).hostname,
+        size: result2.bytes.byteLength
+      });
+      return;
+    }
     const result = await requestBlob(job);
     console.info("[x1080x-ex] response", {
       kind: job.kind,
@@ -474,7 +785,7 @@ ${failures.join("\n")}
     button.id = BUTTON_ID;
     button.type = "button";
     button.textContent = "\u2B07";
-    button.title = "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\u548C\u6B63\u6587\u5927\u56FE\uFF1B\u666E\u901A\u5E16\u5B50\u53D6\u6700\u5927\u56FE\uFF0CFC2 \u5E16\u5B50\u53D6\u5168\u90E8\u5927\u56FE";
+    button.title = "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\u3001\u6B63\u6587\u5927\u56FE\u548C\u78C1\u529B\u94FE\u79CD\u5B50\uFF1B\u666E\u901A\u5E16\u5B50\u53D6\u6700\u5927\u56FE\uFF0CFC2 \u5E16\u5B50\u53D6\u5168\u90E8\u5927\u56FE";
     Object.assign(button.style, {
       float: "right",
       position: "relative",
