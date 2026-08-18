@@ -211,6 +211,37 @@ test('FC2-PPV 三张及以上图片从第二张开始使用 B1、B2 编号', () 
   ]);
 });
 
+test('MGS BT 页面清理发布参数并使用正文标题命名 torrent', () => {
+  const fullTitle = '300MIUM-1407 [BT](MGS)(300MIUM-1407) 【美腳同期をNTR】美人同期に甘やかされる密會W不倫。普段は凜としたシゴデキ美女がイキ潮を噴きながらどスケ';
+  const cleanTitle = '300MIUM-1407 【美腳同期をNTR】美人同期に甘やかされる密會W不倫。普段は凜としたシゴデキ美女がイキ潮を噴きながらどスケ';
+  const dom = new JSDOM(`
+    <span id="thread_subject">${fullTitle}</span>
+    <div id="postlist"><table id="post_2803354"><tbody><tr><td id="postmessage_2803354" class="t_f">
+      <img src="https://www.hxmmdd.com/pics/off/2026/202608/20260805/off_300MIUM-1407.jpg" width="1200" height="674">
+      <img src="https://imgfor80.me/images/2026/08/05/300MIUM-1407_s.jpg" width="1200" height="907">
+      <div>下載地址：magnet:?xt=urn:btih:46d61f800c07c6ef8b0ab9d1bb163c83c4c725ce&amp;dn=300MIUM-1407</div>
+    </td></tr></tbody></table></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1054994' });
+
+  assert.deepEqual(parseThreadTitle(fullTitle), {
+    code: '300MIUM-1407',
+    cleanTitle,
+    hasExternalSubtitle: false,
+  });
+  assert.deepEqual(buildDownloadJobs(dom.window.document), [
+    {
+      kind: 'torrent',
+      url: 'magnet:?xt=urn:btih:46d61f800c07c6ef8b0ab9d1bb163c83c4c725ce&dn=300MIUM-1407',
+      name: `${cleanTitle}.torrent`,
+    },
+    {
+      kind: 'image',
+      url: 'https://imgfor80.me/images/2026/08/05/300MIUM-1407_s.jpg',
+      name: '300MIUM-1407.jpg',
+    },
+  ]);
+});
+
 test('FC2 帖子下载主楼全部大图并按顺序编号', () => {
   const dom = new JSDOM(`
     <span id="thread_subject">(HD1080P)(消された名作 D)(fc4917072)ハメ️羞恥と興奮でピンクのオマンコは大洪水️最後は初體験の顔射＆口內射精で恍惚の表情️ - FC2電子市場</span>
