@@ -3,6 +3,7 @@ const SUBTITLE_TAG_PATTERN = /^\[(?:中文)?(?:外掛|外挂)字幕\]\s*/i;
 const DIRECT_FC2_PATTERN = /^FC2-(?:PPV-)?(\d+)\b\s*/i;
 const FC2_PPV_PATTERN = /^FC2-PPV-\d+\b/i;
 const FC2_RELEASE_TAG_PATTERN = /^(?:\[(?:BT|FC2|FC2HD)\]|\((?:BT|FC2|FC2HD)\))\s*/i;
+const MGS_RELEASE_PREFIX_PATTERN = /^\[BT\]\s*\(MGS\)\s*\(([^)]+)\)\s*/i;
 const MAGNET_PATTERN = /magnet:\?xt=urn:btih:[a-z0-9]+(?:&[^\s<>"']+)*/gi;
 
 export function parseDomainList(value) {
@@ -69,6 +70,11 @@ export function parseThreadTitle(rawTitle) {
   let remainder = normalized.slice(codeMatch[0].length).trimStart();
   const hasExternalSubtitle = SUBTITLE_TAG_PATTERN.test(remainder);
   remainder = remainder.replace(SUBTITLE_TAG_PATTERN, '');
+
+  const mgsReleasePrefix = remainder.match(MGS_RELEASE_PREFIX_PATTERN);
+  if (mgsReleasePrefix && mgsReleasePrefix[1].trim().toUpperCase() === code) {
+    remainder = remainder.slice(mgsReleasePrefix[0].length);
+  }
 
   while (/^\([^)]*\)\s*/u.test(remainder)) {
     remainder = remainder.replace(/^\([^)]*\)\s*/u, '');
