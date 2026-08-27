@@ -7,7 +7,7 @@ const outfile = fileURLToPath(new URL('../dist/x1080x-ex.user.js', import.meta.u
 const metadata = `// ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.3.0
+// @version      1.3.1
 // @description  一键下载 x1080x/Discuz 主楼附件、大图与已校验磁力链种子，支持 FC2 自动重命名
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex

@@ -3,6 +3,7 @@ const SUBTITLE_TAG_PATTERN = /^\[(?:中文)?(?:外掛|外挂)字幕\]\s*/i;
 const DIRECT_FC2_PATTERN = /^FC2-(?:PPV-)?(\d+)\b\s*/i;
 const FC2_PPV_PATTERN = /^FC2-PPV-\d+\b/i;
 const FC2_RELEASE_TAG_PATTERN = /^(?:\[(?:BT|FC2|FC2HD)\]|\((?:BT|FC2|FC2HD)\))\s*/i;
+const LEADING_GROUP_PATTERN = /^(\[([^\]]*)\]|\(([^)]*)\))\s*/u;
 const MAGNET_PATTERN = /magnet:\?xt=urn:btih:[a-z0-9]+(?:&[^\s<>"']+)*/gi;
 
 export function parseDomainList(value) {
@@ -43,31 +44,50 @@ export function parseThreadTitle(rawTitle) {
     };
   }
 
-  let fc2Remainder = normalized;
-  let fc2Number = '';
-  while (/^\(([^)]*)\)\s*/u.test(fc2Remainder)) {
-    const groupMatch = fc2Remainder.match(/^\(([^)]*)\)\s*/u);
-    const numberMatch = groupMatch[1].match(/^fc(\d+)$/i);
-    if (numberMatch) fc2Number = numberMatch[1];
-    fc2Remainder = fc2Remainder.slice(groupMatch[0].length);
-  }
-  if (fc2Number) {
-    const code = `FC2-${fc2Number}`;
-    return {
-      code,
-      cleanTitle: `${code}${fc2Remainder ? ` ${fc2Remainder.trim()}` : ''}`,
-      hasExternalSubtitle: false,
-    };
+  let groupedRemainder = normalized;
+  let groupedHasExternalSubtitle = false;
+  while (true) {
+    const groupMatch = groupedRemainder.match(LEADING_GROUP_PATTERN);
+    if (!groupMatch) break;
+
+    const token = groupMatch[1];
+    const groupText = (groupMatch[2] ?? groupMatch[3] ?? '').trim();
+    groupedRemainder = groupedRemainder.slice(groupMatch[0].length).trimStart();
+
+    if (SUBTITLE_TAG_PATTERN.test(token)) {
+      groupedHasExternalSubtitle = true;
+      continue;
+    }
+
+    const fc2NumberMatch = groupText.match(/^fc(\d+)$/i);
+    if (fc2NumberMatch) {
+      const code = `FC2-${fc2NumberMatch[1]}`;
+      return {
+        code,
+        cleanTitle: `${code}${groupedRemainder ? ` ${groupedRemainder.trim()}` : ''}`,
+        hasExternalSubtitle: groupedHasExternalSubtitle,
+      };
+    }
+
+    const groupedCodeMatch = groupText.match(/^([A-Z0-9]+-\d+)$/i);
+    if (groupedCodeMatch) {
+      const code = groupedCodeMatch[1].toUpperCase();
+      return {
+        code,
+        cleanTitle: `${code}${groupedRemainder ? ` ${groupedRemainder.trim()}` : ''}`,
+        hasExternalSubtitle: groupedHasExternalSubtitle,
+      };
+    }
   }
 
-  const codeMatch = normalized.match(CODE_PATTERN);
+  const codeMatch = groupedRemainder.match(CODE_PATTERN);
   if (!codeMatch) {
     return { code: '', cleanTitle: normalized, hasExternalSubtitle: false };
   }
 
   const code = codeMatch[1].toUpperCase();
-  let remainder = normalized.slice(codeMatch[0].length).trimStart();
-  const hasExternalSubtitle = SUBTITLE_TAG_PATTERN.test(remainder);
+  let remainder = groupedRemainder.slice(codeMatch[0].length).trimStart();
+  const hasExternalSubtitle = groupedHasExternalSubtitle || SUBTITLE_TAG_PATTERN.test(remainder);
   remainder = remainder.replace(SUBTITLE_TAG_PATTERN, '');
 
   while (/^\([^)]*\)\s*/u.test(remainder)) {

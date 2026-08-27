@@ -46,6 +46,41 @@ test('附件扩展名得到保留', () => {
   );
 });
 
+test('番号位于前置发布参数中时提取正文标题', () => {
+  const parsed = parseThreadTitle(
+    '[Prestige] (HD1080P)(Prestige)(ABF-355)月刊ハメ撮り 本能剝き出し3本番 鈴村あいり'
+  );
+
+  assert.deepEqual(parsed, {
+    code: 'ABF-355',
+    cleanTitle: 'ABF-355 月刊ハメ撮り 本能剝き出し3本番 鈴村あいり',
+    hasExternalSubtitle: false,
+  });
+});
+
+test('ABF-355 页面生成完整附件名和番号图片名', () => {
+  const dom = new JSDOM(`
+    <span id="thread_subject">(HD1080P)(Prestige)(ABF-355)月刊ハメ撮り 本能剝き出し3本番 鈴村あいり</span>
+    <div id="postlist"><table id="post_2795639"><tbody><tr><td id="postmessage_2795639" class="t_f">
+      <img src="https://www.hxmmdd.com/pics/my/2026/202606/20260626/ABF-355.jpg" width="1200" height="811">
+      <a href="forum.php?mod=attachment&amp;aid=encoded">ABF-355.rar</a>
+    </td></tr></tbody></table></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1048089' });
+
+  assert.deepEqual(buildDownloadJobs(dom.window.document), [
+    {
+      kind: 'attachment',
+      url: 'https://agaghhh.cc/forum.php?mod=attachment&aid=encoded',
+      name: 'ABF-355 月刊ハメ撮り 本能剝き出し3本番 鈴村あいり.rar',
+    },
+    {
+      kind: 'image',
+      url: 'https://www.hxmmdd.com/pics/my/2026/202606/20260626/ABF-355.jpg',
+      name: 'ABF-355.jpg',
+    },
+  ]);
+});
+
 test('只读取主楼附件并选择正文中尺寸最大的图片地址', () => {
   const dom = new JSDOM(`
     <h1 class="ts"><span id="thread_subject">SNOS-325 (HD1080P_60fps)(S1)(snos00325)スーパー絶倫の暴走教師 桜乃りの</span></h1>
