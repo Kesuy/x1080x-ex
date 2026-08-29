@@ -32,3 +32,4 @@ jobs:
           path: |
             dist/x1080x-ex.user.js
             package-lock.json
+# rerun after Pixhost cache-test isolation
