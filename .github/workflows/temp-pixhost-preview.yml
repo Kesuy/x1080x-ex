@@ -6,7 +6,7 @@ on:
       - fix/pixhost-preview-original
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check:
@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: fix/pixhost-preview-original
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -25,11 +27,15 @@ jobs:
         run: npm ci
       - name: Test build smoke
         run: npm run check
-      - name: Upload generated files
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-userscript
-          path: |
-            dist/x1080x-ex.user.js
-            package-lock.json
-# rerun after Pixhost cache-test isolation
+      - name: Commit generated files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json dist/x1080x-ex.user.js
+          if git diff --cached --quiet; then
+            echo "generated files are already current"
+            exit 0
+          fi
+          git commit -m "build: update userscript 1.6.2"
+          git push origin HEAD:fix/pixhost-preview-original
