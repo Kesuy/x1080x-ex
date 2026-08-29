@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.6.3
+// @version      1.6.4
 // @description  一键下载主楼资源，并增强 hdblog Preview 大图显示及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -26,6 +26,7 @@
   var FC2_PPV_PATTERN = /^FC2-PPV-\d+\b/i;
   var FC2_RELEASE_TAG_PATTERN = /^(?:\[(?:BT|FC2|FC2HD)\]|\((?:BT|FC2|FC2HD)\))\s*/i;
   var LEADING_GROUP_PATTERN = /^(\[([^\]]*)\]|\(([^)]*)\))\s*/u;
+  var MGS_RELEASE_PREFIX_PATTERN = /^\[BT\]\s*\(MGS\)\s*\(([^)]+)\)\s*/i;
   var MAGNET_PATTERN = /magnet:\?xt=urn:btih:[a-z0-9]+(?:&[^\s<>"']+)*/gi;
   function parseDomainList(value) {
     const domains = String(value ?? "").split(/[\s,;，；]+/).map((entry) => entry.trim()).filter(Boolean).map((entry) => {
@@ -131,6 +132,10 @@
     let remainder = groupedRemainder.slice(codeMatch[0].length).trimStart();
     const hasExternalSubtitle = groupedHasExternalSubtitle || SUBTITLE_TAG_PATTERN.test(remainder);
     remainder = remainder.replace(SUBTITLE_TAG_PATTERN, "");
+    const mgsReleasePrefix = remainder.match(MGS_RELEASE_PREFIX_PATTERN);
+    if (mgsReleasePrefix && mgsReleasePrefix[1].trim().toUpperCase() === code) {
+      remainder = remainder.slice(mgsReleasePrefix[0].length);
+    }
     while (/^\([^)]*\)\s*/u.test(remainder)) {
       remainder = remainder.replace(/^\([^)]*\)\s*/u, "");
     }
