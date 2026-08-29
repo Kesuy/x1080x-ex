@@ -4,11 +4,58 @@ import { JSDOM } from 'jsdom';
 import {
   buildAttachmentFilename,
   buildDownloadJobs,
+  collectForumThreadLinks,
   extractThreadResources,
   isAllowedHost,
   parseDomainList,
   parseThreadTitle,
 } from '../src/core.js';
+
+test('版块页只按顺序收集普通主题，排除置顶并去重', () => {
+  const dom = new JSDOM(`
+    <div id="threadlist"><table>
+      <tbody id="stickthread_100"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=100">置顶</a></th></tr></tbody>
+      <tbody id="normalthread_203"><tr><th>
+        <a href="forum.php?mod=viewthread&tid=203">新窗口打开</a>
+        <a class="xst" href="forum.php?mod=viewthread&tid=203">主题 203</a>
+      </th></tr></tbody>
+      <tbody id="normalthread_202"><tr><th><a class="xst" href="thread-202-1-1.html">主题 202</a></th></tr></tbody>
+      <tbody id="normalthread_duplicate"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=203">重复主题</a></th></tr></tbody>
+    </table></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
+
+  const threads = collectForumThreadLinks(dom.window.document);
+
+  assert.deepEqual(threads.map(({ url }) => url), [
+    'https://agaghhh.cc/forum.php?mod=viewthread&tid=203',
+    'https://agaghhh.cc/thread-202-1-1.html',
+  ]);
+  assert.deepEqual(threads.map(({ link }) => link.textContent), ['主题 203', '主题 202']);
+});
+
+test('hdblog 只按主内容区文章顺序收集标题，排除侧栏和分页', () => {
+  const dom = new JSDOM(`
+    <main id="genesis-content">
+      <article class="entry"><header class="entry-header"><h2 class="entry-title">
+        <a href="/983859/fc2ppv-4968311/">主题 4968311</a>
+      </h2></header><a href="/tag/fc2-ppv/">分类</a></article>
+      <article class="entry"><header class="entry-header"><h2 class="entry-title">
+        <a href="/983856/fc2ppv-4968203/">主题 4968203</a>
+      </h2></header></article>
+      <nav class="archive-pagination"><a href="/tag/fc2-ppv/page/2/">下一页</a></nav>
+    </main>
+    <aside id="genesis-sidebar-primary"><article class="entry"><h2 class="entry-title">
+      <a href="/999999/sidebar-post/">侧栏主题</a>
+    </h2></article></aside>
+  `, { url: 'https://hdblog.me/tag/fc2-ppv/' });
+
+  const threads = collectForumThreadLinks(dom.window.document);
+
+  assert.deepEqual(threads.map(({ url }) => url), [
+    'https://hdblog.me/983859/fc2ppv-4968311/',
+    'https://hdblog.me/983856/fc2ppv-4968203/',
+  ]);
+});
 
 test('清理编号后的发布参数并保留正文中的括号', () => {
   const result = parseThreadTitle(

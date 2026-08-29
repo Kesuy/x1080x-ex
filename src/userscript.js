@@ -1,17 +1,43 @@
 import {
   buildDownloadJobs,
+  collectForumThreadLinks,
   isAllowedHost,
   parseDomainList,
 } from './core.js';
 import { requestTorrentBytes } from './torrent.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
-const DEFAULT_DOMAINS = 'agaghhh.cc';
+const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me';
 const BUTTON_ID = 'x1080x-ex-download';
+const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
+const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
 const REQUEST_TIMEOUT = 60000;
+const DEFAULT_OPEN_TIMING = Object.freeze({
+  initialMin: 300,
+  initialMax: 800,
+  delayMin: 1800,
+  delayMax: 3500,
+  pauseEvery: 8,
+  pauseMin: 6000,
+  pauseMax: 10000,
+});
+const HDBLOG_OPEN_TIMING = Object.freeze({
+  initialMin: 150,
+  initialMax: 400,
+  delayMin: 800,
+  delayMax: 1600,
+  pauseEvery: 10,
+  pauseMin: 3000,
+  pauseMax: 5000,
+});
+let batchOpenState = null;
 
 function getConfiguredDomains() {
-  return parseDomainList(GM_getValue(STORAGE_KEY, DEFAULT_DOMAINS));
+  const stored = GM_getValue(STORAGE_KEY, null);
+  if (stored === null || stored === undefined) return parseDomainList(DEFAULT_DOMAINS);
+  const domains = parseDomainList(stored);
+  const isLegacyDefault = domains.length === 1 && domains[0] === 'agaghhh.cc';
+  return isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains;
 }
 
 function saveDomains(domains) {
@@ -54,6 +80,125 @@ function isThreadPage() {
   const url = new URL(location.href);
   return (url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid'))
     || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
+}
+
+function isForumDisplayPage() {
+  const url = new URL(location.href);
+  return url.searchParams.get('mod') === 'forumdisplay'
+    || /forum[-_]\d+/i.test(url.pathname);
+}
+
+function isBatchOpenPage() {
+  return isForumDisplayPage()
+    || Boolean(document.querySelector('main#genesis-content article.entry .entry-title a[href]'));
+}
+
+function batchOpenTiming() {
+  return isAllowedHost(location.hostname, ['hdblog.me'])
+    ? HDBLOG_OPEN_TIMING
+    : DEFAULT_OPEN_TIMING;
+}
+
+function randomDelay(minimum, maximum) {
+  return Math.round(minimum + Math.random() * (maximum - minimum));
+}
+
+function waitForBatchDelay(milliseconds, state) {
+  return new Promise((resolve) => {
+    state.finishDelay = resolve;
+    state.timeoutId = window.setTimeout(() => {
+      state.timeoutId = null;
+      state.finishDelay = null;
+      resolve();
+    }, milliseconds);
+  });
+}
+
+function cancelBatchOpen() {
+  if (!batchOpenState) return;
+  batchOpenState.cancelled = true;
+  if (batchOpenState.timeoutId !== null) {
+    window.clearTimeout(batchOpenState.timeoutId);
+    batchOpenState.timeoutId = null;
+  }
+  batchOpenState.finishDelay?.();
+  batchOpenState.finishDelay = null;
+}
+
+function setBatchButtonIdle(button, count) {
+  button.textContent = `后台顺序打开本页主题（${count}）`;
+  button.title = '按页面顺序在后台逐个打开普通主题；间隔随机，并定期停顿；再次点击可停止';
+  button.style.background = '#398bd4';
+}
+
+async function openCurrentPageThreads(button) {
+  if (batchOpenState) {
+    cancelBatchOpen();
+    return;
+  }
+
+  const threads = collectForumThreadLinks(document);
+  if (!threads.length) {
+    window.alert('当前页面没有找到可打开的普通主题。');
+    return;
+  }
+
+  const state = {
+    cancelled: false,
+    finishDelay: null,
+    timeoutId: null,
+  };
+  batchOpenState = state;
+  const failures = [];
+  let opened = 0;
+  const timing = batchOpenTiming();
+  button.style.background = '#b84b4b';
+
+  try {
+    await waitForBatchDelay(randomDelay(timing.initialMin, timing.initialMax), state);
+    for (const [index, thread] of threads.entries()) {
+      if (state.cancelled) break;
+
+      button.textContent = `停止后台打开（${opened}/${threads.length}）`;
+      try {
+        GM_openInTab(thread.url, {
+          active: false,
+          insert: false,
+          setParent: true,
+        });
+        opened += 1;
+      } catch (error) {
+        failures.push(`${index + 1}. ${redactDiagnostic(error?.message || error || '打开失败')}`);
+      }
+
+      if (index === threads.length - 1 || state.cancelled) break;
+      const completedCount = index + 1;
+      const isLongPause = completedCount % timing.pauseEvery === 0;
+      const delay = isLongPause
+        ? randomDelay(timing.pauseMin, timing.pauseMax)
+        : randomDelay(timing.delayMin, timing.delayMax);
+      button.textContent = `${isLongPause ? '停顿' : '等待'} ${Math.ceil(delay / 1000)} 秒（${opened}/${threads.length}）`;
+      await waitForBatchDelay(delay, state);
+    }
+  } finally {
+    const wasCancelled = state.cancelled;
+    batchOpenState = null;
+    button.textContent = wasCancelled
+      ? `已停止（已打开 ${opened}/${threads.length}）`
+      : failures.length
+        ? `完成（打开 ${opened}，失败 ${failures.length}）`
+        : `✓ 已按顺序打开 ${opened} 个主题`;
+    button.style.background = failures.length ? '#b36b22' : '#398bd4';
+    window.setTimeout(() => {
+      if (!batchOpenState) {
+        setBatchButtonIdle(button, collectForumThreadLinks(document).length);
+      }
+    }, 3000);
+  }
+
+  if (failures.length) {
+    window.alert(`以下主题打开失败：\n\n${failures.join('\n')}`);
+  }
 }
 
 function parseResponseHeaders(value) {
@@ -324,8 +469,68 @@ function addDownloadButton() {
   host.prepend(button);
 }
 
+function addBatchOpenButton() {
+  if (document.getElementById(BATCH_BUTTON_ID)) return;
+  const threads = collectForumThreadLinks(document);
+  let prependButton = false;
+  let host = document.querySelector('#pgt')
+    || document.querySelector('#threadlist .th')
+    || document.querySelector('#threadlist');
+  if (!host) {
+    host = document.querySelector('main#genesis-content .archive-description');
+    if (host) {
+      prependButton = true;
+    } else {
+      const firstArticle = document.querySelector('main#genesis-content article.entry');
+      if (firstArticle) {
+        host = document.createElement('div');
+        host.id = BATCH_TOOLBAR_ID;
+        Object.assign(host.style, {
+          minHeight: '42px',
+          margin: '0 0 16px',
+        });
+        firstArticle.before(host);
+      }
+    }
+  }
+  if (!threads.length || !host) return;
+
+  const button = document.createElement('button');
+  button.id = BATCH_BUTTON_ID;
+  button.type = 'button';
+  Object.assign(button.style, {
+    float: 'right',
+    position: 'relative',
+    zIndex: '20',
+    margin: '0 8px 6px 12px',
+    padding: '7px 13px',
+    border: '1px solid #2878c8',
+    borderRadius: '5px',
+    color: '#fff',
+    background: '#398bd4',
+    cursor: 'pointer',
+    fontSize: '14px',
+    lineHeight: '20px',
+  });
+  setBatchButtonIdle(button, threads.length);
+  button.addEventListener('mouseenter', () => {
+    if (!batchOpenState) button.style.background = '#246eaf';
+  });
+  button.addEventListener('mouseleave', () => {
+    if (!batchOpenState) button.style.background = '#398bd4';
+  });
+  button.addEventListener('click', () => void openCurrentPageThreads(button));
+  if (prependButton) {
+    button.style.margin = '0 0 0 12px';
+    host.prepend(button);
+  } else {
+    host.append(button);
+  }
+}
+
 registerSettingsMenu();
 
-if (isAllowedHost(location.hostname, getConfiguredDomains()) && isThreadPage()) {
-  addDownloadButton();
+if (isAllowedHost(location.hostname, getConfiguredDomains())) {
+  if (isThreadPage()) addDownloadButton();
+  if (isBatchOpenPage()) addBatchOpenButton();
 }

@@ -7,7 +7,7 @@ function installDomGlobals(window) {
   const names = [
     'window', 'document', 'location', 'URL', 'Blob', 'FileReader', 'AbortController',
     'GM_info', 'GM_getValue', 'GM_setValue', 'GM_registerMenuCommand',
-    'GM_xmlhttpRequest',
+    'GM_xmlhttpRequest', 'GM_openInTab',
   ];
   const previous = new Map(names.map((name) => [name, globalThis[name]]));
 
@@ -26,6 +26,7 @@ function installDomGlobals(window) {
   globalThis.GM_getValue = (_key, fallback) => fallback;
   globalThis.GM_setValue = () => {};
   globalThis.GM_registerMenuCommand = () => {};
+  globalThis.GM_openInTab = () => {};
 
   return () => {
     for (const [name, value] of previous) {
@@ -34,6 +35,108 @@ function installDomGlobals(window) {
     }
   };
 }
+
+test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => {
+  const dom = new JSDOM(`
+    <div id="pgt"></div>
+    <div id="threadlist"><table>
+      <tbody id="stickthread_100"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=100">置顶</a></th></tr></tbody>
+      <tbody id="normalthread_303"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=303">主题 303</a></th></tr></tbody>
+      <tbody id="normalthread_302"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=302">主题 302</a></th></tr></tbody>
+      <tbody id="normalthread_301"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=301">主题 301</a></th></tr></tbody>
+    </table></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
+  const restore = installDomGlobals(dom.window);
+  const opened = [];
+  const syntheticClicks = [];
+  const originalSetTimeout = dom.window.setTimeout;
+  const originalClearTimeout = dom.window.clearTimeout;
+  dom.window.setTimeout = (callback) => {
+    queueMicrotask(callback);
+    return 1;
+  };
+  dom.window.clearTimeout = () => {};
+  globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
+  dom.window.document.querySelectorAll('a.xst').forEach((link) => {
+    link.addEventListener('click', () => syntheticClicks.push(link.textContent));
+  });
+
+  try {
+    await import(`../src/userscript.js?forum-list=${Date.now()}`);
+    const button = dom.window.document.querySelector('#x1080x-ex-open-page');
+    assert.ok(button);
+    assert.equal(button.textContent, '后台顺序打开本页主题（3）');
+    button.click();
+    await waitFor(() => opened.length === 3, 'all normal threads should open in order');
+
+    assert.deepEqual(opened, [303, 302, 301].map((tid) => ({
+      url: `https://agaghhh.cc/forum.php?mod=viewthread&tid=${tid}`,
+      options: { active: false, insert: false, setParent: true },
+    })));
+    assert.deepEqual(syntheticClicks, []);
+  } finally {
+    dom.window.setTimeout = originalSetTimeout;
+    dom.window.clearTimeout = originalClearTimeout;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台打开', async () => {
+  const dom = new JSDOM(`
+    <main id="genesis-content">
+      <div class="archive-description"><h1>FC2-PPV</h1></div>
+      <article class="entry" id="post-983859"><header class="entry-header"><h2 class="entry-title">
+        <a href="/983859/fc2ppv-4968311/">主题 4968311</a>
+      </h2></header></article>
+      <article class="entry" id="post-983856"><header class="entry-header"><h2 class="entry-title">
+        <a href="/983856/fc2ppv-4968203/">主题 4968203</a>
+      </h2></header></article>
+      <nav class="archive-pagination"><a href="/tag/fc2-ppv/page/2/">下一页</a></nav>
+    </main>
+    <aside id="genesis-sidebar-primary"><a href="/999999/sidebar-post/">侧栏主题</a></aside>
+  `, { url: 'https://hdblog.me/tag/fc2-ppv/' });
+  const restore = installDomGlobals(dom.window);
+  const opened = [];
+  const originalSetTimeout = dom.window.setTimeout;
+  const originalClearTimeout = dom.window.clearTimeout;
+  dom.window.setTimeout = (callback) => {
+    queueMicrotask(callback);
+    return 1;
+  };
+  dom.window.clearTimeout = () => {};
+  globalThis.GM_getValue = () => 'agaghhh.cc';
+  globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
+
+  try {
+    await import(`../src/userscript.js?hdblog-list=${Date.now()}`);
+    const button = dom.window.document.querySelector('#x1080x-ex-open-page');
+    const archiveDescription = dom.window.document.querySelector('.archive-description');
+    const firstArticle = dom.window.document.querySelector('article.entry');
+    assert.ok(button);
+    assert.equal(button.parentElement, archiveDescription);
+    assert.equal(archiveDescription.firstElementChild, button);
+    assert.equal(archiveDescription.nextElementSibling, firstArticle);
+    assert.equal(dom.window.document.querySelector('#x1080x-ex-open-page-toolbar'), null);
+    assert.equal(button.textContent, '后台顺序打开本页主题（2）');
+
+    button.click();
+    await waitFor(() => opened.length === 2, 'all hdblog articles should open in order');
+
+    assert.deepEqual(opened, [
+      'https://hdblog.me/983859/fc2ppv-4968311/',
+      'https://hdblog.me/983856/fc2ppv-4968203/',
+    ].map((url) => ({
+      url,
+      options: { active: false, insert: false, setParent: true },
+    })));
+  } finally {
+    dom.window.setTimeout = originalSetTimeout;
+    dom.window.clearTimeout = originalClearTimeout;
+    restore();
+    dom.window.close();
+  }
+});
 
 function threadDom() {
   return new JSDOM(`

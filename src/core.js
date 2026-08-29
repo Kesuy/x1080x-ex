@@ -28,6 +28,54 @@ export function isAllowedHost(hostname, domains) {
   return domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
+function isThreadUrl(value, baseUrl) {
+  try {
+    const url = new URL(value, baseUrl);
+    return (url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid'))
+      || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function collectForumThreadLinks(document) {
+  const seen = new Set();
+  const candidates = [
+    ...[...document.querySelectorAll('#threadlist tbody[id^="normalthread_"]')]
+      .map((row) => ({
+        kind: 'discuz',
+        link: row.querySelector('a.xst[href]')
+          || row.querySelector('a[href*="mod=viewthread"][href*="tid="]'),
+      })),
+    ...[...document.querySelectorAll('main#genesis-content article.entry')]
+      .map((article) => ({
+        kind: 'wordpress',
+        link: article.querySelector('.entry-header .entry-title a[href], h2.entry-title a[href]'),
+      })),
+  ];
+
+  return candidates
+    .filter((candidate) => candidate.link)
+    .map(({ kind, link }) => {
+      try {
+        return {
+          kind,
+          link,
+          url: new URL(link.getAttribute('href'), document.baseURI).href,
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .filter((thread) => {
+      if (thread.kind === 'discuz') return isThreadUrl(thread.url, document.baseURI);
+      const url = new URL(thread.url);
+      return /^https?:$/.test(url.protocol) && url.origin === new URL(document.baseURI).origin;
+    })
+    .filter((thread) => !seen.has(thread.url) && seen.add(thread.url));
+}
+
 export function parseThreadTitle(rawTitle) {
   const normalized = String(rawTitle ?? '').replace(/\s+/g, ' ').trim();
   const directFc2Match = normalized.match(DIRECT_FC2_PATTERN);
