@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.6.2
+// @version      1.6.3
 // @description  一键下载主楼资源，并增强 hdblog Preview 大图显示及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1289,6 +1289,8 @@ ${failures.join("\n")}
   // src/hdblog-preview.js
   var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
   var PREVIEW_BOUNDARY_PATTERN = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  var PREVIEW_VIEWPORT_GUTTER_PX = 12;
+  var PREVIEW_VIEWPORT_WIDTH = `calc(100vw - ${PREVIEW_VIEWPORT_GUTTER_PX * 2}px)`;
   function normalizeText(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
@@ -1434,6 +1436,37 @@ ${failures.join("\n")}
     }
     return document2.querySelector("main#genesis-content, main, #content") || document2.body;
   }
+  function revealPreviewOverflow(image) {
+    const document2 = image.ownerDocument;
+    const view = document2.defaultView;
+    let ancestor = image.parentElement;
+    while (ancestor && ancestor !== document2.body && ancestor !== document2.documentElement) {
+      try {
+        const computed = view?.getComputedStyle?.(ancestor);
+        if (computed?.overflow === "hidden" || computed?.overflow === "clip") {
+          ancestor.style.setProperty("overflow", "visible", "important");
+        }
+        if (computed?.overflowX === "hidden" || computed?.overflowX === "clip") {
+          ancestor.style.setProperty("overflow-x", "visible", "important");
+        }
+      } catch {
+      }
+      ancestor = ancestor.parentElement;
+    }
+  }
+  function styleViewportBleed(element) {
+    element.style.setProperty("display", "block", "important");
+    element.style.setProperty("float", "none", "important");
+    element.style.setProperty("clear", "both", "important");
+    element.style.setProperty("box-sizing", "border-box", "important");
+    element.style.setProperty("position", "relative", "important");
+    element.style.setProperty("left", "50%", "important");
+    element.style.setProperty("transform", "translateX(-50%)", "important");
+    element.style.setProperty("width", PREVIEW_VIEWPORT_WIDTH, "important");
+    element.style.setProperty("max-width", "none", "important");
+    element.style.setProperty("margin", "14px 0", "important");
+    element.style.setProperty("overflow", "visible", "important");
+  }
   function styleExpandedImage(image, fullUrl) {
     if (!fullUrl) return false;
     if (image.dataset.x1080xPreviewLarge === "1" && image.src === fullUrl) return false;
@@ -1453,22 +1486,30 @@ ${failures.join("\n")}
     image.decoding = "async";
     image.dataset.x1080xPreviewLarge = "1";
     image.dataset.x1080xPreviewExpanded = "1";
+    revealPreviewOverflow(image);
     image.style.setProperty("display", "block", "important");
     image.style.setProperty("float", "none", "important");
     image.style.setProperty("clear", "both", "important");
-    image.style.setProperty("width", "100%", "important");
-    image.style.setProperty("max-width", "100%", "important");
+    image.style.setProperty("width", "auto", "important");
     image.style.setProperty("height", "auto", "important");
     image.style.setProperty("max-height", "none", "important");
     image.style.setProperty("object-fit", "contain", "important");
-    image.style.setProperty("margin", "14px auto", "important");
     const anchor = image.closest("a[href]");
     if (anchor) {
       anchor.href = fullUrl;
-      anchor.style.setProperty("display", "block", "important");
-      anchor.style.setProperty("float", "none", "important");
-      anchor.style.setProperty("width", "100%", "important");
-      anchor.style.setProperty("max-width", "100%", "important");
+      styleViewportBleed(anchor);
+      anchor.style.setProperty("text-align", "center", "important");
+      image.style.setProperty("max-width", "100%", "important");
+      image.style.setProperty("position", "static", "important");
+      image.style.setProperty("left", "auto", "important");
+      image.style.setProperty("transform", "none", "important");
+      image.style.setProperty("margin", "0 auto", "important");
+    } else {
+      image.style.setProperty("max-width", PREVIEW_VIEWPORT_WIDTH, "important");
+      image.style.setProperty("position", "relative", "important");
+      image.style.setProperty("left", "50%", "important");
+      image.style.setProperty("transform", "translateX(-50%)", "important");
+      image.style.setProperty("margin", "14px 0", "important");
     }
     return true;
   }

@@ -51,7 +51,7 @@ test('Pixhost 页面请求失败时退回由缩略图推导出的原图地址', 
   dom.window.close();
 });
 
-test('Preview 中任意数量 Pixhost show 链接都会解析并按大图显示', async () => {
+test('Preview 中任意数量 Pixhost show 链接都会解析并按视口宽度展开', async () => {
   const items = [
     ['763636406_fc2ppv-4967987-1-mp4.jpg', 'https://t1.pixhost.to', 'https://img1.pixhost.to'],
     ['763636407_fc2ppv-4967987-2-mp4.jpg', 'https://t2.pixhost.to', 'https://img2.pixhost.to'],
@@ -96,11 +96,17 @@ test('Preview 中任意数量 Pixhost show 链接都会解析并按大图显示'
 
   items.forEach(([name, _thumbHost, fullHost], index) => {
     const image = dom.window.document.querySelector(`#image-${index}`);
+    const anchor = image.closest('a');
     assert.equal(image.src, `${fullHost}/images/${5307 + index}/${name}`);
     assert.equal(image.style.getPropertyValue('display'), 'block');
-    assert.equal(image.style.getPropertyValue('width'), '100%');
+    assert.equal(image.style.getPropertyValue('width'), 'auto');
+    assert.equal(image.style.getPropertyValue('max-width'), '100%');
     assert.equal(image.style.getPropertyValue('height'), 'auto');
     assert.equal(image.dataset.x1080xPreviewLarge, '1');
+    assert.equal(anchor.style.getPropertyValue('width'), 'calc(100vw - 24px)');
+    assert.equal(anchor.style.getPropertyValue('max-width'), 'none');
+    assert.equal(anchor.style.getPropertyValue('left'), '50%');
+    assert.equal(anchor.style.getPropertyValue('transform'), 'translateX(-50%)');
   });
 
   dom.window.close();
