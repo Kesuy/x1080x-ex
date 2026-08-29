@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.5.1
+// @version      1.6.0
 // @description  一键下载主楼资源，并按顺序、分批在后台打开当前版块页的普通主题
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -646,6 +646,138 @@ ${domains.join("\n")}
   function isBatchOpenPage() {
     return isForumDisplayPage() || Boolean(document.querySelector("main#genesis-content article.entry .entry-title a[href]"));
   }
+  function normalizedLabel(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function isFollowing(reference, element) {
+    return Boolean(reference.compareDocumentPosition(element) & 4);
+  }
+  function isHdblogPreviewBoundary(element) {
+    if (!element || element.querySelector("img")) return false;
+    const text = normalizedLabel(element.textContent);
+    return /^(?:downloads?(?: links?)?|links?|magnets?(?: links?)?|torrents?(?: links?)?|password|info(?:rmation)?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\s*[:：]?$/i.test(text);
+  }
+  function largestSrcsetUrl(document2, value) {
+    const candidates = String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
+      const [url, descriptor = ""] = part.split(/\s+/, 2);
+      const match = descriptor.match(/^(\d+(?:\.\d+)?)(w|x)$/i);
+      let score = order;
+      if (match) {
+        const amount = Number(match[1]);
+        score = match[2].toLowerCase() === "w" ? amount : amount * 1e5;
+      }
+      try {
+        return { url: new URL(url, document2.baseURI).href, score };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+    return candidates[0]?.url || "";
+  }
+  function directImageHref(document2, anchor) {
+    const href = anchor?.getAttribute("href");
+    if (!href) return "";
+    try {
+      const url = new URL(href, document2.baseURI);
+      if (!/^https?:$/.test(url.protocol)) return "";
+      return /\.(?:jpe?g|png|webp|gif|avif)$/i.test(url.pathname) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function hdblogPreviewImageUrl(document2, image, forcedUrl = "") {
+    const anchor = image.closest("a[href]");
+    const candidates = [
+      forcedUrl,
+      directImageHref(document2, anchor),
+      image.getAttribute("data-original"),
+      image.getAttribute("data-lazy-src"),
+      image.getAttribute("data-src"),
+      largestSrcsetUrl(document2, image.getAttribute("data-srcset")),
+      largestSrcsetUrl(document2, image.getAttribute("srcset")),
+      image.currentSrc,
+      image.getAttribute("src")
+    ];
+    for (const candidate of candidates) {
+      if (!candidate || /^(?:data:|blob:|javascript:)/i.test(candidate)) continue;
+      try {
+        const url = new URL(candidate, document2.baseURI);
+        if (/^https?:$/.test(url.protocol)) return url.href;
+      } catch {
+      }
+    }
+    return "";
+  }
+  function styleHdblogPreviewImage(image, fullUrl) {
+    if (!fullUrl) return false;
+    image.src = fullUrl;
+    [
+      "srcset",
+      "sizes",
+      "width",
+      "height",
+      "data-original",
+      "data-lazy-src",
+      "data-src",
+      "data-srcset",
+      "data-lazy-srcset"
+    ].forEach((attribute) => image.removeAttribute(attribute));
+    image.loading = "eager";
+    image.dataset.x1080xPreviewExpanded = "1";
+    image.style.setProperty("display", "block", "important");
+    image.style.setProperty("width", "100%", "important");
+    image.style.setProperty("max-width", "100%", "important");
+    image.style.setProperty("height", "auto", "important");
+    image.style.setProperty("max-height", "none", "important");
+    image.style.setProperty("object-fit", "contain", "important");
+    image.style.setProperty("margin", "12px auto", "important");
+    return true;
+  }
+  function expandHdblogPreviewImages() {
+    if (!isAllowedHost(location.hostname, ["hdblog.me"])) return 0;
+    const content = document.querySelector(
+      "main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content"
+    );
+    if (!content) return 0;
+    const markers = [...content.querySelectorAll("p, strong, b, h1, h2, h3, h4, h5, h6")];
+    const marker = markers.find((element) => /^preview\s*[:：]?$/i.test(normalizedLabel(element.textContent)));
+    if (!marker) return 0;
+    const boundary = markers.find((element) => isFollowing(marker, element) && isHdblogPreviewBoundary(element));
+    const isInPreviewRange = (element) => isFollowing(marker, element) && (!boundary || !isFollowing(boundary, element));
+    let expanded = 0;
+    const handledImages = /* @__PURE__ */ new Set();
+    const anchors = [...content.querySelectorAll("a[href]")].filter(isInPreviewRange);
+    anchors.forEach((anchor) => {
+      const fullUrl = directImageHref(document, anchor);
+      if (!fullUrl) return;
+      let image = anchor.querySelector("img");
+      if (!image) {
+        image = document.createElement("img");
+        image.alt = normalizedLabel(anchor.textContent) || "Preview";
+        anchor.replaceChildren(image);
+      }
+      if (styleHdblogPreviewImage(image, fullUrl)) {
+        anchor.href = fullUrl;
+        anchor.style.setProperty("display", "block", "important");
+        anchor.style.setProperty("max-width", "100%", "important");
+        handledImages.add(image);
+        expanded += 1;
+      }
+    });
+    [...content.querySelectorAll("img")].filter((image) => isInPreviewRange(image) && !handledImages.has(image)).forEach((image) => {
+      const fullUrl = hdblogPreviewImageUrl(document, image);
+      if (!styleHdblogPreviewImage(image, fullUrl)) return;
+      const anchor = image.closest("a[href]");
+      if (anchor && content.contains(anchor)) {
+        const directUrl = directImageHref(document, anchor);
+        if (directUrl) anchor.href = directUrl;
+        anchor.style.setProperty("display", "block", "important");
+        anchor.style.setProperty("max-width", "100%", "important");
+      }
+      expanded += 1;
+    });
+    return expanded;
+  }
   function batchOpenTiming() {
     return isAllowedHost(location.hostname, ["hdblog.me"]) ? HDBLOG_OPEN_TIMING : DEFAULT_OPEN_TIMING;
   }
@@ -1041,6 +1173,7 @@ ${failures.join("\n")}
   }
   registerSettingsMenu();
   if (isAllowedHost(location.hostname, getConfiguredDomains())) {
+    expandHdblogPreviewImages();
     if (isThreadPage()) addDownloadButton();
     if (isBatchOpenPage()) addBatchOpenButton();
   }
