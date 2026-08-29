@@ -37,14 +37,17 @@ test('从 Pixhost 展示页的 image-img 解析真正原图地址', () => {
 test('Pixhost 页面请求失败时退回由缩略图推导出的原图地址', async () => {
   const dom = new JSDOM('', { url: 'https://hdblog.me/post/' });
   const gmRequest = (details) => queueMicrotask(() => details.onerror({ error: 'network' }));
+  const fallbackShow = 'https://pixhost.to/show/5306/763636405_fallback.jpg';
+  const fallbackThumb = 'https://t4.pixhost.to/thumbs/5306/763636405_fallback.jpg';
+  const fallbackFull = 'https://img4.pixhost.to/images/5306/763636405_fallback.jpg';
 
   const resolved = await resolvePixhostShowUrl(
     dom.window.document,
-    FIRST_SHOW,
-    FIRST_THUMB,
+    fallbackShow,
+    fallbackThumb,
     gmRequest
   );
-  assert.equal(resolved, FIRST_FULL);
+  assert.equal(resolved, fallbackFull);
   dom.window.close();
 });
 
