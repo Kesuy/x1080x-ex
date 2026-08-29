@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.5.1
+// @version      1.6.0
 // @description  一键下载主楼资源，并按顺序、分批在后台打开当前版块页的普通主题
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
