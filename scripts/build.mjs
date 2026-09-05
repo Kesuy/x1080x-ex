@@ -1,14 +1,17 @@
+import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 
 const entryPoint = fileURLToPath(new URL('../src/index.js', import.meta.url));
 const outfile = fileURLToPath(new URL('../dist/x1080x-ex.user.js', import.meta.url));
+const packageFile = fileURLToPath(new URL('../package.json', import.meta.url));
+const { version } = JSON.parse(await readFile(packageFile, 'utf8'));
 
 const metadata = `// ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.6.4
-// @description  一键下载主楼资源，并增强 hdblog Preview 大图显示及主题批量后台打开
+// @version      ${version}
+// @description  一键下载主楼资源，并增强 hdblog Preview 大图显示、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues
