@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.6.4
-// @description  一键下载主楼资源，并增强 hdblog Preview 大图显示及主题批量后台打开
+// @version      1.6.5
+// @description  一键下载主楼资源，并增强 hdblog Preview 大图显示、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues
@@ -1584,6 +1584,125 @@ ${failures.join("\n")}
     view.setTimeout(run, 1400);
   }
 
+  // src/hdblog-search.js
+  var STORAGE_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
+  var DEFAULT_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  function normalizeKeyword(value) {
+    return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  }
+  function parseBlockedKeywords(value) {
+    const seen = /* @__PURE__ */ new Set();
+    const keywords = [];
+    String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).forEach((entry) => {
+      const normalized = normalizeKeyword(entry);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      keywords.push(entry);
+    });
+    return keywords;
+  }
+  function isBlockedTitle(title, keywords) {
+    const normalizedTitle = normalizeKeyword(title);
+    return keywords.some((keyword) => {
+      const normalizedKeyword = normalizeKeyword(keyword);
+      return normalizedKeyword && normalizedTitle.includes(normalizedKeyword);
+    });
+  }
+  function isHdblogSearchUrl(value) {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase().replace(/\.$/, "");
+      return (host === "hdblog.me" || host.endsWith(".hdblog.me")) && url.searchParams.has("s") && Boolean(url.searchParams.get("s")?.trim());
+    } catch {
+      return false;
+    }
+  }
+  function filterSearchCandidates(candidates, keywords) {
+    const blocked = [];
+    const remaining = [];
+    for (const candidate of candidates) {
+      (isBlockedTitle(candidate.title, keywords) ? blocked : remaining).push(candidate);
+    }
+    return { blocked, remaining };
+  }
+  function redirectTargetForSearch(candidates) {
+    return candidates.length === 1 ? candidates[0].url : "";
+  }
+  function collectHdblogSearchResults(document2) {
+    const baseUrl = new URL(document2.baseURI);
+    return [...document2.querySelectorAll("main#genesis-content article.entry")].map((article) => {
+      const link = article.querySelector(
+        ".entry-header .entry-title a[href], h2.entry-title a[href], .entry-title a[href]"
+      );
+      if (!link) return null;
+      try {
+        const url = new URL(link.getAttribute("href"), document2.baseURI);
+        if (!/^https?:$/.test(url.protocol) || url.origin !== baseUrl.origin) return null;
+        return {
+          article,
+          link,
+          title: String(link.textContent ?? "").replace(/\s+/g, " ").trim(),
+          url: url.href
+        };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  }
+  function filterHdblogSearchResults(document2, keywords) {
+    const candidates = collectHdblogSearchResults(document2);
+    const { blocked, remaining } = filterSearchCandidates(candidates, keywords);
+    blocked.forEach(({ article }) => article.remove());
+    return { blocked, remaining };
+  }
+  function getBlockedKeywords() {
+    const stored = GM_getValue(STORAGE_KEY2, null);
+    if (stored === null || stored === void 0) {
+      return parseBlockedKeywords(DEFAULT_BLOCKED_KEYWORDS);
+    }
+    return parseBlockedKeywords(stored);
+  }
+  function saveBlockedKeywords(keywords) {
+    GM_setValue(STORAGE_KEY2, keywords.join("\n"));
+  }
+  function registerSettingsMenu2() {
+    if (typeof GM_registerMenuCommand !== "function") return;
+    GM_registerMenuCommand("\u{1F6AB} \u8BBE\u7F6E hdblog \u641C\u7D22\u5C4F\u853D\u5173\u952E\u8BCD", () => {
+      const current = getBlockedKeywords().join("\n");
+      const input = window.prompt(
+        "\u8BF7\u8F93\u5165 hdblog \u641C\u7D22\u7ED3\u679C\u9700\u8981\u5C4F\u853D\u7684\u6807\u9898\u5173\u952E\u8BCD\u3002\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u7559\u7A7A\u8868\u793A\u5173\u95ED\u5173\u952E\u8BCD\u5C4F\u853D\uFF1A",
+        current
+      );
+      if (input === null) return;
+      const keywords = parseBlockedKeywords(input);
+      saveBlockedKeywords(keywords);
+      window.alert(
+        keywords.length ? `\u5DF2\u4FDD\u5B58\u5C4F\u853D\u5173\u952E\u8BCD\uFF1A
+${keywords.join("\n")}
+
+\u5237\u65B0\u641C\u7D22\u7ED3\u679C\u9875\u540E\u751F\u6548\u3002` : "\u5DF2\u6E05\u7A7A\u5C4F\u853D\u5173\u952E\u8BCD\u3002\u5237\u65B0\u641C\u7D22\u7ED3\u679C\u9875\u540E\u751F\u6548\u3002"
+      );
+    });
+  }
+  function applyHdblogSearchEnhancement(windowObject = window) {
+    if (!isHdblogSearchUrl(windowObject.location.href)) {
+      return { blocked: [], remaining: [], redirectTarget: "" };
+    }
+    const keywords = getBlockedKeywords();
+    const result = filterHdblogSearchResults(windowObject.document, keywords);
+    const redirectTarget = redirectTargetForSearch(result.remaining);
+    if (redirectTarget && redirectTarget !== windowObject.location.href) {
+      windowObject.location.assign(redirectTarget);
+    }
+    return { ...result, redirectTarget };
+  }
+  function installHdblogSearchEnhancement() {
+    registerSettingsMenu2();
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    applyHdblogSearchEnhancement(window);
+  }
+
   // src/index.js
   installHdblogPreviewImages();
+  installHdblogSearchEnhancement();
 })();
