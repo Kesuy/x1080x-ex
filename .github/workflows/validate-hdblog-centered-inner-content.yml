@@ -1,0 +1,206 @@
+name: Validate centered original-width hdblog content
+
+on:
+  push:
+    branches: [feat/hdblog-article-layout-download]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Keep original article width centered inside custom column
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('src/hdblog-article.js')
+          source = path.read_text(encoding='utf-8')
+
+          marker = 'export function applyHdblogArticleLayout(document, width = DEFAULT_HDBLOG_ARTICLE_WIDTH) {'
+          helper = '''function originalHdblogArticleWidth(document, fallback) {
+  const stored = Number(document?.body?.dataset?.x1080xHdblogOriginalArticleWidth || 0);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+
+  const candidates = [
+    articleElement(document),
+    document?.querySelector('main#genesis-content, #genesis-content.content'),
+  ].filter(Boolean);
+  for (const element of candidates) {
+    const measured = Number(element.getBoundingClientRect?.().width || 0);
+    if (!Number.isFinite(measured) || measured <= 0) continue;
+    const rounded = Math.round(measured * 100) / 100;
+    if (document.body?.dataset) {
+      document.body.dataset.x1080xHdblogOriginalArticleWidth = String(rounded);
+    }
+    return rounded;
+  }
+  return fallback;
+}
+
+'''
+          if 'function originalHdblogArticleWidth' not in source:
+              if marker not in source:
+                  raise SystemExit('apply layout marker not found')
+              source = source.replace(marker, helper + marker, 1)
+
+          old_apply = '''export function applyHdblogArticleLayout(document, width = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
+  if (!document?.head || !document.body) return false;
+  const safeWidth = normalizeHdblogArticleWidth(width);
+  document.body.classList.add(ARTICLE_BODY_CLASS);
+'''
+          new_apply = '''export function applyHdblogArticleLayout(document, width = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
+  if (!document?.head || !document.body) return false;
+  const safeWidth = normalizeHdblogArticleWidth(width);
+  const originalWidth = originalHdblogArticleWidth(document, safeWidth);
+  document.body.classList.add(ARTICLE_BODY_CLASS);
+'''
+          if old_apply not in source:
+              raise SystemExit('apply layout prologue not found')
+          source = source.replace(old_apply, new_apply, 1)
+
+          old_vars = '''body.${ARTICLE_BODY_CLASS} {
+  --x1080x-hdblog-article-width: ${safeWidth}px;
+  --x1080x-hdblog-sidebar-width: 300px;
+'''
+          new_vars = '''body.${ARTICLE_BODY_CLASS} {
+  --x1080x-hdblog-article-width: ${safeWidth}px;
+  --x1080x-hdblog-original-article-width: ${originalWidth}px;
+  --x1080x-hdblog-sidebar-width: 300px;
+'''
+          if old_vars not in source:
+              raise SystemExit('layout variables block not found')
+          source = source.replace(old_vars, new_vars, 1)
+
+          old_article = '''body.${ARTICLE_BODY_CLASS} article.entry,
+body.${ARTICLE_BODY_CLASS} article.post,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-content {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+'''
+          new_article = '''body.${ARTICLE_BODY_CLASS} article.entry,
+body.${ARTICLE_BODY_CLASS} article.post {
+  width: min(100%, var(--x1080x-hdblog-original-article-width)) !important;
+  max-width: var(--x1080x-hdblog-original-article-width) !important;
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-content {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+}
+'''
+          if old_article not in source:
+              raise SystemExit('article sizing block not found')
+          source = source.replace(old_article, new_article, 1)
+
+          old_clear = '''export function clearHdblogArticleLayout(document) {
+  if (!document) return false;
+  document.body?.classList.remove(ARTICLE_BODY_CLASS);
+  document.getElementById(LAYOUT_STYLE_ID)?.remove();
+  return true;
+}
+'''
+          new_clear = '''export function clearHdblogArticleLayout(document) {
+  if (!document) return false;
+  document.body?.classList.remove(ARTICLE_BODY_CLASS);
+  if (document.body?.dataset) delete document.body.dataset.x1080xHdblogOriginalArticleWidth;
+  document.getElementById(LAYOUT_STYLE_ID)?.remove();
+  return true;
+}
+'''
+          if old_clear not in source:
+              raise SystemExit('clear layout block not found')
+          source = source.replace(old_clear, new_clear, 1)
+          path.write_text(source, encoding='utf-8')
+
+          test_path = Path('test/hdblog-article.test.js')
+          test = test_path.read_text(encoding='utf-8')
+
+          old_dom = '''  const dom = articleDom();
+  assert.equal(applyHdblogArticleLayout(dom.window.document, 1280), true);
+'''
+          new_dom = '''  const dom = articleDom();
+  const article = dom.window.document.querySelector('article.entry');
+  article.getBoundingClientRect = () => ({ width: 760 });
+  assert.equal(applyHdblogArticleLayout(dom.window.document, 1280), true);
+'''
+          if old_dom not in test:
+              raise SystemExit('layout test DOM setup not found')
+          test = test.replace(old_dom, new_dom, 1)
+
+          old_assert = '''  assert.match(style.textContent, /--x1080x-hdblog-article-width:\\s*1280px/);
+  assert.match(style.textContent, /\\.site-header \\.wrap/);
+  assert.match(style.textContent, /\\.nav-primary \\.wrap/);
+  assert.match(style.textContent, /article\\.entry,[\\s\\S]*?width:\\s*100% !important/);
+'''
+          new_assert = '''  assert.match(style.textContent, /--x1080x-hdblog-article-width:\\s*1280px/);
+  assert.match(style.textContent, /--x1080x-hdblog-original-article-width:\\s*760px/);
+  assert.match(style.textContent, /\\.site-header \\.wrap/);
+  assert.match(style.textContent, /\\.nav-primary \\.wrap/);
+  assert.match(style.textContent, /article\\.entry,[\\s\\S]*?width:\\s*min\\(100%, var\\(--x1080x-hdblog-original-article-width\\)\\) !important/);
+  assert.match(style.textContent, /max-width:\\s*var\\(--x1080x-hdblog-original-article-width\\) !important/);
+'''
+          if old_assert not in test:
+              raise SystemExit('layout assertions block not found')
+          test = test.replace(old_assert, new_assert, 1)
+
+          old_second = '''  applyHdblogArticleLayout(dom.window.document, 1500);
+  assert.match(style.textContent, /--x1080x-hdblog-article-width:\\s*1500px/);
+
+  assert.equal(clearHdblogArticleLayout(dom.window.document), true);
+'''
+          new_second = '''  article.getBoundingClientRect = () => ({ width: 1500 });
+  applyHdblogArticleLayout(dom.window.document, 1500);
+  assert.match(style.textContent, /--x1080x-hdblog-article-width:\\s*1500px/);
+  assert.match(style.textContent, /--x1080x-hdblog-original-article-width:\\s*760px/);
+
+  assert.equal(clearHdblogArticleLayout(dom.window.document), true);
+  assert.equal(dom.window.document.body.dataset.x1080xHdblogOriginalArticleWidth, undefined);
+'''
+          if old_second not in test:
+              raise SystemExit('second layout application block not found')
+          test = test.replace(old_second, new_second, 1)
+
+          test_path.write_text(test, encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full validation
+        run: npm run check
+
+      - name: Commit rebuilt userscript and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/validate-hdblog-centered-inner-content.yml
+          git add src/hdblog-article.js test/hdblog-article.test.js dist/x1080x-ex.user.js
+          git commit -m "fix: center original-width article inside custom hdblog column"
+          git push origin HEAD:feat/hdblog-article-layout-download
