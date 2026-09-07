@@ -7,9 +7,9 @@ const MAX_HDBLOG_ARTICLE_WIDTH = 3000;
 const LAYOUT_STYLE_ID = 'x1080x-ex-hdblog-article-layout';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-hdblog-image-download';
 const ARTICLE_BODY_CLASS = 'x1080x-hdblog-single';
-const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
-const DOWNLOAD_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|preview|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?)\b/i;
 const REQUEST_TIMEOUT = 60000;
+const PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
+const PIXHOST_IMAGE_HOST_PATTERN = /^img\d+\.(?:pixhost\.(?:to|cc)|pixho\.st)$/i;
 
 function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -21,7 +21,9 @@ function isHdblogHost(locationObject) {
 }
 
 export function normalizeHdblogArticleWidth(value, fallback = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  const parsed = Number.parseInt(text, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(MAX_HDBLOG_ARTICLE_WIDTH, Math.max(MIN_HDBLOG_ARTICLE_WIDTH, parsed));
 }
@@ -151,38 +153,10 @@ export function extractHdblogArticleCode(document) {
 }
 
 function absoluteHttpUrl(document, value) {
-  if (!value || /^(?:data:|blob:|javascript:)/i.test(value)) return '';
+  if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return '';
   try {
-    const url = new URL(value, document.baseURI);
+    const url = new URL(String(value), document.baseURI);
     return /^https?:$/.test(url.protocol) ? url.href : '';
-  } catch {
-    return '';
-  }
-}
-
-function directImageHref(document, anchor) {
-  const href = absoluteHttpUrl(document, anchor?.getAttribute('href'));
-  if (!href || isPixhostShowUrl(href, document.baseURI)) return '';
-  try {
-    return IMAGE_EXTENSION_PATTERN.test(new URL(href).pathname) ? href : '';
-  } catch {
-    return '';
-  }
-}
-
-function wordpressOriginalUrl(document, value) {
-  const href = absoluteHttpUrl(document, value);
-  if (!href) return '';
-  try {
-    const url = new URL(href);
-    if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return '';
-    const originalPath = url.pathname.replace(
-      /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
-      ''
-    );
-    if (originalPath === url.pathname) return '';
-    url.pathname = originalPath;
-    return url.href;
   } catch {
     return '';
   }
@@ -207,6 +181,7 @@ function largestSrcsetUrl(document, value) {
 }
 
 function thumbnailUrl(document, image) {
+  if (!image) return '';
   const values = [
     image.getAttribute('data-orig-file'),
     image.getAttribute('data-original'),
@@ -225,24 +200,23 @@ function thumbnailUrl(document, image) {
   return '';
 }
 
-function preferredDirectUrl(document, image) {
-  const directHref = directImageHref(document, image.closest('a[href]'));
-  if (directHref) return wordpressOriginalUrl(document, directHref) || directHref;
-  const candidates = [
-    image.getAttribute('data-orig-file'),
-    image.getAttribute('data-original'),
-    image.getAttribute('data-lazy-src'),
-    image.getAttribute('data-src'),
-    largestSrcsetUrl(document, image.getAttribute('data-srcset')),
-    largestSrcsetUrl(document, image.getAttribute('data-lazy-srcset')),
-    largestSrcsetUrl(document, image.getAttribute('srcset')),
-    image.currentSrc,
-    image.getAttribute('src'),
-  ];
-  for (const candidate of candidates) {
-    const url = absoluteHttpUrl(document, candidate);
-    if (!url) continue;
-    return wordpressOriginalUrl(document, url) || url;
+function isPixhostImageUrl(value, baseUrl) {
+  try {
+    const url = new URL(value, baseUrl);
+    return PIXHOST_IMAGE_HOST_PATTERN.test(url.hostname)
+      && /^\/images\//i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function displayedPixhostImageUrl(document, image) {
+  if (!image || image.dataset.x1080xPreviewLarge !== '1') return '';
+  const anchorHref = absoluteHttpUrl(document, image.closest('a[href]')?.getAttribute('href'));
+  const candidates = [image.currentSrc, image.getAttribute('src'), anchorHref];
+  for (const value of candidates) {
+    const url = absoluteHttpUrl(document, value);
+    if (url && isPixhostImageUrl(url, document.baseURI)) return url;
   }
   return '';
 }
@@ -261,47 +235,59 @@ function textNodesUnder(root) {
   return nodes;
 }
 
-function findDownloadBoundary(content) {
-  return textNodesUnder(content).find((node) => DOWNLOAD_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))) || null;
+function isAfter(reference, node) {
+  return Boolean(reference?.compareDocumentPosition(node) & 4);
 }
 
-function isBefore(reference, node) {
-  if (!reference) return true;
-  return Boolean(node.compareDocumentPosition(reference) & 4);
+function previewRange(content) {
+  const nodes = textNodesUnder(content);
+  const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
+  if (!marker) return null;
+  const boundary = nodes.find((node) => (
+    isAfter(marker, node)
+    && PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))
+  )) || null;
+  return { marker, boundary };
 }
 
-function isLikelyCoverImage(image) {
-  if (image.closest('.avatar, .author-box, .sharedaddy, .share, .social, .emoji, .wp-smiley')) return false;
-  const className = `${image.className || ''} ${image.parentElement?.className || ''}`;
-  if (/\b(?:avatar|emoji|smilie|icon|logo)\b/i.test(className)) return false;
-  const width = image.naturalWidth || image.width || Number(image.getAttribute('width')) || 0;
-  const height = image.naturalHeight || image.height || Number(image.getAttribute('height')) || 0;
-  if (width > 0 && height > 0 && (width < 160 || height < 160)) return false;
-  return true;
+function inPreviewRange(range, node) {
+  if (!range || !isAfter(range.marker, node)) return false;
+  return !range.boundary || !isAfter(range.boundary, node);
 }
 
-export function collectHdblogCoverImages(document) {
+export function collectHdblogPixhostPreviewImages(document) {
   const content = articleContentElement(document);
   if (!content) return [];
-  const boundary = findDownloadBoundary(content);
+  const range = previewRange(content);
+  if (!range) return [];
   const seen = new Set();
-  return [...content.querySelectorAll('img')]
-    .filter((image) => isBefore(boundary, image) && isLikelyCoverImage(image))
-    .map((image) => {
-      const anchor = image.closest('a[href]');
-      const showUrl = absoluteHttpUrl(document, anchor?.getAttribute('href'));
-      const pixhostShowUrl = showUrl && isPixhostShowUrl(showUrl, document.baseURI) ? showUrl : '';
-      const thumbUrl = thumbnailUrl(document, image);
-      const directUrl = preferredDirectUrl(document, image);
-      return { image, pixhostShowUrl, thumbUrl, directUrl };
+
+  return [...content.querySelectorAll('a[href]')]
+    .filter((anchor) => inPreviewRange(range, anchor))
+    .map((anchor) => {
+      const image = anchor.querySelector('img');
+      if (!image) return null;
+      const href = absoluteHttpUrl(document, anchor.getAttribute('href'));
+      const pixhostShowUrl = isPixhostShowUrl(href, document.baseURI) ? href : '';
+      const directUrl = displayedPixhostImageUrl(document, image);
+      if (!pixhostShowUrl && !directUrl) return null;
+      return {
+        image,
+        pixhostShowUrl,
+        thumbUrl: thumbnailUrl(document, image),
+        directUrl,
+      };
     })
-    .filter((candidate) => candidate.pixhostShowUrl || candidate.directUrl)
+    .filter(Boolean)
     .filter((candidate) => {
       const key = candidate.pixhostShowUrl || candidate.directUrl;
       return !seen.has(key) && seen.add(key);
     })
-    .slice(0, 12);
+    .slice(0, 24);
 }
+
+// 兼容本分支早期测试/调用；现在只返回 Preview 区的 Pixhost 图片，不再返回封面。
+export const collectHdblogCoverImages = collectHdblogPixhostPreviewImages;
 
 export function hdblogImageFilename(code, index, total, extension = 'jpg') {
   const safeCode = normalizeText(code).replace(/[<>:"/\\|?*]/g, '-');
@@ -370,33 +356,37 @@ function saveBlob(document, blob, name) {
 }
 
 async function resolveCandidateUrl(document, candidate, gmRequest) {
+  const displayed = displayedPixhostImageUrl(document, candidate.image);
+  if (displayed) return displayed;
   if (!candidate.pixhostShowUrl) return candidate.directUrl;
-  const resolved = await resolvePixhostShowUrl(
+  return resolvePixhostShowUrl(
     document,
     candidate.pixhostShowUrl,
     candidate.thumbUrl,
     gmRequest
   );
-  return resolved || candidate.directUrl || candidate.thumbUrl;
 }
 
-async function downloadHdblogArticleImages(button, document, locationObject, gmRequest) {
+async function downloadHdblogArticleImages(button, document, locationObject, gmRequest, initialCandidates = []) {
   const view = document.defaultView;
   const code = extractHdblogArticleCode(document);
   if (!code) {
     view?.alert('没有识别到影片番号，未开始下载。');
     return;
   }
-  const candidates = collectHdblogCoverImages(document);
+
+  const candidates = initialCandidates.length
+    ? initialCandidates
+    : collectHdblogPixhostPreviewImages(document);
   if (!candidates.length) {
-    view?.alert('文章开头没有找到可下载的缩略图。');
+    view?.alert('Preview 区没有找到 Pixhost show 图片。');
     return;
   }
 
   button.disabled = true;
   const failures = [];
   try {
-    button.textContent = '解析图片…';
+    button.textContent = '解析 Preview…';
     const resolved = [];
     const seen = new Set();
     for (const candidate of candidates) {
@@ -407,10 +397,10 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
           resolved.push(url);
         }
       } catch (error) {
-        failures.push(error?.message || '大图地址解析失败');
+        failures.push(error?.message || 'Pixhost 大图地址解析失败');
       }
     }
-    if (!resolved.length) throw new Error('没有解析到可下载的大图地址。');
+    if (!resolved.length) throw new Error('没有解析到可下载的 Pixhost Preview 大图。');
 
     for (const [index, url] of resolved.entries()) {
       button.textContent = `下载 ${index + 1}/${resolved.length}`;
@@ -436,11 +426,15 @@ function installDownloadButton(document, locationObject, gmRequest) {
   if (document.getElementById(DOWNLOAD_BUTTON_ID)) return;
   const title = articleTitleElement(document);
   if (!title) return;
+
+  // 在 Preview 大图增强改写 Pixhost show 链接前先保存原始候选，确保只下载这些 Preview。
+  const initialCandidates = collectHdblogPixhostPreviewImages(document);
+
   const button = document.createElement('button');
   button.id = DOWNLOAD_BUTTON_ID;
   button.type = 'button';
   button.textContent = '⬇ 下载图片';
-  button.title = '下载文章开头的封面/缩略图，并自动按影片番号重命名';
+  button.title = '只下载 Preview 区由 Pixhost show 提供的大图，并自动按影片番号重命名';
   Object.assign(button.style, {
     display: 'inline-flex',
     alignItems: 'center',
@@ -462,28 +456,46 @@ function installDownloadButton(document, locationObject, gmRequest) {
     button,
     document,
     locationObject,
-    gmRequest
+    gmRequest,
+    initialCandidates
   ));
   title.append(' ', button);
 }
 
+function rawStoredWidth() {
+  if (typeof GM_getValue !== 'function') return '';
+  const value = GM_getValue(HDBLOG_ARTICLE_WIDTH_KEY, '');
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
 function readStoredWidth() {
-  if (typeof GM_getValue !== 'function') return DEFAULT_HDBLOG_ARTICLE_WIDTH;
-  return normalizeHdblogArticleWidth(GM_getValue(HDBLOG_ARTICLE_WIDTH_KEY, DEFAULT_HDBLOG_ARTICLE_WIDTH));
+  return normalizeHdblogArticleWidth(rawStoredWidth(), DEFAULT_HDBLOG_ARTICLE_WIDTH);
 }
 
 function registerWidthSetting(document) {
   if (typeof GM_registerMenuCommand !== 'function') return;
   GM_registerMenuCommand('📐 设置 hdblog 文章宽度', () => {
-    const current = readStoredWidth();
+    const stored = rawStoredWidth();
     const input = document.defaultView?.prompt(
-      `请输入 hdblog 文章主内容区宽度（px，${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH}）：`,
-      String(current)
+      `请输入 hdblog 文章主内容区宽度（px）；留空使用默认 ${DEFAULT_HDBLOG_ARTICLE_WIDTH}px：`,
+      stored
     );
     if (input === null || input === undefined) return;
-    const numeric = Number.parseInt(input.trim(), 10);
+
+    const trimmed = input.trim();
+    if (!trimmed) {
+      if (typeof GM_setValue === 'function') GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, '');
+      if (isHdblogArticlePage(document, document.location)) {
+        applyHdblogArticleLayout(document, DEFAULT_HDBLOG_ARTICLE_WIDTH);
+      }
+      return;
+    }
+
+    const numeric = Number.parseInt(trimmed, 10);
     if (!Number.isFinite(numeric) || numeric < MIN_HDBLOG_ARTICLE_WIDTH || numeric > MAX_HDBLOG_ARTICLE_WIDTH) {
-      document.defaultView?.alert(`请输入 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} 之间的整数。`);
+      document.defaultView?.alert(
+        `请输入 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} 之间的整数，或留空使用默认值。`
+      );
       return;
     }
     if (typeof GM_setValue === 'function') GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
