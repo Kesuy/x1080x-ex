@@ -2,6 +2,8 @@ import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 
 export const HDBLOG_ARTICLE_WIDTH_KEY = 'x1080x-ex:hdblog-article-width';
 export const HDBLOG_SHOW_DOWNLOAD_AREA_KEY = 'x1080x-ex:hdblog-show-download-area';
+export const HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY = 'x1080x-ex:hdblog-show-image-download-button';
+export const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
 export const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 export const DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
 const DEFAULT_HDBLOG_BLOCKED_KEYWORDS = 'モザイク破壊';
@@ -137,19 +139,28 @@ body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
 }
 body.${ARTICLE_BODY_CLASS} article.entry,
 body.${ARTICLE_BODY_CLASS} article.post {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  box-shadow: none !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-footer,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-footer,
+body.${ARTICLE_BODY_CLASS} main#genesis-content > .entry-comments,
+body.${ARTICLE_BODY_CLASS} main#genesis-content > .comment-respond,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content > .entry-comments,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content > .comment-respond {
   width: min(100%, var(--x1080x-hdblog-original-article-width)) !important;
   max-width: var(--x1080x-hdblog-original-article-width) !important;
   box-sizing: border-box !important;
   margin-left: auto !important;
   margin-right: auto !important;
-}
-body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
-body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
-body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
-body.${ARTICLE_BODY_CLASS} article.post > .entry-content {
-  width: 100% !important;
-  max-width: none !important;
-  box-sizing: border-box !important;
 }
 body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
   display: flex !important;
@@ -706,6 +717,16 @@ function readDownloadAreaVisible() {
   return GM_getValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, true) !== false;
 }
 
+function readImageDownloadButtonVisible() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, true) !== false;
+}
+
+export function isHdblogPreviewExpansionEnabled() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
+}
+
 function readBlockedKeywordsText() {
   if (typeof GM_getValue !== 'function') return DEFAULT_HDBLOG_BLOCKED_KEYWORDS;
   const stored = GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY, null);
@@ -761,10 +782,22 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
       <small style="display:block;margin-top:5px;color:#666">只扩展白色主内容区域；原正文宽度保持不变并居中。</small>
     </label>
-    <label style="display:flex;align-items:center;gap:9px;margin-bottom:16px;font-weight:600">
-      <input data-setting="show-downloads" type="checkbox">
-      显示 Btfile / katfile / Freedl / Rapidgator 网盘下载区域
-    </label>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:10px">文章页显示</div>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="show-downloads" type="checkbox">
+        显示 Btfile / katfile / Freedl / Rapidgator 网盘下载区域
+      </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="show-image-download" type="checkbox">
+        显示标题旁的图片下载按钮（⬇）
+      </label>
+      <label style="display:flex;align-items:center;gap:9px">
+        <input data-setting="expand-preview" type="checkbox">
+        自动展开 Preview 大图
+      </label>
+      <small style="display:block;margin-top:9px;color:#666">关闭 Preview 大图后保留网站原始缩略图；保存设置后页面会自动刷新。</small>
+    </div>
     <label style="display:block;margin-bottom:18px">
       <span style="display:block;font-weight:600;margin-bottom:6px">搜索结果屏蔽关键词</span>
       <textarea data-setting="keywords" rows="5" placeholder="留空 = 不屏蔽"
@@ -778,9 +811,13 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
 
   const widthInput = panel.querySelector('[data-setting="width"]');
   const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
+  const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
+  const previewInput = panel.querySelector('[data-setting="expand-preview"]');
   const keywordsInput = panel.querySelector('[data-setting="keywords"]');
   widthInput.value = rawStoredWidth();
   downloadsInput.checked = readDownloadAreaVisible();
+  imageDownloadInput.checked = readImageDownloadButtonVisible();
+  previewInput.checked = isHdblogPreviewExpansionEnabled();
   keywordsInput.value = readBlockedKeywordsText();
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeHdblogSettingsPanel(document));
@@ -803,15 +840,14 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     if (typeof GM_setValue === 'function') {
       GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, widthText ? numeric : '');
       GM_setValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, downloadsInput.checked);
+      GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
+      GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, previewInput.checked);
       GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
     }
 
-    if (isHdblogArticlePage(document, document.location)) {
-      if (widthText) applyHdblogArticleLayout(document, numeric);
-      else clearHdblogArticleLayout(document);
-      applyHdblogDownloadAreaVisibility(document, downloadsInput.checked);
-    }
     closeHdblogSettingsPanel(document);
+    const view = document.defaultView;
+    if (view?.location?.reload) view.location.reload();
   });
 
   overlay.append(panel);
@@ -836,5 +872,6 @@ export function installHdblogArticleEnhancement(
   if (storedWidth === null) clearHdblogArticleLayout(document);
   else applyHdblogArticleLayout(document, storedWidth);
   applyHdblogDownloadAreaVisibility(document, readDownloadAreaVisible());
-  installDownloadButton(document, locationObject, gmRequest);
+  if (readImageDownloadButtonVisible()) installDownloadButton(document, locationObject, gmRequest);
+  else document.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
 }

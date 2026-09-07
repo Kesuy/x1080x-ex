@@ -12,6 +12,7 @@ import {
   isHdblogArticlePage,
   installHdblogArticleEnhancement,
   normalizeHdblogArticleWidth,
+  openHdblogSettingsPanel,
 } from '../src/hdblog-article.js';
 
 function articleDom({
@@ -134,8 +135,10 @@ test('custom article width is bounded, and clearing it restores the site default
   assert.match(style.textContent, /--x1080x-hdblog-original-article-width:\s*760px/);
   assert.match(style.textContent, /\.site-header \.wrap/);
   assert.match(style.textContent, /\.nav-primary \.wrap/);
-  assert.match(style.textContent, /article\.entry,[\s\S]*?width:\s*min\(100%, var\(--x1080x-hdblog-original-article-width\)\) !important/);
+  assert.match(style.textContent, /article\.entry,[\s\S]*?width:\s*100% !important/);
+  assert.match(style.textContent, /article\.entry > \.entry-header,[\s\S]*?width:\s*min\(100%, var\(--x1080x-hdblog-original-article-width\)\) !important/);
   assert.match(style.textContent, /max-width:\s*var\(--x1080x-hdblog-original-article-width\) !important/);
+  assert.match(style.textContent, /box-shadow:\s*none !important/);
   assert.match(style.textContent, /#genesis-content\.content[\s\S]*?background:\s*#fff !important/);
   assert.match(style.textContent, /display:\s*grid !important/);
   assert.match(style.textContent, /grid-column:\s*1 !important/);
@@ -154,6 +157,17 @@ test('custom article width is bounded, and clearing it restores the site default
   assert.equal(dom.window.document.querySelector('#x1080x-ex-hdblog-article-layout'), null);
 });
 
+
+test('hdblog settings panel includes download-button and Preview expansion switches', () => {
+  const dom = articleDom();
+  const panel = openHdblogSettingsPanel(dom.window.document);
+  assert.ok(panel);
+  assert.ok(panel.querySelector('[data-setting="show-downloads"]'));
+  assert.ok(panel.querySelector('[data-setting="show-image-download"]'));
+  assert.ok(panel.querySelector('[data-setting="expand-preview"]'));
+  assert.ok(panel.querySelector('[data-setting="keywords"]'));
+  panel.remove();
+});
 
 test('article download button uses an icon-only idle label', () => {
   const dom = articleDom({ content: '<p>Preview:</p>' });

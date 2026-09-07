@@ -94,6 +94,30 @@ test('hdblog 文章页将 Preview 缩略图和图片链接直接展开为大图'
   }
 });
 
+test('hdblog Preview 大图设置关闭时保留原始缩略图', async () => {
+  const dom = new JSDOM(`
+    <main id="genesis-content"><article class="entry"><div class="entry-content">
+      <p><strong>Preview:</strong></p>
+      <p><a href="/full.jpg"><img id="preview-disabled" src="/thumb.jpg" width="300"></a></p>
+    </div></article></main>
+  `, { url: 'https://hdblog.me/example/' });
+  const restore = installDomGlobals(dom.window);
+  globalThis.GM_getValue = (key, fallback) => (
+    key === 'x1080x-ex:hdblog-expand-preview-images' ? false : fallback
+  );
+
+  try {
+    await import(`../src/userscript.js?hdblog-preview-disabled=${Date.now()}`);
+    const image = dom.window.document.querySelector('#preview-disabled');
+    assert.equal(image.src, 'https://hdblog.me/thumb.jpg');
+    assert.equal(image.getAttribute('width'), '300');
+    assert.equal(image.dataset.x1080xPreviewExpanded, undefined);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
 test('非 hdblog 域名不修改同样的 Preview 页面结构', async () => {
   const dom = new JSDOM(`
     <main id="genesis-content"><article class="entry"><div class="entry-content">

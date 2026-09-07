@@ -7,6 +7,7 @@ import {
 import { requestTorrentBytes } from './torrent.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
+const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
 const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
@@ -681,7 +682,9 @@ function addBatchOpenButton() {
 registerSettingsMenu();
 
 if (isAllowedHost(location.hostname, getConfiguredDomains())) {
-  expandHdblogPreviewImages();
+  const expandHdblogPreview = typeof GM_getValue !== 'function'
+    || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
+  if (expandHdblogPreview) expandHdblogPreviewImages();
   if (isThreadPage()) addDownloadButton();
   if (isBatchOpenPage()) addBatchOpenButton();
 }

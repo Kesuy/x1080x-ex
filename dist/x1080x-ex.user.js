@@ -574,6 +574,7 @@
 
   // src/userscript.js
   var STORAGE_KEY = "x1080x-ex:domains";
+  var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = "x1080x-ex:hdblog-expand-preview-images";
   var DEFAULT_DOMAINS = "agaghhh.cc\nhdblog.me";
   var BUTTON_ID = "x1080x-ex-download";
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
@@ -1178,7 +1179,8 @@ ${failures.join("\n")}
   }
   registerSettingsMenu();
   if (isAllowedHost(location.hostname, getConfiguredDomains())) {
-    expandHdblogPreviewImages();
+    const expandHdblogPreview = typeof GM_getValue !== "function" || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
+    if (expandHdblogPreview) expandHdblogPreviewImages();
     if (isThreadPage()) addDownloadButton();
     if (isBatchOpenPage()) addBatchOpenButton();
   }
@@ -1294,6 +1296,8 @@ ${failures.join("\n")}
   // src/hdblog-article.js
   var HDBLOG_ARTICLE_WIDTH_KEY = "x1080x-ex:hdblog-article-width";
   var HDBLOG_SHOW_DOWNLOAD_AREA_KEY = "x1080x-ex:hdblog-show-download-area";
+  var HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY = "x1080x-ex:hdblog-show-image-download-button";
+  var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2 = "x1080x-ex:hdblog-expand-preview-images";
   var HDBLOG_BLOCKED_KEYWORDS_KEY = "x1080x-ex:hdblog-blocked-keywords";
   var DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
   var DEFAULT_HDBLOG_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
@@ -1413,19 +1417,28 @@ body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
 }
 body.${ARTICLE_BODY_CLASS} article.entry,
 body.${ARTICLE_BODY_CLASS} article.post {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  box-shadow: none !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-footer,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-footer,
+body.${ARTICLE_BODY_CLASS} main#genesis-content > .entry-comments,
+body.${ARTICLE_BODY_CLASS} main#genesis-content > .comment-respond,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content > .entry-comments,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content > .comment-respond {
   width: min(100%, var(--x1080x-hdblog-original-article-width)) !important;
   max-width: var(--x1080x-hdblog-original-article-width) !important;
   box-sizing: border-box !important;
   margin-left: auto !important;
   margin-right: auto !important;
-}
-body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
-body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
-body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
-body.${ARTICLE_BODY_CLASS} article.post > .entry-content {
-  width: 100% !important;
-  max-width: none !important;
-  box-sizing: border-box !important;
 }
 body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
   display: flex !important;
@@ -1925,6 +1938,14 @@ ${failures.join("\n")}`);
     if (typeof GM_getValue !== "function") return true;
     return GM_getValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, true) !== false;
   }
+  function readImageDownloadButtonVisible() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, true) !== false;
+  }
+  function isHdblogPreviewExpansionEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, true) !== false;
+  }
   function readBlockedKeywordsText() {
     if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BLOCKED_KEYWORDS;
     const stored = GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY, null);
@@ -1980,10 +2001,22 @@ ${failures.join("\n")}`);
         style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
       <small style="display:block;margin-top:5px;color:#666">\u53EA\u6269\u5C55\u767D\u8272\u4E3B\u5185\u5BB9\u533A\u57DF\uFF1B\u539F\u6B63\u6587\u5BBD\u5EA6\u4FDD\u6301\u4E0D\u53D8\u5E76\u5C45\u4E2D\u3002</small>
     </label>
-    <label style="display:flex;align-items:center;gap:9px;margin-bottom:16px;font-weight:600">
-      <input data-setting="show-downloads" type="checkbox">
-      \u663E\u793A Btfile / katfile / Freedl / Rapidgator \u7F51\u76D8\u4E0B\u8F7D\u533A\u57DF
-    </label>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:10px">\u6587\u7AE0\u9875\u663E\u793A</div>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="show-downloads" type="checkbox">
+        \u663E\u793A Btfile / katfile / Freedl / Rapidgator \u7F51\u76D8\u4E0B\u8F7D\u533A\u57DF
+      </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="show-image-download" type="checkbox">
+        \u663E\u793A\u6807\u9898\u65C1\u7684\u56FE\u7247\u4E0B\u8F7D\u6309\u94AE\uFF08\u2B07\uFF09
+      </label>
+      <label style="display:flex;align-items:center;gap:9px">
+        <input data-setting="expand-preview" type="checkbox">
+        \u81EA\u52A8\u5C55\u5F00 Preview \u5927\u56FE
+      </label>
+      <small style="display:block;margin-top:9px;color:#666">\u5173\u95ED Preview \u5927\u56FE\u540E\u4FDD\u7559\u7F51\u7AD9\u539F\u59CB\u7F29\u7565\u56FE\uFF1B\u4FDD\u5B58\u8BBE\u7F6E\u540E\u9875\u9762\u4F1A\u81EA\u52A8\u5237\u65B0\u3002</small>
+    </div>
     <label style="display:block;margin-bottom:18px">
       <span style="display:block;font-weight:600;margin-bottom:6px">\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD</span>
       <textarea data-setting="keywords" rows="5" placeholder="\u7559\u7A7A = \u4E0D\u5C4F\u853D"
@@ -1996,9 +2029,13 @@ ${failures.join("\n")}`);
     </div>`;
     const widthInput = panel.querySelector('[data-setting="width"]');
     const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
+    const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
+    const previewInput = panel.querySelector('[data-setting="expand-preview"]');
     const keywordsInput = panel.querySelector('[data-setting="keywords"]');
     widthInput.value = rawStoredWidth();
     downloadsInput.checked = readDownloadAreaVisible();
+    imageDownloadInput.checked = readImageDownloadButtonVisible();
+    previewInput.checked = isHdblogPreviewExpansionEnabled();
     keywordsInput.value = readBlockedKeywordsText();
     panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeHdblogSettingsPanel(document2));
     overlay.addEventListener("click", (event) => {
@@ -2019,14 +2056,13 @@ ${failures.join("\n")}`);
       if (typeof GM_setValue === "function") {
         GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, widthText ? numeric : "");
         GM_setValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, downloadsInput.checked);
+        GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
+        GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, previewInput.checked);
         GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
       }
-      if (isHdblogArticlePage(document2, document2.location)) {
-        if (widthText) applyHdblogArticleLayout(document2, numeric);
-        else clearHdblogArticleLayout(document2);
-        applyHdblogDownloadAreaVisibility(document2, downloadsInput.checked);
-      }
       closeHdblogSettingsPanel(document2);
+      const view = document2.defaultView;
+      if (view?.location?.reload) view.location.reload();
     });
     overlay.append(panel);
     document2.body.append(overlay);
@@ -2044,14 +2080,14 @@ ${failures.join("\n")}`);
     if (storedWidth === null) clearHdblogArticleLayout(document2);
     else applyHdblogArticleLayout(document2, storedWidth);
     applyHdblogDownloadAreaVisibility(document2, readDownloadAreaVisible());
-    installDownloadButton(document2, locationObject, gmRequest);
+    if (readImageDownloadButtonVisible()) installDownloadButton(document2, locationObject, gmRequest);
+    else document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
   }
 
   // src/hdblog-preview.js
   var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
   var PREVIEW_BOUNDARY_PATTERN2 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
-  var PREVIEW_VIEWPORT_GUTTER_PX = 12;
-  var PREVIEW_VIEWPORT_WIDTH = `calc(100vw - ${PREVIEW_VIEWPORT_GUTTER_PX * 2}px)`;
+  var PREVIEW_VIEWPORT_WIDTH = "min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))";
   function normalizeText2(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
@@ -2328,8 +2364,9 @@ ${failures.join("\n")}`);
     return results.filter(Boolean).length;
   }
   function installHdblogPreviewImages(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isHdblogHost2(locationObject)) return;
+    if (!document2 || !isHdblogHost2(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
     const run = () => {
+      if (!isHdblogPreviewExpansionEnabled()) return;
       expandHdblogPreviewImages2(document2, locationObject);
       void expandHdblogPixhostPreviewImages(document2, locationObject);
     };

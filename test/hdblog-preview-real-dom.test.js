@@ -42,7 +42,7 @@ test('hdblog Preview 图片突破正文宽度并解除 overflow 裁剪', () => {
   assert.equal(first.style.getPropertyValue('max-width'), '100%');
   assert.equal(first.style.getPropertyValue('display'), 'block');
   assert.equal(firstLink.style.getPropertyValue('display'), 'block');
-  assert.equal(firstLink.style.getPropertyValue('width'), 'calc(100vw - 24px)');
+  assert.equal(firstLink.style.getPropertyValue('width'), 'min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))');
   assert.equal(firstLink.style.getPropertyValue('max-width'), 'none');
   assert.equal(firstLink.style.getPropertyValue('position'), 'relative');
   assert.equal(firstLink.style.getPropertyValue('left'), '50%');
@@ -52,7 +52,7 @@ test('hdblog Preview 图片突破正文宽度并解除 overflow 裁剪', () => {
   assert.equal(second.src, 'https://hdblog.me/wp-content/uploads/2026/08/FC2PPV-4967987-b.jpg');
   assert.equal(second.hasAttribute('srcset'), false);
   assert.equal(second.style.getPropertyValue('width'), 'auto');
-  assert.equal(second.style.getPropertyValue('max-width'), 'calc(100vw - 24px)');
+  assert.equal(second.style.getPropertyValue('max-width'), 'min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))');
   assert.equal(second.style.getPropertyValue('left'), '50%');
   assert.equal(second.style.getPropertyValue('transform'), 'translateX(-50%)');
   assert.equal(second.dataset.x1080xPreviewLarge, '1');
@@ -80,7 +80,7 @@ test('Preview 文本位于任意普通标签内也可以定位', () => {
   assert.equal(expandHdblogPreviewImages(dom.window.document, dom.window.location), 1);
   const image = dom.window.document.querySelector('#preview');
   assert.equal(image.src, 'https://hdblog.me/uploads/full.webp');
-  assert.equal(image.style.getPropertyValue('max-width'), 'calc(100vw - 24px)');
+  assert.equal(image.style.getPropertyValue('max-width'), 'min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))');
   dom.window.close();
 });
 
