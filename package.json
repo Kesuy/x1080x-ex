@@ -1,9 +1,9 @@
 {
   "name": "x1080x-ex",
-  "version": "1.6.5",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
-  "description": "x1080x 论坛下载与主题列表批量后台打开增强油猴脚本",
+  "description": "x1080x / hdblog 下载与页面增强油猴脚本",
   "scripts": {
     "test": "node --test",
     "build": "node scripts/build.mjs",
