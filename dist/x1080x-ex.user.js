@@ -1299,9 +1299,9 @@ ${failures.join("\n")}
   var LAYOUT_STYLE_ID = "x1080x-ex-hdblog-article-layout";
   var DOWNLOAD_BUTTON_ID = "x1080x-ex-hdblog-image-download";
   var ARTICLE_BODY_CLASS = "x1080x-hdblog-single";
-  var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
-  var DOWNLOAD_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|preview|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?)\b/i;
   var REQUEST_TIMEOUT3 = 6e4;
+  var PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
+  var PIXHOST_IMAGE_HOST_PATTERN = /^img\d+\.(?:pixhost\.(?:to|cc)|pixho\.st)$/i;
   function normalizeText(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
@@ -1310,7 +1310,9 @@ ${failures.join("\n")}
     return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
   }
   function normalizeHdblogArticleWidth(value, fallback = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
-    const parsed = Number.parseInt(String(value ?? ""), 10);
+    const text = String(value ?? "").trim();
+    if (!text) return fallback;
+    const parsed = Number.parseInt(text, 10);
     if (!Number.isFinite(parsed)) return fallback;
     return Math.min(MAX_HDBLOG_ARTICLE_WIDTH, Math.max(MIN_HDBLOG_ARTICLE_WIDTH, parsed));
   }
@@ -1423,36 +1425,10 @@ body.${ARTICLE_BODY_CLASS} article.post .entry-content {
     return extractHdblogVideoCode(labelled?.[1] || text);
   }
   function absoluteHttpUrl(document2, value) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(value)) return "";
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
     try {
-      const url = new URL(value, document2.baseURI);
+      const url = new URL(String(value), document2.baseURI);
       return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function directImageHref2(document2, anchor) {
-    const href = absoluteHttpUrl(document2, anchor?.getAttribute("href"));
-    if (!href || isPixhostShowUrl(href, document2.baseURI)) return "";
-    try {
-      return IMAGE_EXTENSION_PATTERN2.test(new URL(href).pathname) ? href : "";
-    } catch {
-      return "";
-    }
-  }
-  function wordpressOriginalUrl(document2, value) {
-    const href = absoluteHttpUrl(document2, value);
-    if (!href) return "";
-    try {
-      const url = new URL(href);
-      if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return "";
-      const originalPath = url.pathname.replace(
-        /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
-        ""
-      );
-      if (originalPath === url.pathname) return "";
-      url.pathname = originalPath;
-      return url.href;
     } catch {
       return "";
     }
@@ -1469,6 +1445,7 @@ body.${ARTICLE_BODY_CLASS} article.post .entry-content {
     return candidates[0]?.url || "";
   }
   function thumbnailUrl(document2, image) {
+    if (!image) return "";
     const values = [
       image.getAttribute("data-orig-file"),
       image.getAttribute("data-original"),
@@ -1486,24 +1463,21 @@ body.${ARTICLE_BODY_CLASS} article.post .entry-content {
     }
     return "";
   }
-  function preferredDirectUrl(document2, image) {
-    const directHref = directImageHref2(document2, image.closest("a[href]"));
-    if (directHref) return wordpressOriginalUrl(document2, directHref) || directHref;
-    const candidates = [
-      image.getAttribute("data-orig-file"),
-      image.getAttribute("data-original"),
-      image.getAttribute("data-lazy-src"),
-      image.getAttribute("data-src"),
-      largestSrcsetUrl2(document2, image.getAttribute("data-srcset")),
-      largestSrcsetUrl2(document2, image.getAttribute("data-lazy-srcset")),
-      largestSrcsetUrl2(document2, image.getAttribute("srcset")),
-      image.currentSrc,
-      image.getAttribute("src")
-    ];
-    for (const candidate of candidates) {
-      const url = absoluteHttpUrl(document2, candidate);
-      if (!url) continue;
-      return wordpressOriginalUrl(document2, url) || url;
+  function isPixhostImageUrl(value, baseUrl) {
+    try {
+      const url = new URL(value, baseUrl);
+      return PIXHOST_IMAGE_HOST_PATTERN.test(url.hostname) && /^\/images\//i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function displayedPixhostImageUrl(document2, image) {
+    if (!image || image.dataset.x1080xPreviewLarge !== "1") return "";
+    const anchorHref = absoluteHttpUrl(document2, image.closest("a[href]")?.getAttribute("href"));
+    const candidates = [image.currentSrc, image.getAttribute("src"), anchorHref];
+    for (const value of candidates) {
+      const url = absoluteHttpUrl(document2, value);
+      if (url && isPixhostImageUrl(url, document2.baseURI)) return url;
     }
     return "";
   }
@@ -1520,38 +1494,43 @@ body.${ARTICLE_BODY_CLASS} article.post .entry-content {
     }
     return nodes;
   }
-  function findDownloadBoundary(content) {
-    return textNodesUnder(content).find((node) => DOWNLOAD_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))) || null;
+  function isAfter(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
   }
-  function isBefore(reference, node) {
-    if (!reference) return true;
-    return Boolean(node.compareDocumentPosition(reference) & 4);
+  function previewRange(content) {
+    const nodes = textNodesUnder(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
+    if (!marker) return null;
+    const boundary = nodes.find((node) => isAfter(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))) || null;
+    return { marker, boundary };
   }
-  function isLikelyCoverImage(image) {
-    if (image.closest(".avatar, .author-box, .sharedaddy, .share, .social, .emoji, .wp-smiley")) return false;
-    const className = `${image.className || ""} ${image.parentElement?.className || ""}`;
-    if (/\b(?:avatar|emoji|smilie|icon|logo)\b/i.test(className)) return false;
-    const width = image.naturalWidth || image.width || Number(image.getAttribute("width")) || 0;
-    const height = image.naturalHeight || image.height || Number(image.getAttribute("height")) || 0;
-    if (width > 0 && height > 0 && (width < 160 || height < 160)) return false;
-    return true;
+  function inPreviewRange(range, node) {
+    if (!range || !isAfter(range.marker, node)) return false;
+    return !range.boundary || !isAfter(range.boundary, node);
   }
-  function collectHdblogCoverImages(document2) {
+  function collectHdblogPixhostPreviewImages(document2) {
     const content = articleContentElement(document2);
     if (!content) return [];
-    const boundary = findDownloadBoundary(content);
+    const range = previewRange(content);
+    if (!range) return [];
     const seen = /* @__PURE__ */ new Set();
-    return [...content.querySelectorAll("img")].filter((image) => isBefore(boundary, image) && isLikelyCoverImage(image)).map((image) => {
-      const anchor = image.closest("a[href]");
-      const showUrl = absoluteHttpUrl(document2, anchor?.getAttribute("href"));
-      const pixhostShowUrl = showUrl && isPixhostShowUrl(showUrl, document2.baseURI) ? showUrl : "";
-      const thumbUrl = thumbnailUrl(document2, image);
-      const directUrl = preferredDirectUrl(document2, image);
-      return { image, pixhostShowUrl, thumbUrl, directUrl };
-    }).filter((candidate) => candidate.pixhostShowUrl || candidate.directUrl).filter((candidate) => {
+    return [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(range, anchor)).map((anchor) => {
+      const image = anchor.querySelector("img");
+      if (!image) return null;
+      const href = absoluteHttpUrl(document2, anchor.getAttribute("href"));
+      const pixhostShowUrl = isPixhostShowUrl(href, document2.baseURI) ? href : "";
+      const directUrl = displayedPixhostImageUrl(document2, image);
+      if (!pixhostShowUrl && !directUrl) return null;
+      return {
+        image,
+        pixhostShowUrl,
+        thumbUrl: thumbnailUrl(document2, image),
+        directUrl
+      };
+    }).filter(Boolean).filter((candidate) => {
       const key = candidate.pixhostShowUrl || candidate.directUrl;
       return !seen.has(key) && seen.add(key);
-    }).slice(0, 12);
+    }).slice(0, 24);
   }
   function hdblogImageFilename(code, index, total, extension = "jpg") {
     const safeCode = normalizeText(code).replace(/[<>:"/\\|?*]/g, "-");
@@ -1615,31 +1594,32 @@ body.${ARTICLE_BODY_CLASS} article.post .entry-content {
     }
   }
   async function resolveCandidateUrl(document2, candidate, gmRequest) {
+    const displayed = displayedPixhostImageUrl(document2, candidate.image);
+    if (displayed) return displayed;
     if (!candidate.pixhostShowUrl) return candidate.directUrl;
-    const resolved = await resolvePixhostShowUrl(
+    return resolvePixhostShowUrl(
       document2,
       candidate.pixhostShowUrl,
       candidate.thumbUrl,
       gmRequest
     );
-    return resolved || candidate.directUrl || candidate.thumbUrl;
   }
-  async function downloadHdblogArticleImages(button, document2, locationObject, gmRequest) {
+  async function downloadHdblogArticleImages(button, document2, locationObject, gmRequest, initialCandidates = []) {
     const view = document2.defaultView;
     const code = extractHdblogArticleCode(document2);
     if (!code) {
       view?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\uFF0C\u672A\u5F00\u59CB\u4E0B\u8F7D\u3002");
       return;
     }
-    const candidates = collectHdblogCoverImages(document2);
+    const candidates = initialCandidates.length ? initialCandidates : collectHdblogPixhostPreviewImages(document2);
     if (!candidates.length) {
-      view?.alert("\u6587\u7AE0\u5F00\u5934\u6CA1\u6709\u627E\u5230\u53EF\u4E0B\u8F7D\u7684\u7F29\u7565\u56FE\u3002");
+      view?.alert("Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
       return;
     }
     button.disabled = true;
     const failures = [];
     try {
-      button.textContent = "\u89E3\u6790\u56FE\u7247\u2026";
+      button.textContent = "\u89E3\u6790 Preview\u2026";
       const resolved = [];
       const seen = /* @__PURE__ */ new Set();
       for (const candidate of candidates) {
@@ -1650,10 +1630,10 @@ body.${ARTICLE_BODY_CLASS} article.post .entry-content {
             resolved.push(url);
           }
         } catch (error) {
-          failures.push(error?.message || "\u5927\u56FE\u5730\u5740\u89E3\u6790\u5931\u8D25");
+          failures.push(error?.message || "Pixhost \u5927\u56FE\u5730\u5740\u89E3\u6790\u5931\u8D25");
         }
       }
-      if (!resolved.length) throw new Error("\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u4E0B\u8F7D\u7684\u5927\u56FE\u5730\u5740\u3002");
+      if (!resolved.length) throw new Error("\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u4E0B\u8F7D\u7684 Pixhost Preview \u5927\u56FE\u3002");
       for (const [index, url] of resolved.entries()) {
         button.textContent = `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
         try {
@@ -1681,11 +1661,12 @@ ${failures.join("\n")}`);
     if (document2.getElementById(DOWNLOAD_BUTTON_ID)) return;
     const title = articleTitleElement(document2);
     if (!title) return;
+    const initialCandidates = collectHdblogPixhostPreviewImages(document2);
     const button = document2.createElement("button");
     button.id = DOWNLOAD_BUTTON_ID;
     button.type = "button";
     button.textContent = "\u2B07 \u4E0B\u8F7D\u56FE\u7247";
-    button.title = "\u4E0B\u8F7D\u6587\u7AE0\u5F00\u5934\u7684\u5C01\u9762/\u7F29\u7565\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
+    button.title = "\u53EA\u4E0B\u8F7D Preview \u533A\u7531 Pixhost show \u63D0\u4F9B\u7684\u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
     Object.assign(button.style, {
       display: "inline-flex",
       alignItems: "center",
@@ -1711,26 +1692,41 @@ ${failures.join("\n")}`);
       button,
       document2,
       locationObject,
-      gmRequest
+      gmRequest,
+      initialCandidates
     ));
     title.append(" ", button);
   }
+  function rawStoredWidth() {
+    if (typeof GM_getValue !== "function") return "";
+    const value = GM_getValue(HDBLOG_ARTICLE_WIDTH_KEY, "");
+    return value === null || value === void 0 ? "" : String(value).trim();
+  }
   function readStoredWidth() {
-    if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_ARTICLE_WIDTH;
-    return normalizeHdblogArticleWidth(GM_getValue(HDBLOG_ARTICLE_WIDTH_KEY, DEFAULT_HDBLOG_ARTICLE_WIDTH));
+    return normalizeHdblogArticleWidth(rawStoredWidth(), DEFAULT_HDBLOG_ARTICLE_WIDTH);
   }
   function registerWidthSetting(document2) {
     if (typeof GM_registerMenuCommand !== "function") return;
     GM_registerMenuCommand("\u{1F4D0} \u8BBE\u7F6E hdblog \u6587\u7AE0\u5BBD\u5EA6", () => {
-      const current = readStoredWidth();
+      const stored = rawStoredWidth();
       const input = document2.defaultView?.prompt(
-        `\u8BF7\u8F93\u5165 hdblog \u6587\u7AE0\u4E3B\u5185\u5BB9\u533A\u5BBD\u5EA6\uFF08px\uFF0C${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH}\uFF09\uFF1A`,
-        String(current)
+        `\u8BF7\u8F93\u5165 hdblog \u6587\u7AE0\u4E3B\u5185\u5BB9\u533A\u5BBD\u5EA6\uFF08px\uFF09\uFF1B\u7559\u7A7A\u4F7F\u7528\u9ED8\u8BA4 ${DEFAULT_HDBLOG_ARTICLE_WIDTH}px\uFF1A`,
+        stored
       );
       if (input === null || input === void 0) return;
-      const numeric = Number.parseInt(input.trim(), 10);
+      const trimmed = input.trim();
+      if (!trimmed) {
+        if (typeof GM_setValue === "function") GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, "");
+        if (isHdblogArticlePage(document2, document2.location)) {
+          applyHdblogArticleLayout(document2, DEFAULT_HDBLOG_ARTICLE_WIDTH);
+        }
+        return;
+      }
+      const numeric = Number.parseInt(trimmed, 10);
       if (!Number.isFinite(numeric) || numeric < MIN_HDBLOG_ARTICLE_WIDTH || numeric > MAX_HDBLOG_ARTICLE_WIDTH) {
-        document2.defaultView?.alert(`\u8BF7\u8F93\u5165 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} \u4E4B\u95F4\u7684\u6574\u6570\u3002`);
+        document2.defaultView?.alert(
+          `\u8BF7\u8F93\u5165 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} \u4E4B\u95F4\u7684\u6574\u6570\uFF0C\u6216\u7559\u7A7A\u4F7F\u7528\u9ED8\u8BA4\u503C\u3002`
+        );
         return;
       }
       if (typeof GM_setValue === "function") GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
@@ -1746,8 +1742,8 @@ ${failures.join("\n")}`);
   }
 
   // src/hdblog-preview.js
-  var IMAGE_EXTENSION_PATTERN3 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
-  var PREVIEW_BOUNDARY_PATTERN = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
+  var PREVIEW_BOUNDARY_PATTERN2 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
   var PREVIEW_VIEWPORT_GUTTER_PX = 12;
   var PREVIEW_VIEWPORT_WIDTH = `calc(100vw - ${PREVIEW_VIEWPORT_GUTTER_PX * 2}px)`;
   function normalizeText2(value) {
@@ -1770,16 +1766,16 @@ ${failures.join("\n")}`);
     const href = absoluteHttpUrl2(document2, anchor?.getAttribute("href"));
     return href && isPixhostShowUrl(href, document2.baseURI) ? href : "";
   }
-  function directImageHref3(document2, anchor) {
+  function directImageHref2(document2, anchor) {
     const href = absoluteHttpUrl2(document2, anchor?.getAttribute("href"));
     if (!href || isPixhostShowUrl(href, document2.baseURI)) return "";
     try {
-      return IMAGE_EXTENSION_PATTERN3.test(new URL(href).pathname) ? href : "";
+      return IMAGE_EXTENSION_PATTERN2.test(new URL(href).pathname) ? href : "";
     } catch {
       return "";
     }
   }
-  function wordpressOriginalUrl2(document2, value) {
+  function wordpressOriginalUrl(document2, value) {
     const href = absoluteHttpUrl2(document2, value);
     if (!href) return "";
     try {
@@ -1825,7 +1821,7 @@ ${failures.join("\n")}`);
     const anchor = image.closest("a[href]");
     if (pixhostShowHref(document2, anchor)) return "";
     const rawCandidates = [
-      directImageHref3(document2, anchor),
+      directImageHref2(document2, anchor),
       image.getAttribute("data-orig-file"),
       image.getAttribute("data-original"),
       image.getAttribute("data-lazy-src"),
@@ -1836,7 +1832,7 @@ ${failures.join("\n")}`);
     for (const candidate of rawCandidates) {
       const direct = absoluteHttpUrl2(document2, candidate);
       if (!direct) continue;
-      const original = wordpressOriginalUrl2(document2, direct);
+      const original = wordpressOriginalUrl(document2, direct);
       if (original) return original;
       if (candidate === rawCandidates[0] || candidate === image.getAttribute("data-orig-file")) {
         return direct;
@@ -1849,7 +1845,7 @@ ${failures.join("\n")}`);
     ];
     for (const value of srcsetCandidates) {
       const url = largestSrcsetUrl3(document2, value);
-      if (url) return wordpressOriginalUrl2(document2, url) || url;
+      if (url) return wordpressOriginalUrl(document2, url) || url;
     }
     for (const candidate of rawCandidates) {
       const url = absoluteHttpUrl2(document2, candidate);
@@ -1872,19 +1868,19 @@ ${failures.join("\n")}`);
   function findPreviewMarker(root) {
     return textNodesUnder2(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue))) || null;
   }
-  function isAfter(reference, node) {
+  function isAfter2(reference, node) {
     return Boolean(reference.compareDocumentPosition(node) & 4);
   }
   function findBoundary(root, marker) {
     return textNodesUnder2(root).find((node) => {
-      if (!isAfter(marker, node)) return false;
+      if (!isAfter2(marker, node)) return false;
       const text = normalizeText2(node.nodeValue);
-      return text && PREVIEW_BOUNDARY_PATTERN.test(text);
+      return text && PREVIEW_BOUNDARY_PATTERN2.test(text);
     }) || null;
   }
-  function inPreviewRange(marker, boundary, node) {
-    if (!isAfter(marker, node)) return false;
-    return !boundary || !isAfter(boundary, node);
+  function inPreviewRange2(marker, boundary, node) {
+    if (!isAfter2(marker, node)) return false;
+    return !boundary || !isAfter2(boundary, node);
   }
   function findArticleContent(document2) {
     const article = document2.querySelector(
@@ -1972,7 +1968,7 @@ ${failures.join("\n")}`);
     }
     return true;
   }
-  function previewRange(document2, locationObject) {
+  function previewRange2(document2, locationObject) {
     if (!document2 || !isHdblogHost2(locationObject)) return null;
     const content = findArticleContent(document2);
     if (!content) return null;
@@ -1981,14 +1977,14 @@ ${failures.join("\n")}`);
     return { content, marker, boundary: findBoundary(content, marker) };
   }
   function expandHdblogPreviewImages2(document2, locationObject = document2?.location) {
-    const range = previewRange(document2, locationObject);
+    const range = previewRange2(document2, locationObject);
     if (!range) return 0;
     const { content, marker, boundary } = range;
     let expanded = 0;
     const handled = /* @__PURE__ */ new Set();
-    [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(marker, boundary, anchor)).forEach((anchor) => {
+    [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange2(marker, boundary, anchor)).forEach((anchor) => {
       if (pixhostShowHref(document2, anchor)) return;
-      const fullUrl = directImageHref3(document2, anchor);
+      const fullUrl = directImageHref2(document2, anchor);
       if (!fullUrl) return;
       let image = anchor.querySelector("img");
       if (!image) {
@@ -1996,21 +1992,21 @@ ${failures.join("\n")}`);
         image.alt = normalizeText2(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
-      if (styleExpandedImage(image, wordpressOriginalUrl2(document2, fullUrl) || fullUrl)) {
+      if (styleExpandedImage(image, wordpressOriginalUrl(document2, fullUrl) || fullUrl)) {
         handled.add(image);
         expanded += 1;
       }
     });
-    [...content.querySelectorAll("img")].filter((image) => inPreviewRange(marker, boundary, image) && !handled.has(image)).forEach((image) => {
+    [...content.querySelectorAll("img")].filter((image) => inPreviewRange2(marker, boundary, image) && !handled.has(image)).forEach((image) => {
       if (styleExpandedImage(image, bestPreviewImageUrl(document2, image))) expanded += 1;
     });
     return expanded;
   }
   async function expandHdblogPixhostPreviewImages(document2, locationObject = document2?.location, gmRequest = globalThis.GM_xmlhttpRequest) {
-    const range = previewRange(document2, locationObject);
+    const range = previewRange2(document2, locationObject);
     if (!range) return 0;
     const { content, marker, boundary } = range;
-    const anchors = [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(marker, boundary, anchor)).map((anchor) => ({ anchor, showUrl: pixhostShowHref(document2, anchor) })).filter(({ showUrl }) => showUrl);
+    const anchors = [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange2(marker, boundary, anchor)).map((anchor) => ({ anchor, showUrl: pixhostShowHref(document2, anchor) })).filter(({ showUrl }) => showUrl);
     const results = await Promise.all(anchors.map(async ({ anchor, showUrl }) => {
       let image = anchor.querySelector("img");
       const thumbnailUrl2 = previewThumbnailUrl(document2, image);
