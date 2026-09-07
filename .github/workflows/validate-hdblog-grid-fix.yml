@@ -26,142 +26,31 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
-
           path = Path('src/hdblog-article.js')
           source = path.read_text(encoding='utf-8')
-
-          old_wrap = '''  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
-    display: grid !important;
-    grid-template-columns: minmax(0, 1fr) var(--x1080x-hdblog-sidebar-width) !important;
-    column-gap: var(--x1080x-hdblog-column-gap) !important;
-    align-items: start !important;
-  }
-'''
-          new_wrap = '''  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
-    display: grid !important;
-    grid-template-columns: minmax(0, var(--x1080x-hdblog-article-width)) var(--x1080x-hdblog-sidebar-width) !important;
-    column-gap: var(--x1080x-hdblog-column-gap) !important;
-    justify-content: center !important;
-    align-items: start !important;
-    position: static !important;
-    float: none !important;
-  }
-  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::before,
-  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::after {
-    content: none !important;
-    display: none !important;
-  }
-'''
-          if old_wrap not in source:
-              raise SystemExit('desktop wrapper block not found')
+          old_wrap = "  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {\n    display: grid !important;\n    grid-template-columns: minmax(0, 1fr) var(--x1080x-hdblog-sidebar-width) !important;\n    column-gap: var(--x1080x-hdblog-column-gap) !important;\n    align-items: start !important;\n  }\n"
+          new_wrap = "  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {\n    display: grid !important;\n    grid-template-columns: minmax(0, var(--x1080x-hdblog-article-width)) var(--x1080x-hdblog-sidebar-width) !important;\n    column-gap: var(--x1080x-hdblog-column-gap) !important;\n    justify-content: center !important;\n    align-items: start !important;\n    position: static !important;\n    float: none !important;\n  }\n  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::before,\n  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::after {\n    content: none !important;\n    display: none !important;\n  }\n"
+          if old_wrap not in source: raise SystemExit('desktop wrapper block not found')
           source = source.replace(old_wrap, new_wrap, 1)
-
-          old_main = '''  body.${ARTICLE_BODY_CLASS} main#genesis-content,
-  body.${ARTICLE_BODY_CLASS} #genesis-content.content {
-    width: 100% !important;
-    max-width: var(--x1080x-hdblog-article-width) !important;
-    float: none !important;
-    margin: 0 !important;
-  }
-'''
-          new_main = '''  body.${ARTICLE_BODY_CLASS} main#genesis-content,
-  body.${ARTICLE_BODY_CLASS} #genesis-content.content {
-    grid-column: 1 !important;
-    grid-row: 1 !important;
-    width: 100% !important;
-    max-width: var(--x1080x-hdblog-article-width) !important;
-    min-width: 0 !important;
-    justify-self: stretch !important;
-    align-self: start !important;
-    float: none !important;
-    position: static !important;
-    left: auto !important;
-    right: auto !important;
-    transform: none !important;
-    margin: 0 !important;
-  }
-'''
-          if old_main not in source:
-              raise SystemExit('desktop main block not found')
+          old_main = "  body.${ARTICLE_BODY_CLASS} main#genesis-content,\n  body.${ARTICLE_BODY_CLASS} #genesis-content.content {\n    width: 100% !important;\n    max-width: var(--x1080x-hdblog-article-width) !important;\n    float: none !important;\n    margin: 0 !important;\n  }\n"
+          new_main = "  body.${ARTICLE_BODY_CLASS} main#genesis-content,\n  body.${ARTICLE_BODY_CLASS} #genesis-content.content {\n    grid-column: 1 !important;\n    grid-row: 1 !important;\n    width: 100% !important;\n    max-width: var(--x1080x-hdblog-article-width) !important;\n    min-width: 0 !important;\n    justify-self: stretch !important;\n    align-self: start !important;\n    float: none !important;\n    position: static !important;\n    left: auto !important;\n    right: auto !important;\n    transform: none !important;\n    margin: 0 !important;\n  }\n"
+          if old_main not in source: raise SystemExit('desktop main block not found')
           source = source.replace(old_main, new_main, 1)
-
-          old_sidebar = '''  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
-  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    width: 100% !important;
-    max-width: var(--x1080x-hdblog-sidebar-width) !important;
-    float: none !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-'''
-          new_sidebar = '''  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
-  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    grid-column: 2 !important;
-    grid-row: 1 !important;
-    width: 100% !important;
-    max-width: var(--x1080x-hdblog-sidebar-width) !important;
-    min-width: 0 !important;
-    justify-self: stretch !important;
-    align-self: start !important;
-    float: none !important;
-    position: static !important;
-    left: auto !important;
-    right: auto !important;
-    transform: none !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-'''
-          if old_sidebar not in source:
-              raise SystemExit('desktop sidebar block not found')
+          old_sidebar = "  body.${ARTICLE_BODY_CLASS} .sidebar-primary,\n  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {\n    width: 100% !important;\n    max-width: var(--x1080x-hdblog-sidebar-width) !important;\n    float: none !important;\n    margin-left: 0 !important;\n    margin-right: 0 !important;\n  }\n"
+          new_sidebar = "  body.${ARTICLE_BODY_CLASS} .sidebar-primary,\n  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {\n    grid-column: 2 !important;\n    grid-row: 1 !important;\n    width: 100% !important;\n    max-width: var(--x1080x-hdblog-sidebar-width) !important;\n    min-width: 0 !important;\n    justify-self: stretch !important;\n    align-self: start !important;\n    float: none !important;\n    position: static !important;\n    left: auto !important;\n    right: auto !important;\n    transform: none !important;\n    margin-left: 0 !important;\n    margin-right: 0 !important;\n  }\n"
+          if old_sidebar not in source: raise SystemExit('desktop sidebar block not found')
           source = source.replace(old_sidebar, new_sidebar, 1)
-
-          old_mobile = '''  body.${ARTICLE_BODY_CLASS} main#genesis-content,
-  body.${ARTICLE_BODY_CLASS} #genesis-content.content,
-  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
-  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    width: 100% !important;
-    max-width: none !important;
-    float: none !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-'''
-          new_mobile = '''  body.${ARTICLE_BODY_CLASS} main#genesis-content,
-  body.${ARTICLE_BODY_CLASS} #genesis-content.content,
-  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
-  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    grid-column: auto !important;
-    grid-row: auto !important;
-    width: 100% !important;
-    max-width: none !important;
-    float: none !important;
-    position: static !important;
-    left: auto !important;
-    right: auto !important;
-    transform: none !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-'''
-          if old_mobile not in source:
-              raise SystemExit('mobile shared block not found')
+          old_mobile = "  body.${ARTICLE_BODY_CLASS} main#genesis-content,\n  body.${ARTICLE_BODY_CLASS} #genesis-content.content,\n  body.${ARTICLE_BODY_CLASS} .sidebar-primary,\n  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {\n    width: 100% !important;\n    max-width: none !important;\n    float: none !important;\n    margin-left: 0 !important;\n    margin-right: 0 !important;\n  }\n"
+          new_mobile = "  body.${ARTICLE_BODY_CLASS} main#genesis-content,\n  body.${ARTICLE_BODY_CLASS} #genesis-content.content,\n  body.${ARTICLE_BODY_CLASS} .sidebar-primary,\n  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {\n    grid-column: auto !important;\n    grid-row: auto !important;\n    width: 100% !important;\n    max-width: none !important;\n    float: none !important;\n    position: static !important;\n    left: auto !important;\n    right: auto !important;\n    transform: none !important;\n    margin-left: 0 !important;\n    margin-right: 0 !important;\n  }\n"
+          if old_mobile not in source: raise SystemExit('mobile shared block not found')
           source = source.replace(old_mobile, new_mobile, 1)
           path.write_text(source, encoding='utf-8')
-
           test_path = Path('test/hdblog-article.test.js')
           test = test_path.read_text(encoding='utf-8')
           anchor = "  assert.match(style.textContent, /display:\\s*grid !important/);\n"
-          extra = (
-              "  assert.match(style.textContent, /grid-column:\\s*1 !important/);\n"
-              "  assert.match(style.textContent, /grid-column:\\s*2 !important/);\n"
-              "  assert.match(style.textContent, /content-sidebar-wrap::before/);\n"
-              "  assert.match(style.textContent, /content:\\s*none !important/);\n"
-          )
-          if anchor not in test:
-              raise SystemExit('test assertion anchor not found')
-          if 'content-sidebar-wrap::before' not in test:
-              test = test.replace(anchor, anchor + extra, 1)
+          extra = "  assert.match(style.textContent, /grid-column:\\s*1 !important/);\n  assert.match(style.textContent, /grid-column:\\s*2 !important/);\n  assert.match(style.textContent, /content-sidebar-wrap::before/);\n  assert.match(style.textContent, /content:\\s*none !important/);\n"
+          if anchor not in test: raise SystemExit('test assertion anchor not found')
+          if 'content-sidebar-wrap::before' not in test: test = test.replace(anchor, anchor + extra, 1)
           test_path.write_text(test, encoding='utf-8')
           PY
 
