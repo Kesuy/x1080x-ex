@@ -1375,29 +1375,89 @@ body.${ARTICLE_BODY_CLASS} article.entry .entry-content,
 body.${ARTICLE_BODY_CLASS} article.post .entry-content {
   line-height: 1.75;
 }
+body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+body.${ARTICLE_BODY_CLASS} .site-inner,
+body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry,
+body.${ARTICLE_BODY_CLASS} article.post,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-content {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  width: 100% !important;
+  max-width: none !important;
+}
 @media (min-width: 1100px) {
+  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
   body.${ARTICLE_BODY_CLASS} .site-inner,
   body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
     width: min(
       calc(var(--x1080x-hdblog-article-width) + var(--x1080x-hdblog-sidebar-width) + var(--x1080x-hdblog-column-gap)),
-      calc(100vw - 32px)
+      calc(100vw - 40px)
     ) !important;
     max-width: none !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) var(--x1080x-hdblog-sidebar-width) !important;
+    column-gap: var(--x1080x-hdblog-column-gap) !important;
+    align-items: start !important;
   }
   body.${ARTICLE_BODY_CLASS} main#genesis-content,
   body.${ARTICLE_BODY_CLASS} #genesis-content.content {
-    width: min(
-      var(--x1080x-hdblog-article-width),
-      calc(100vw - var(--x1080x-hdblog-sidebar-width) - var(--x1080x-hdblog-column-gap) - 32px)
-    ) !important;
+    width: 100% !important;
     max-width: var(--x1080x-hdblog-article-width) !important;
+    float: none !important;
+    margin: 0 !important;
   }
   body.${ARTICLE_BODY_CLASS} .sidebar-primary,
   body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    width: var(--x1080x-hdblog-sidebar-width) !important;
+    width: 100% !important;
     max-width: var(--x1080x-hdblog-sidebar-width) !important;
+    float: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+}
+@media (max-width: 1099px) {
+  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+  body.${ARTICLE_BODY_CLASS} .site-inner,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    display: block !important;
+  }
+  body.${ARTICLE_BODY_CLASS} main#genesis-content,
+  body.${ARTICLE_BODY_CLASS} #genesis-content.content,
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    width: 100% !important;
+    max-width: none !important;
+    float: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    margin-top: 28px !important;
   }
 }
 `;
@@ -1650,7 +1710,7 @@ body.${ARTICLE_BODY_CLASS} article.post .entry-content {
       button.disabled = false;
       button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}\uFF09` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
       view?.setTimeout(() => {
-        button.textContent = "\u2B07 \u4E0B\u8F7D\u56FE\u7247";
+        button.textContent = "\u2B07";
       }, 2500);
     }
     if (failures.length) view?.alert(`\u90E8\u5206\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A
@@ -1665,14 +1725,17 @@ ${failures.join("\n")}`);
     const button = document2.createElement("button");
     button.id = DOWNLOAD_BUTTON_ID;
     button.type = "button";
-    button.textContent = "\u2B07 \u4E0B\u8F7D\u56FE\u7247";
-    button.title = "\u53EA\u4E0B\u8F7D Preview \u533A\u7531 Pixhost show \u63D0\u4F9B\u7684\u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
+    button.textContent = "\u2B07";
+    button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
+    button.setAttribute("aria-label", "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE");
     Object.assign(button.style, {
       display: "inline-flex",
       alignItems: "center",
       verticalAlign: "middle",
       margin: "0 0 4px 12px",
-      padding: "5px 10px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      justifyContent: "center",
       border: "1px solid #2878c8",
       borderRadius: "5px",
       color: "#fff",

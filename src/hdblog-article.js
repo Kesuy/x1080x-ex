@@ -97,29 +97,89 @@ body.${ARTICLE_BODY_CLASS} article.entry .entry-content,
 body.${ARTICLE_BODY_CLASS} article.post .entry-content {
   line-height: 1.75;
 }
+body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+body.${ARTICLE_BODY_CLASS} .site-inner,
+body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry,
+body.${ARTICLE_BODY_CLASS} article.post,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-content {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  width: 100% !important;
+  max-width: none !important;
+}
 @media (min-width: 1100px) {
+  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
   body.${ARTICLE_BODY_CLASS} .site-inner,
   body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
     width: min(
       calc(var(--x1080x-hdblog-article-width) + var(--x1080x-hdblog-sidebar-width) + var(--x1080x-hdblog-column-gap)),
-      calc(100vw - 32px)
+      calc(100vw - 40px)
     ) !important;
     max-width: none !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) var(--x1080x-hdblog-sidebar-width) !important;
+    column-gap: var(--x1080x-hdblog-column-gap) !important;
+    align-items: start !important;
   }
   body.${ARTICLE_BODY_CLASS} main#genesis-content,
   body.${ARTICLE_BODY_CLASS} #genesis-content.content {
-    width: min(
-      var(--x1080x-hdblog-article-width),
-      calc(100vw - var(--x1080x-hdblog-sidebar-width) - var(--x1080x-hdblog-column-gap) - 32px)
-    ) !important;
+    width: 100% !important;
     max-width: var(--x1080x-hdblog-article-width) !important;
+    float: none !important;
+    margin: 0 !important;
   }
   body.${ARTICLE_BODY_CLASS} .sidebar-primary,
   body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    width: var(--x1080x-hdblog-sidebar-width) !important;
+    width: 100% !important;
     max-width: var(--x1080x-hdblog-sidebar-width) !important;
+    float: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+}
+@media (max-width: 1099px) {
+  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+  body.${ARTICLE_BODY_CLASS} .site-inner,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    display: block !important;
+  }
+  body.${ARTICLE_BODY_CLASS} main#genesis-content,
+  body.${ARTICLE_BODY_CLASS} #genesis-content.content,
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    width: 100% !important;
+    max-width: none !important;
+    float: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    margin-top: 28px !important;
   }
 }
 `;
@@ -417,7 +477,7 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
   } finally {
     button.disabled = false;
     button.textContent = failures.length ? `完成（失败 ${failures.length}）` : '✓ 下载完成';
-    view?.setTimeout(() => { button.textContent = '⬇ 下载图片'; }, 2500);
+    view?.setTimeout(() => { button.textContent = '⬇'; }, 2500);
   }
   if (failures.length) view?.alert(`部分图片处理失败：\n\n${failures.join('\n')}`);
 }
@@ -433,14 +493,17 @@ function installDownloadButton(document, locationObject, gmRequest) {
   const button = document.createElement('button');
   button.id = DOWNLOAD_BUTTON_ID;
   button.type = 'button';
-  button.textContent = '⬇ 下载图片';
-  button.title = '只下载 Preview 区由 Pixhost show 提供的大图，并自动按影片番号重命名';
+  button.textContent = '⬇';
+  button.title = '下载 Pixhost Preview 大图，并自动按影片番号重命名';
+  button.setAttribute('aria-label', '下载 Pixhost Preview 大图');
   Object.assign(button.style, {
     display: 'inline-flex',
     alignItems: 'center',
     verticalAlign: 'middle',
     margin: '0 0 4px 12px',
-    padding: '5px 10px',
+    padding: '5px 8px',
+    minWidth: '34px',
+    justifyContent: 'center',
     border: '1px solid #2878c8',
     borderRadius: '5px',
     color: '#fff',

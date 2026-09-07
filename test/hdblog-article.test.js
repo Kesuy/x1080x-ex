@@ -8,6 +8,7 @@ import {
   extractHdblogVideoCode,
   hdblogImageFilename,
   isHdblogArticlePage,
+  installHdblogArticleEnhancement,
   normalizeHdblogArticleWidth,
 } from '../src/hdblog-article.js';
 
@@ -126,7 +127,21 @@ test('article width defaults to 1280, accepts blank as default, is bounded, and 
   const style = dom.window.document.querySelector('#x1080x-ex-hdblog-article-layout');
   assert.ok(style);
   assert.match(style.textContent, /--x1080x-hdblog-article-width:\s*1280px/);
+  assert.match(style.textContent, /\.site-header \.wrap/);
+  assert.match(style.textContent, /\.nav-primary \.wrap/);
+  assert.match(style.textContent, /article\.entry,[\s\S]*?width:\s*100% !important/);
+  assert.match(style.textContent, /display:\s*grid !important/);
 
   applyHdblogArticleLayout(dom.window.document, 1500);
   assert.match(style.textContent, /--x1080x-hdblog-article-width:\s*1500px/);
+});
+
+
+test('article download button uses an icon-only idle label', () => {
+  const dom = articleDom({ content: '<p>Preview:</p>' });
+  installHdblogArticleEnhancement(dom.window.document, dom.window.location, () => {});
+  const button = dom.window.document.querySelector('#x1080x-ex-hdblog-image-download');
+  assert.ok(button);
+  assert.equal(button.textContent, '⬇');
+  assert.equal(button.getAttribute('aria-label'), '下载 Pixhost Preview 大图');
 });
