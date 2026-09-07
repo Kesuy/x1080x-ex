@@ -218,6 +218,13 @@ body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
   return true;
 }
 
+export function clearHdblogArticleLayout(document) {
+  if (!document) return false;
+  document.body?.classList.remove(ARTICLE_BODY_CLASS);
+  document.getElementById(LAYOUT_STYLE_ID)?.remove();
+  return true;
+}
+
 export function extractHdblogVideoCode(value) {
   const text = normalizeText(value).toUpperCase();
   if (!text) return '';
@@ -564,7 +571,8 @@ function rawStoredWidth() {
 }
 
 function readStoredWidth() {
-  return normalizeHdblogArticleWidth(rawStoredWidth(), DEFAULT_HDBLOG_ARTICLE_WIDTH);
+  const stored = rawStoredWidth();
+  return stored ? normalizeHdblogArticleWidth(stored, DEFAULT_HDBLOG_ARTICLE_WIDTH) : null;
 }
 
 function registerWidthSetting(document) {
@@ -572,7 +580,7 @@ function registerWidthSetting(document) {
   GM_registerMenuCommand('📐 设置 hdblog 文章宽度', () => {
     const stored = rawStoredWidth();
     const input = document.defaultView?.prompt(
-      `请输入 hdblog 文章主内容区宽度（px）；留空使用默认 ${DEFAULT_HDBLOG_ARTICLE_WIDTH}px：`,
+      '请输入 hdblog 文章主内容区宽度（px）；留空使用网站默认宽度（不修改页面宽度）：',
       stored
     );
     if (input === null || input === undefined) return;
@@ -581,7 +589,7 @@ function registerWidthSetting(document) {
     if (!trimmed) {
       if (typeof GM_setValue === 'function') GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, '');
       if (isHdblogArticlePage(document, document.location)) {
-        applyHdblogArticleLayout(document, DEFAULT_HDBLOG_ARTICLE_WIDTH);
+        clearHdblogArticleLayout(document);
       }
       return;
     }
@@ -589,7 +597,7 @@ function registerWidthSetting(document) {
     const numeric = Number.parseInt(trimmed, 10);
     if (!Number.isFinite(numeric) || numeric < MIN_HDBLOG_ARTICLE_WIDTH || numeric > MAX_HDBLOG_ARTICLE_WIDTH) {
       document.defaultView?.alert(
-        `请输入 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} 之间的整数，或留空使用默认值。`
+        `请输入 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} 之间的整数，或留空使用网站默认宽度。`
       );
       return;
     }
@@ -606,6 +614,8 @@ export function installHdblogArticleEnhancement(
   if (!document) return;
   registerWidthSetting(document);
   if (!isHdblogArticlePage(document, locationObject)) return;
-  applyHdblogArticleLayout(document, readStoredWidth());
+  const storedWidth = readStoredWidth();
+  if (storedWidth === null) clearHdblogArticleLayout(document);
+  else applyHdblogArticleLayout(document, storedWidth);
   installDownloadButton(document, locationObject, gmRequest);
 }

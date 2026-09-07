@@ -3,6 +3,7 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
   applyHdblogArticleLayout,
+  clearHdblogArticleLayout,
   collectHdblogPixhostPreviewImages,
   extractHdblogArticleCode,
   extractHdblogVideoCode,
@@ -114,9 +115,9 @@ test('multiple image names use 番号-1 / 番号-2 and preserve the real image e
   assert.equal(hdblogImageFilename('FC2-PPV-1234567', 1, 3, 'png'), 'FC2-PPV-1234567-2.png');
 });
 
-test('article width defaults to 1280, accepts blank as default, is bounded, and updates layout style', () => {
-  assert.equal(normalizeHdblogArticleWidth(''), 1280);
-  assert.equal(normalizeHdblogArticleWidth('   '), 1280);
+test('custom article width is bounded, and clearing it restores the site default layout', () => {
+  assert.equal(normalizeHdblogArticleWidth('', null), null);
+  assert.equal(normalizeHdblogArticleWidth('   ', null), null);
   assert.equal(normalizeHdblogArticleWidth('1280'), 1280);
   assert.equal(normalizeHdblogArticleWidth('500'), 600);
   assert.equal(normalizeHdblogArticleWidth('9999'), 3000);
@@ -138,6 +139,10 @@ test('article width defaults to 1280, accepts blank as default, is bounded, and 
 
   applyHdblogArticleLayout(dom.window.document, 1500);
   assert.match(style.textContent, /--x1080x-hdblog-article-width:\s*1500px/);
+
+  assert.equal(clearHdblogArticleLayout(dom.window.document), true);
+  assert.equal(dom.window.document.body.classList.contains('x1080x-hdblog-single'), false);
+  assert.equal(dom.window.document.querySelector('#x1080x-ex-hdblog-article-layout'), null);
 });
 
 

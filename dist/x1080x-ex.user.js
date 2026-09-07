@@ -1495,6 +1495,12 @@ body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
 `;
     return true;
   }
+  function clearHdblogArticleLayout(document2) {
+    if (!document2) return false;
+    document2.body?.classList.remove(ARTICLE_BODY_CLASS);
+    document2.getElementById(LAYOUT_STYLE_ID)?.remove();
+    return true;
+  }
   function extractHdblogVideoCode(value) {
     const text = normalizeText(value).toUpperCase();
     if (!text) return "";
@@ -1798,14 +1804,15 @@ ${failures.join("\n")}`);
     return value === null || value === void 0 ? "" : String(value).trim();
   }
   function readStoredWidth() {
-    return normalizeHdblogArticleWidth(rawStoredWidth(), DEFAULT_HDBLOG_ARTICLE_WIDTH);
+    const stored = rawStoredWidth();
+    return stored ? normalizeHdblogArticleWidth(stored, DEFAULT_HDBLOG_ARTICLE_WIDTH) : null;
   }
   function registerWidthSetting(document2) {
     if (typeof GM_registerMenuCommand !== "function") return;
     GM_registerMenuCommand("\u{1F4D0} \u8BBE\u7F6E hdblog \u6587\u7AE0\u5BBD\u5EA6", () => {
       const stored = rawStoredWidth();
       const input = document2.defaultView?.prompt(
-        `\u8BF7\u8F93\u5165 hdblog \u6587\u7AE0\u4E3B\u5185\u5BB9\u533A\u5BBD\u5EA6\uFF08px\uFF09\uFF1B\u7559\u7A7A\u4F7F\u7528\u9ED8\u8BA4 ${DEFAULT_HDBLOG_ARTICLE_WIDTH}px\uFF1A`,
+        "\u8BF7\u8F93\u5165 hdblog \u6587\u7AE0\u4E3B\u5185\u5BB9\u533A\u5BBD\u5EA6\uFF08px\uFF09\uFF1B\u7559\u7A7A\u4F7F\u7528\u7F51\u7AD9\u9ED8\u8BA4\u5BBD\u5EA6\uFF08\u4E0D\u4FEE\u6539\u9875\u9762\u5BBD\u5EA6\uFF09\uFF1A",
         stored
       );
       if (input === null || input === void 0) return;
@@ -1813,14 +1820,14 @@ ${failures.join("\n")}`);
       if (!trimmed) {
         if (typeof GM_setValue === "function") GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, "");
         if (isHdblogArticlePage(document2, document2.location)) {
-          applyHdblogArticleLayout(document2, DEFAULT_HDBLOG_ARTICLE_WIDTH);
+          clearHdblogArticleLayout(document2);
         }
         return;
       }
       const numeric = Number.parseInt(trimmed, 10);
       if (!Number.isFinite(numeric) || numeric < MIN_HDBLOG_ARTICLE_WIDTH || numeric > MAX_HDBLOG_ARTICLE_WIDTH) {
         document2.defaultView?.alert(
-          `\u8BF7\u8F93\u5165 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} \u4E4B\u95F4\u7684\u6574\u6570\uFF0C\u6216\u7559\u7A7A\u4F7F\u7528\u9ED8\u8BA4\u503C\u3002`
+          `\u8BF7\u8F93\u5165 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} \u4E4B\u95F4\u7684\u6574\u6570\uFF0C\u6216\u7559\u7A7A\u4F7F\u7528\u7F51\u7AD9\u9ED8\u8BA4\u5BBD\u5EA6\u3002`
         );
         return;
       }
@@ -1832,7 +1839,9 @@ ${failures.join("\n")}`);
     if (!document2) return;
     registerWidthSetting(document2);
     if (!isHdblogArticlePage(document2, locationObject)) return;
-    applyHdblogArticleLayout(document2, readStoredWidth());
+    const storedWidth = readStoredWidth();
+    if (storedWidth === null) clearHdblogArticleLayout(document2);
+    else applyHdblogArticleLayout(document2, storedWidth);
     installDownloadButton(document2, locationObject, gmRequest);
   }
 
