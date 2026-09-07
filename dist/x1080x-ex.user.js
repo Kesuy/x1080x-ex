@@ -1345,9 +1345,28 @@ ${failures.join("\n")}
     const bodyClass = document2.body?.className || "";
     return /\bsingle(?:-post)?\b/i.test(bodyClass) || /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname) || Boolean(document2.querySelector("article.entry .entry-meta, article.post .entry-meta"));
   }
+  function originalHdblogArticleWidth(document2, fallback) {
+    const stored = Number(document2?.body?.dataset?.x1080xHdblogOriginalArticleWidth || 0);
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    const candidates = [
+      articleElement(document2),
+      document2?.querySelector("main#genesis-content, #genesis-content.content")
+    ].filter(Boolean);
+    for (const element of candidates) {
+      const measured = Number(element.getBoundingClientRect?.().width || 0);
+      if (!Number.isFinite(measured) || measured <= 0) continue;
+      const rounded = Math.round(measured * 100) / 100;
+      if (document2.body?.dataset) {
+        document2.body.dataset.x1080xHdblogOriginalArticleWidth = String(rounded);
+      }
+      return rounded;
+    }
+    return fallback;
+  }
   function applyHdblogArticleLayout(document2, width = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
     if (!document2?.head || !document2.body) return false;
     const safeWidth = normalizeHdblogArticleWidth(width);
+    const originalWidth = originalHdblogArticleWidth(document2, safeWidth);
     document2.body.classList.add(ARTICLE_BODY_CLASS);
     let style = document2.getElementById(LAYOUT_STYLE_ID);
     if (!style) {
@@ -1358,6 +1377,7 @@ ${failures.join("\n")}
     style.textContent = `
 body.${ARTICLE_BODY_CLASS} {
   --x1080x-hdblog-article-width: ${safeWidth}px;
+  --x1080x-hdblog-original-article-width: ${originalWidth}px;
   --x1080x-hdblog-sidebar-width: 300px;
   --x1080x-hdblog-column-gap: 32px;
 }
@@ -1384,7 +1404,13 @@ body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
   margin-right: auto !important;
 }
 body.${ARTICLE_BODY_CLASS} article.entry,
-body.${ARTICLE_BODY_CLASS} article.post,
+body.${ARTICLE_BODY_CLASS} article.post {
+  width: min(100%, var(--x1080x-hdblog-original-article-width)) !important;
+  max-width: var(--x1080x-hdblog-original-article-width) !important;
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
 body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
 body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
 body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
@@ -1392,8 +1418,6 @@ body.${ARTICLE_BODY_CLASS} article.post > .entry-content {
   width: 100% !important;
   max-width: none !important;
   box-sizing: border-box !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
 }
 body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
   display: flex !important;
@@ -1498,6 +1522,7 @@ body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
   function clearHdblogArticleLayout(document2) {
     if (!document2) return false;
     document2.body?.classList.remove(ARTICLE_BODY_CLASS);
+    if (document2.body?.dataset) delete document2.body.dataset.x1080xHdblogOriginalArticleWidth;
     document2.getElementById(LAYOUT_STYLE_ID)?.remove();
     return true;
   }

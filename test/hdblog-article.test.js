@@ -123,24 +123,31 @@ test('custom article width is bounded, and clearing it restores the site default
   assert.equal(normalizeHdblogArticleWidth('9999'), 3000);
 
   const dom = articleDom();
+  const article = dom.window.document.querySelector('article.entry');
+  article.getBoundingClientRect = () => ({ width: 760 });
   assert.equal(applyHdblogArticleLayout(dom.window.document, 1280), true);
   assert.equal(dom.window.document.body.classList.contains('x1080x-hdblog-single'), true);
   const style = dom.window.document.querySelector('#x1080x-ex-hdblog-article-layout');
   assert.ok(style);
   assert.match(style.textContent, /--x1080x-hdblog-article-width:\s*1280px/);
+  assert.match(style.textContent, /--x1080x-hdblog-original-article-width:\s*760px/);
   assert.match(style.textContent, /\.site-header \.wrap/);
   assert.match(style.textContent, /\.nav-primary \.wrap/);
-  assert.match(style.textContent, /article\.entry,[\s\S]*?width:\s*100% !important/);
+  assert.match(style.textContent, /article\.entry,[\s\S]*?width:\s*min\(100%, var\(--x1080x-hdblog-original-article-width\)\) !important/);
+  assert.match(style.textContent, /max-width:\s*var\(--x1080x-hdblog-original-article-width\) !important/);
   assert.match(style.textContent, /display:\s*grid !important/);
   assert.match(style.textContent, /grid-column:\s*1 !important/);
   assert.match(style.textContent, /grid-column:\s*2 !important/);
   assert.match(style.textContent, /content-sidebar-wrap::before/);
   assert.match(style.textContent, /content:\s*none !important/);
 
+  article.getBoundingClientRect = () => ({ width: 1500 });
   applyHdblogArticleLayout(dom.window.document, 1500);
   assert.match(style.textContent, /--x1080x-hdblog-article-width:\s*1500px/);
+  assert.match(style.textContent, /--x1080x-hdblog-original-article-width:\s*760px/);
 
   assert.equal(clearHdblogArticleLayout(dom.window.document), true);
+  assert.equal(dom.window.document.body.dataset.x1080xHdblogOriginalArticleWidth, undefined);
   assert.equal(dom.window.document.body.classList.contains('x1080x-hdblog-single'), false);
   assert.equal(dom.window.document.querySelector('#x1080x-ex-hdblog-article-layout'), null);
 });
