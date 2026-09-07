@@ -26,111 +26,44 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
-
           path = Path('src/hdblog-article.js')
           source = path.read_text(encoding='utf-8')
-
           marker = "export function extractHdblogVideoCode(value) {"
-          clear_fn = '''export function clearHdblogArticleLayout(document) {
-  if (!document) return false;
-  document.body?.classList.remove(ARTICLE_BODY_CLASS);
-  document.getElementById(LAYOUT_STYLE_ID)?.remove();
-  return true;
-}
-
-'''
+          clear_fn = "export function clearHdblogArticleLayout(document) {\n  if (!document) return false;\n  document.body?.classList.remove(ARTICLE_BODY_CLASS);\n  document.getElementById(LAYOUT_STYLE_ID)?.remove();\n  return true;\n}\n\n"
           if 'export function clearHdblogArticleLayout' not in source:
-              if marker not in source:
-                  raise SystemExit('clear-layout insertion marker not found')
+              if marker not in source: raise SystemExit('clear-layout insertion marker not found')
               source = source.replace(marker, clear_fn + marker, 1)
-
-          old_read = '''function readStoredWidth() {
-  return normalizeHdblogArticleWidth(rawStoredWidth(), DEFAULT_HDBLOG_ARTICLE_WIDTH);
-}
-'''
-          new_read = '''function readStoredWidth() {
-  const stored = rawStoredWidth();
-  return stored ? normalizeHdblogArticleWidth(stored, DEFAULT_HDBLOG_ARTICLE_WIDTH) : null;
-}
-'''
-          if old_read not in source:
-              raise SystemExit('readStoredWidth block not found')
+          old_read = "function readStoredWidth() {\n  return normalizeHdblogArticleWidth(rawStoredWidth(), DEFAULT_HDBLOG_ARTICLE_WIDTH);\n}\n"
+          new_read = "function readStoredWidth() {\n  const stored = rawStoredWidth();\n  return stored ? normalizeHdblogArticleWidth(stored, DEFAULT_HDBLOG_ARTICLE_WIDTH) : null;\n}\n"
+          if old_read not in source: raise SystemExit('readStoredWidth block not found')
           source = source.replace(old_read, new_read, 1)
-
           old_prompt = "      `请输入 hdblog 文章主内容区宽度（px）；留空使用默认 ${DEFAULT_HDBLOG_ARTICLE_WIDTH}px：`,"
           new_prompt = "      '请输入 hdblog 文章主内容区宽度（px）；留空使用网站默认宽度（不修改页面宽度）：',"
-          if old_prompt not in source:
-              raise SystemExit('prompt text not found')
+          if old_prompt not in source: raise SystemExit('prompt text not found')
           source = source.replace(old_prompt, new_prompt, 1)
-
-          old_blank = '''    if (!trimmed) {
-      if (typeof GM_setValue === 'function') GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, '');
-      if (isHdblogArticlePage(document, document.location)) {
-        applyHdblogArticleLayout(document, DEFAULT_HDBLOG_ARTICLE_WIDTH);
-      }
-      return;
-    }
-'''
-          new_blank = '''    if (!trimmed) {
-      if (typeof GM_setValue === 'function') GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, '');
-      if (isHdblogArticlePage(document, document.location)) {
-        clearHdblogArticleLayout(document);
-      }
-      return;
-    }
-'''
-          if old_blank not in source:
-              raise SystemExit('blank-setting block not found')
+          old_blank = "    if (!trimmed) {\n      if (typeof GM_setValue === 'function') GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, '');\n      if (isHdblogArticlePage(document, document.location)) {\n        applyHdblogArticleLayout(document, DEFAULT_HDBLOG_ARTICLE_WIDTH);\n      }\n      return;\n    }\n"
+          new_blank = "    if (!trimmed) {\n      if (typeof GM_setValue === 'function') GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, '');\n      if (isHdblogArticlePage(document, document.location)) {\n        clearHdblogArticleLayout(document);\n      }\n      return;\n    }\n"
+          if old_blank not in source: raise SystemExit('blank-setting block not found')
           source = source.replace(old_blank, new_blank, 1)
-
           old_validation = "        `请输入 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} 之间的整数，或留空使用默认值。`"
           new_validation = "        `请输入 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} 之间的整数，或留空使用网站默认宽度。`"
-          if old_validation not in source:
-              raise SystemExit('validation text not found')
+          if old_validation not in source: raise SystemExit('validation text not found')
           source = source.replace(old_validation, new_validation, 1)
-
-          old_install = '''  if (!isHdblogArticlePage(document, locationObject)) return;
-  applyHdblogArticleLayout(document, readStoredWidth());
-  installDownloadButton(document, locationObject, gmRequest);
-}'''
-          new_install = '''  if (!isHdblogArticlePage(document, locationObject)) return;
-  const storedWidth = readStoredWidth();
-  if (storedWidth === null) clearHdblogArticleLayout(document);
-  else applyHdblogArticleLayout(document, storedWidth);
-  installDownloadButton(document, locationObject, gmRequest);
-}'''
-          if old_install not in source:
-              raise SystemExit('install block not found')
+          old_install = "  if (!isHdblogArticlePage(document, locationObject)) return;\n  applyHdblogArticleLayout(document, readStoredWidth());\n  installDownloadButton(document, locationObject, gmRequest);\n}"
+          new_install = "  if (!isHdblogArticlePage(document, locationObject)) return;\n  const storedWidth = readStoredWidth();\n  if (storedWidth === null) clearHdblogArticleLayout(document);\n  else applyHdblogArticleLayout(document, storedWidth);\n  installDownloadButton(document, locationObject, gmRequest);\n}"
+          if old_install not in source: raise SystemExit('install block not found')
           source = source.replace(old_install, new_install, 1)
           path.write_text(source, encoding='utf-8')
-
           test_path = Path('test/hdblog-article.test.js')
           test = test_path.read_text(encoding='utf-8')
           if '  clearHdblogArticleLayout,\n' not in test:
-              test = test.replace(
-                  '  applyHdblogArticleLayout,\n',
-                  '  applyHdblogArticleLayout,\n  clearHdblogArticleLayout,\n',
-                  1,
-              )
-
-          test = test.replace(
-              "test('article width defaults to 1280, accepts blank as default, is bounded, and updates layout style', () => {",
-              "test('custom article width is bounded, and clearing it restores the site default layout', () => {",
-              1,
-          )
-          test = test.replace(
-              "  assert.equal(normalizeHdblogArticleWidth(''), 1280);\n  assert.equal(normalizeHdblogArticleWidth('   '), 1280);\n",
-              "  assert.equal(normalizeHdblogArticleWidth('', null), null);\n  assert.equal(normalizeHdblogArticleWidth('   ', null), null);\n",
-              1,
-          )
-
+              test = test.replace('  applyHdblogArticleLayout,\n', '  applyHdblogArticleLayout,\n  clearHdblogArticleLayout,\n', 1)
+          test = test.replace("test('article width defaults to 1280, accepts blank as default, is bounded, and updates layout style', () => {", "test('custom article width is bounded, and clearing it restores the site default layout', () => {", 1)
+          test = test.replace("  assert.equal(normalizeHdblogArticleWidth(''), 1280);\n  assert.equal(normalizeHdblogArticleWidth('   '), 1280);\n", "  assert.equal(normalizeHdblogArticleWidth('', null), null);\n  assert.equal(normalizeHdblogArticleWidth('   ', null), null);\n", 1)
           needle = "  applyHdblogArticleLayout(dom.window.document, 1500);\n  assert.match(style.textContent, /--x1080x-hdblog-article-width:\\s*1500px/);\n"
-          replacement = needle + "\n  assert.equal(clearHdblogArticleLayout(dom.window.document), true);\n  assert.equal(dom.window.document.body.classList.contains('x1080x-hdblog-single'), false);\n  assert.equal(dom.window.document.querySelector('#x1080x-ex-hdblog-article-layout'), null);\n"
-          if needle not in test:
-              raise SystemExit('layout test tail not found')
-          if 'clearHdblogArticleLayout(dom.window.document)' not in test:
-              test = test.replace(needle, replacement, 1)
-
+          extra = "\n  assert.equal(clearHdblogArticleLayout(dom.window.document), true);\n  assert.equal(dom.window.document.body.classList.contains('x1080x-hdblog-single'), false);\n  assert.equal(dom.window.document.querySelector('#x1080x-ex-hdblog-article-layout'), null);\n"
+          if needle not in test: raise SystemExit('layout test tail not found')
+          if 'clearHdblogArticleLayout(dom.window.document)' not in test: test = test.replace(needle, needle + extra, 1)
           test_path.write_text(test, encoding='utf-8')
           PY
 
