@@ -3,6 +3,7 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
   applyHdblogArticleLayout,
+  applyHdblogDownloadAreaVisibility,
   clearHdblogArticleLayout,
   collectHdblogPixhostPreviewImages,
   extractHdblogArticleCode,
@@ -135,6 +136,7 @@ test('custom article width is bounded, and clearing it restores the site default
   assert.match(style.textContent, /\.nav-primary \.wrap/);
   assert.match(style.textContent, /article\.entry,[\s\S]*?width:\s*min\(100%, var\(--x1080x-hdblog-original-article-width\)\) !important/);
   assert.match(style.textContent, /max-width:\s*var\(--x1080x-hdblog-original-article-width\) !important/);
+  assert.match(style.textContent, /#genesis-content\.content[\s\S]*?background:\s*#fff !important/);
   assert.match(style.textContent, /display:\s*grid !important/);
   assert.match(style.textContent, /grid-column:\s*1 !important/);
   assert.match(style.textContent, /grid-column:\s*2 !important/);
@@ -160,4 +162,47 @@ test('article download button uses an icon-only idle label', () => {
   assert.ok(button);
   assert.equal(button.textContent, '⬇');
   assert.equal(button.getAttribute('aria-label'), '下载 Pixhost Preview 大图');
+});
+
+
+test('download-area toggle hides provider links through just before Preview and restores them', () => {
+  const dom = articleDom({
+    content: `
+      <p id="meta">商品発売日：2026/10/08</p>
+      <p id="bt">Btfile:</p>
+      <p id="bt-link"><a href="#bt">NAMH-075_6M.mp4</a></p>
+      <p id="kat">katfile:</p>
+      <p id="kat-link"><a href="#kat">NAMH-075_6M.part1.rar</a></p>
+      <p id="free">Freedl:</p>
+      <p id="rapid">Rapidgator:</p>
+      <p id="preview">Preview:</p>
+      <p id="preview-image"><a href="https://pixhost.to/show/1/2.jpg"><img src="https://t1.pixhost.to/thumbs/1/2.jpg"></a></p>
+    `,
+  });
+
+  const document = dom.window.document;
+  const hidden = applyHdblogDownloadAreaVisibility(document, false);
+  assert.ok(hidden >= 6);
+  assert.equal(document.querySelector('#meta').style.display, '');
+  assert.equal(document.querySelector('#bt').style.display, 'none');
+  assert.equal(document.querySelector('#rapid').style.display, 'none');
+  assert.equal(document.querySelector('#preview').style.display, '');
+  assert.equal(document.querySelector('#preview-image').style.display, '');
+
+  applyHdblogDownloadAreaVisibility(document, true);
+  assert.equal(document.querySelector('#bt').style.display, '');
+  assert.equal(document.querySelector('#rapid').style.display, '');
+  assert.equal(document.querySelector('#preview').style.display, '');
+});
+
+test('download-area toggle also works when provider links and Preview share one paragraph', () => {
+  const dom = articleDom({
+    content: `<p id="mixed"><span id="bt">Btafile:</span><br><a id="link" href="#x">file</a><br><span id="preview">Preview:</span><br><a id="preview-link" href="#p">preview</a></p>`,
+  });
+  const document = dom.window.document;
+  assert.ok(applyHdblogDownloadAreaVisibility(document, false) >= 1);
+  assert.equal(document.querySelector('#bt').style.display, 'none');
+  assert.equal(document.querySelector('#link').style.display, 'none');
+  assert.equal(document.querySelector('#preview').style.display, '');
+  assert.equal(document.querySelector('#preview-link').style.display, '');
 });

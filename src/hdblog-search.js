@@ -97,29 +97,6 @@ function getBlockedKeywords() {
   return parseBlockedKeywords(stored);
 }
 
-function saveBlockedKeywords(keywords) {
-  GM_setValue(STORAGE_KEY, keywords.join('\n'));
-}
-
-function registerSettingsMenu() {
-  if (typeof GM_registerMenuCommand !== 'function') return;
-  GM_registerMenuCommand('🚫 设置 hdblog 搜索屏蔽关键词', () => {
-    const current = getBlockedKeywords().join('\n');
-    const input = window.prompt(
-      '请输入 hdblog 搜索结果需要屏蔽的标题关键词。每行一个，也可用逗号或分号分隔；留空表示关闭关键词屏蔽：',
-      current
-    );
-    if (input === null) return;
-    const keywords = parseBlockedKeywords(input);
-    saveBlockedKeywords(keywords);
-    window.alert(
-      keywords.length
-        ? `已保存屏蔽关键词：\n${keywords.join('\n')}\n\n刷新搜索结果页后生效。`
-        : '已清空屏蔽关键词。刷新搜索结果页后生效。'
-    );
-  });
-}
-
 export function applyHdblogSearchEnhancement(windowObject = window) {
   if (!isHdblogSearchUrl(windowObject.location.href)) {
     return { blocked: [], remaining: [], redirectTarget: '' };
@@ -134,7 +111,6 @@ export function applyHdblogSearchEnhancement(windowObject = window) {
 }
 
 export function installHdblogSearchEnhancement() {
-  registerSettingsMenu();
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   applyHdblogSearchEnhancement(window);
 }
