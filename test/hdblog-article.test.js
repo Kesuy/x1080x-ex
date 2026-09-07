@@ -3,7 +3,7 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
   applyHdblogArticleLayout,
-  collectHdblogCoverImages,
+  collectHdblogPixhostPreviewImages,
   extractHdblogArticleCode,
   extractHdblogVideoCode,
   hdblogImageFilename,
@@ -69,23 +69,41 @@ test('extracts the article code from title and falls back to the 品番 field', 
   assert.equal(extractHdblogArticleCode(labelled.window.document), 'MOND-308');
 });
 
-test('collects only cover thumbnails before download/preview sections and prefers original image URLs', () => {
+test('downloads only Pixhost show images inside the Preview section', () => {
   const dom = articleDom({
     content: `
       <p><a href="https://img.example.com/MOND-308-cover.jpg"><img width="800" height="540" src="https://thumb.example.com/MOND-308-cover.jpg"></a></p>
-      <p><img width="700" height="500" src="https://hdblog.me/wp-content/uploads/2026/09/MOND-308-extra-300x200.jpg"></p>
-      <p>発売日：2026/09/08<br>品番： mond308</p>
       <p>Btfile:</p>
-      <p><img width="1200" height="800" src="https://img.example.com/preview-1.jpg"></p>
+      <p>MOND-308_6M.mp4</p>
+      <p>Preview:</p>
+      <p><a href="https://pixhost.to/show/123/456_mond-308.jpg"><img src="https://t1.pixhost.to/thumbs/123/456_mond-308.jpg"></a></p>
+      <p><a href="https://img.example.com/not-pixhost.jpg"><img src="https://img.example.com/not-pixhost.jpg"></a></p>
+      <p>Rapidgator:</p>
+      <p><a href="https://pixhost.to/show/999/888_after-boundary.jpg"><img src="https://t1.pixhost.to/thumbs/999/888_after-boundary.jpg"></a></p>
     `,
   });
-  const images = collectHdblogCoverImages(dom.window.document);
-  assert.equal(images.length, 2);
-  assert.equal(images[0].directUrl, 'https://img.example.com/MOND-308-cover.jpg');
-  assert.equal(
-    images[1].directUrl,
-    'https://hdblog.me/wp-content/uploads/2026/09/MOND-308-extra.jpg'
-  );
+
+  const images = collectHdblogPixhostPreviewImages(dom.window.document);
+  assert.equal(images.length, 1);
+  assert.equal(images[0].pixhostShowUrl, 'https://pixhost.to/show/123/456_mond-308.jpg');
+  assert.equal(images[0].thumbUrl, 'https://t1.pixhost.to/thumbs/123/456_mond-308.jpg');
+});
+
+test('recognizes an already-expanded Pixhost Preview big image', () => {
+  const dom = articleDom({
+    content: `
+      <p>Preview:</p>
+      <p><a href="https://img1.pixhost.to/images/123/456_mond-308.jpg">
+        <img data-x1080x-preview-large="1" src="https://img1.pixhost.to/images/123/456_mond-308.jpg">
+      </a></p>
+      <p>Btfile:</p>
+    `,
+  });
+
+  const images = collectHdblogPixhostPreviewImages(dom.window.document);
+  assert.equal(images.length, 1);
+  assert.equal(images[0].pixhostShowUrl, '');
+  assert.equal(images[0].directUrl, 'https://img1.pixhost.to/images/123/456_mond-308.jpg');
 });
 
 test('multiple image names use 番号-1 / 番号-2 and preserve the real image extension', () => {
@@ -95,7 +113,9 @@ test('multiple image names use 番号-1 / 番号-2 and preserve the real image e
   assert.equal(hdblogImageFilename('FC2-PPV-1234567', 1, 3, 'png'), 'FC2-PPV-1234567-2.png');
 });
 
-test('article width defaults to 1280, is bounded, and updates the injected layout style', () => {
+test('article width defaults to 1280, accepts blank as default, is bounded, and updates layout style', () => {
+  assert.equal(normalizeHdblogArticleWidth(''), 1280);
+  assert.equal(normalizeHdblogArticleWidth('   '), 1280);
   assert.equal(normalizeHdblogArticleWidth('1280'), 1280);
   assert.equal(normalizeHdblogArticleWidth('500'), 600);
   assert.equal(normalizeHdblogArticleWidth('9999'), 3000);
