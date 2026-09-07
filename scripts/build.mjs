@@ -11,7 +11,7 @@ const metadata = `// ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
 // @version      ${version}
-// @description  一键下载主楼资源，并增强 hdblog Preview 大图显示、搜索过滤及主题批量后台打开
+// @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues

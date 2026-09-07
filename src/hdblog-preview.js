@@ -1,9 +1,9 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
+import { isHdblogPreviewExpansionEnabled } from './hdblog-article.js';
 
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
 const PREVIEW_BOUNDARY_PATTERN = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
-const PREVIEW_VIEWPORT_GUTTER_PX = 12;
-const PREVIEW_VIEWPORT_WIDTH = `calc(100vw - ${PREVIEW_VIEWPORT_GUTTER_PX * 2}px)`;
+const PREVIEW_VIEWPORT_WIDTH = 'min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))';
 
 function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -328,8 +328,9 @@ export async function expandHdblogPixhostPreviewImages(
 }
 
 export function installHdblogPreviewImages(document = globalThis.document, locationObject = globalThis.location) {
-  if (!document || !isHdblogHost(locationObject)) return;
+  if (!document || !isHdblogHost(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
   const run = () => {
+    if (!isHdblogPreviewExpansionEnabled()) return;
     expandHdblogPreviewImages(document, locationObject);
     void expandHdblogPixhostPreviewImages(document, locationObject);
   };

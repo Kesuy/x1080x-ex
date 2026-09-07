@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.6.5
-// @description  一键下载主楼资源，并增强 hdblog Preview 大图显示、搜索过滤及主题批量后台打开
+// @version      1.7.0
+// @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues
@@ -574,6 +574,7 @@
 
   // src/userscript.js
   var STORAGE_KEY = "x1080x-ex:domains";
+  var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = "x1080x-ex:hdblog-expand-preview-images";
   var DEFAULT_DOMAINS = "agaghhh.cc\nhdblog.me";
   var BUTTON_ID = "x1080x-ex-download";
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
@@ -1178,7 +1179,8 @@ ${failures.join("\n")}
   }
   registerSettingsMenu();
   if (isAllowedHost(location.hostname, getConfiguredDomains())) {
-    expandHdblogPreviewImages();
+    const expandHdblogPreview = typeof GM_getValue !== "function" || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
+    if (expandHdblogPreview) expandHdblogPreviewImages();
     if (isThreadPage()) addDownloadButton();
     if (isBatchOpenPage()) addBatchOpenButton();
   }
@@ -1279,23 +1281,39 @@ ${failures.join("\n")}
       });
     });
   }
-  function resolvePixhostShowUrl(document2, showUrl, thumbnailUrl = "", gmRequest = globalThis.GM_xmlhttpRequest) {
+  function resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2 = "", gmRequest = globalThis.GM_xmlhttpRequest) {
     const absoluteShowUrl = absoluteUrl2(showUrl, document2?.baseURI || "https://pixhost.to/");
     if (!absoluteShowUrl || !isPixhostShowUrl(absoluteShowUrl, document2?.baseURI)) {
       return Promise.resolve("");
     }
     if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
-    const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl, document2?.baseURI || absoluteShowUrl);
+    const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2?.baseURI || absoluteShowUrl);
     const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document2?.location?.href).then((html) => parsePixhostImagePage(document2, html, absoluteShowUrl) || fallback).catch(() => fallback);
     resolutionCache.set(absoluteShowUrl, promise);
     return promise;
   }
 
-  // src/hdblog-preview.js
-  var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
-  var PREVIEW_BOUNDARY_PATTERN = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
-  var PREVIEW_VIEWPORT_GUTTER_PX = 12;
-  var PREVIEW_VIEWPORT_WIDTH = `calc(100vw - ${PREVIEW_VIEWPORT_GUTTER_PX * 2}px)`;
+  // src/hdblog-article.js
+  var HDBLOG_ARTICLE_WIDTH_KEY = "x1080x-ex:hdblog-article-width";
+  var HDBLOG_SHOW_DOWNLOAD_AREA_KEY = "x1080x-ex:hdblog-show-download-area";
+  var HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY = "x1080x-ex:hdblog-show-image-download-button";
+  var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2 = "x1080x-ex:hdblog-expand-preview-images";
+  var HDBLOG_BLOCKED_KEYWORDS_KEY = "x1080x-ex:hdblog-blocked-keywords";
+  var DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
+  var DEFAULT_HDBLOG_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  var HDBLOG_SETTINGS_PANEL_ID = "x1080x-ex-hdblog-settings-panel";
+  var DOWNLOAD_HIDDEN_ATTR = "data-x1080x-hdblog-download-hidden";
+  var DOWNLOAD_WRAPPER_ATTR = "data-x1080x-hdblog-download-wrapper";
+  var DOWNLOAD_SECTION_LABEL_PATTERN = /^(?:bt(?:a)?file|katfile|freedl|rapidgator)\s*[:：]?$/i;
+  var PREVIEW_LABEL_PATTERN = /^preview\s*[:：]?$/i;
+  var MIN_HDBLOG_ARTICLE_WIDTH = 600;
+  var MAX_HDBLOG_ARTICLE_WIDTH = 3e3;
+  var LAYOUT_STYLE_ID = "x1080x-ex-hdblog-article-layout";
+  var DOWNLOAD_BUTTON_ID = "x1080x-ex-hdblog-image-download";
+  var ARTICLE_BODY_CLASS = "x1080x-hdblog-single";
+  var REQUEST_TIMEOUT3 = 6e4;
+  var PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
+  var PIXHOST_IMAGE_HOST_PATTERN = /^img\d+\.(?:pixhost\.(?:to|cc)|pixho\.st)$/i;
   function normalizeText(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
@@ -1303,41 +1321,263 @@ ${failures.join("\n")}
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
   }
+  function normalizeHdblogArticleWidth(value, fallback = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
+    const text = String(value ?? "").trim();
+    if (!text) return fallback;
+    const parsed = Number.parseInt(text, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(MAX_HDBLOG_ARTICLE_WIDTH, Math.max(MIN_HDBLOG_ARTICLE_WIDTH, parsed));
+  }
+  function articleElement(document2) {
+    return document2?.querySelector(
+      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post"
+    ) || null;
+  }
+  function articleTitleElement(document2) {
+    const article = articleElement(document2);
+    return article?.querySelector(".entry-header .entry-title, h1.entry-title, header h1, h1") || document2?.querySelector("main#genesis-content h1.entry-title, h1.entry-title") || null;
+  }
+  function articleContentElement(document2) {
+    const article = articleElement(document2);
+    return article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || document2?.querySelector("main#genesis-content .entry-content, .entry-content") || null;
+  }
+  function isHdblogArticlePage(document2, locationObject = document2?.location) {
+    if (!document2 || !isHdblogHost(locationObject)) return false;
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return false;
+    }
+    if (url.searchParams.has("s")) return false;
+    const title = articleTitleElement(document2);
+    const content = articleContentElement(document2);
+    if (!title || !content) return false;
+    if (title.matches("a[href]") || title.querySelector("a[href]")) return false;
+    const bodyClass = document2.body?.className || "";
+    return /\bsingle(?:-post)?\b/i.test(bodyClass) || /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname) || Boolean(document2.querySelector("article.entry .entry-meta, article.post .entry-meta"));
+  }
+  function originalHdblogArticleWidth(document2, fallback) {
+    const stored = Number(document2?.body?.dataset?.x1080xHdblogOriginalArticleWidth || 0);
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    const candidates = [
+      articleElement(document2),
+      document2?.querySelector("main#genesis-content, #genesis-content.content")
+    ].filter(Boolean);
+    for (const element of candidates) {
+      const measured = Number(element.getBoundingClientRect?.().width || 0);
+      if (!Number.isFinite(measured) || measured <= 0) continue;
+      const rounded = Math.round(measured * 100) / 100;
+      if (document2.body?.dataset) {
+        document2.body.dataset.x1080xHdblogOriginalArticleWidth = String(rounded);
+      }
+      return rounded;
+    }
+    return fallback;
+  }
+  function applyHdblogArticleLayout(document2, width = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
+    if (!document2?.head || !document2.body) return false;
+    const safeWidth = normalizeHdblogArticleWidth(width);
+    const originalWidth = originalHdblogArticleWidth(document2, safeWidth);
+    document2.body.classList.add(ARTICLE_BODY_CLASS);
+    let style = document2.getElementById(LAYOUT_STYLE_ID);
+    if (!style) {
+      style = document2.createElement("style");
+      style.id = LAYOUT_STYLE_ID;
+      document2.head.append(style);
+    }
+    style.textContent = `
+body.${ARTICLE_BODY_CLASS} {
+  --x1080x-hdblog-article-width: ${safeWidth}px;
+  --x1080x-hdblog-original-article-width: ${originalWidth}px;
+  --x1080x-hdblog-sidebar-width: 300px;
+  --x1080x-hdblog-column-gap: 32px;
+}
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header {
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid rgba(0, 0, 0, .08);
+}
+body.${ARTICLE_BODY_CLASS} article.entry .entry-title,
+body.${ARTICLE_BODY_CLASS} article.post .entry-title {
+  line-height: 1.4;
+}
+body.${ARTICLE_BODY_CLASS} article.entry .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post .entry-content {
+  line-height: 1.75;
+}
+body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+body.${ARTICLE_BODY_CLASS} .site-inner,
+body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry,
+body.${ARTICLE_BODY_CLASS} article.post {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  box-shadow: none !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-footer,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-footer,
+body.${ARTICLE_BODY_CLASS} main#genesis-content > .entry-comments,
+body.${ARTICLE_BODY_CLASS} main#genesis-content > .comment-respond,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content > .entry-comments,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content > .comment-respond {
+  width: min(100%, var(--x1080x-hdblog-original-article-width)) !important;
+  max-width: var(--x1080x-hdblog-original-article-width) !important;
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+body.${ARTICLE_BODY_CLASS} main#genesis-content,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content {
+  background: #fff !important;
+  box-sizing: border-box !important;
+}
+@media (min-width: 1100px) {
+  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+  body.${ARTICLE_BODY_CLASS} .site-inner,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    width: min(
+      calc(var(--x1080x-hdblog-article-width) + var(--x1080x-hdblog-sidebar-width) + var(--x1080x-hdblog-column-gap)),
+      calc(100vw - 40px)
+    ) !important;
+    max-width: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    display: grid !important;
+    grid-template-columns: minmax(0, var(--x1080x-hdblog-article-width)) var(--x1080x-hdblog-sidebar-width) !important;
+    column-gap: var(--x1080x-hdblog-column-gap) !important;
+    justify-content: center !important;
+    align-items: start !important;
+    position: static !important;
+    float: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::before,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::after {
+    content: none !important;
+    display: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} main#genesis-content,
+  body.${ARTICLE_BODY_CLASS} #genesis-content.content {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    width: 100% !important;
+    max-width: var(--x1080x-hdblog-article-width) !important;
+    min-width: 0 !important;
+    justify-self: stretch !important;
+    align-self: start !important;
+    float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    margin: 0 !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    width: 100% !important;
+    max-width: var(--x1080x-hdblog-sidebar-width) !important;
+    min-width: 0 !important;
+    justify-self: stretch !important;
+    align-self: start !important;
+    float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+}
+@media (max-width: 1099px) {
+  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+  body.${ARTICLE_BODY_CLASS} .site-inner,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    display: block !important;
+  }
+  body.${ARTICLE_BODY_CLASS} main#genesis-content,
+  body.${ARTICLE_BODY_CLASS} #genesis-content.content,
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    margin-top: 28px !important;
+  }
+}
+`;
+    return true;
+  }
+  function clearHdblogArticleLayout(document2) {
+    if (!document2) return false;
+    document2.body?.classList.remove(ARTICLE_BODY_CLASS);
+    if (document2.body?.dataset) delete document2.body.dataset.x1080xHdblogOriginalArticleWidth;
+    document2.getElementById(LAYOUT_STYLE_ID)?.remove();
+    return true;
+  }
+  function extractHdblogVideoCode(value) {
+    const text = normalizeText(value).toUpperCase();
+    if (!text) return "";
+    const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
+    if (fc2) return `FC2${fc2[1] ? "-PPV" : ""}-${fc2[2]}`;
+    const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8})\b/i);
+    if (!standard) return "";
+    const prefix = standard[1];
+    if (["HTTP", "HTTPS", "IMG", "IMAGE", "JPG", "JPEG", "PNG", "WEBP"].includes(prefix)) return "";
+    return `${prefix}-${standard[2]}`;
+  }
+  function extractHdblogArticleCode(document2) {
+    const titleText = normalizeText(articleTitleElement(document2)?.textContent || document2?.title);
+    const fromTitle = extractHdblogVideoCode(titleText);
+    if (fromTitle) return fromTitle;
+    const content = articleContentElement(document2);
+    if (!content) return "";
+    const text = normalizeText(content.textContent).slice(0, 5e3);
+    const labelled = text.match(/(?:品番|品號|品号|番号|番號|code)\s*[:：]?\s*([A-Z0-9 _-]{4,30})/i);
+    return extractHdblogVideoCode(labelled?.[1] || text);
+  }
   function absoluteHttpUrl(document2, value) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(value)) return "";
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
     try {
-      const url = new URL(value, document2.baseURI);
+      const url = new URL(String(value), document2.baseURI);
       return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function pixhostShowHref(document2, anchor) {
-    const href = absoluteHttpUrl(document2, anchor?.getAttribute("href"));
-    return href && isPixhostShowUrl(href, document2.baseURI) ? href : "";
-  }
-  function directImageHref2(document2, anchor) {
-    const href = absoluteHttpUrl(document2, anchor?.getAttribute("href"));
-    if (!href || isPixhostShowUrl(href, document2.baseURI)) return "";
-    try {
-      return IMAGE_EXTENSION_PATTERN2.test(new URL(href).pathname) ? href : "";
-    } catch {
-      return "";
-    }
-  }
-  function wordpressOriginalUrl(document2, value) {
-    const href = absoluteHttpUrl(document2, value);
-    if (!href) return "";
-    try {
-      const url = new URL(href);
-      if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return "";
-      const originalPath = url.pathname.replace(
-        /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
-        ""
-      );
-      if (originalPath === url.pathname) return "";
-      url.pathname = originalPath;
-      return url.href;
     } catch {
       return "";
     }
@@ -1353,6 +1593,558 @@ ${failures.join("\n")}
     }).filter(Boolean).sort((a, b) => b.score - a.score);
     return candidates[0]?.url || "";
   }
+  function thumbnailUrl(document2, image) {
+    if (!image) return "";
+    const values = [
+      image.getAttribute("data-orig-file"),
+      image.getAttribute("data-original"),
+      image.getAttribute("data-lazy-src"),
+      image.getAttribute("data-src"),
+      largestSrcsetUrl2(document2, image.getAttribute("data-srcset")),
+      largestSrcsetUrl2(document2, image.getAttribute("data-lazy-srcset")),
+      largestSrcsetUrl2(document2, image.getAttribute("srcset")),
+      image.currentSrc,
+      image.getAttribute("src")
+    ];
+    for (const value of values) {
+      const url = absoluteHttpUrl(document2, value);
+      if (url) return url;
+    }
+    return "";
+  }
+  function isPixhostImageUrl(value, baseUrl) {
+    try {
+      const url = new URL(value, baseUrl);
+      return PIXHOST_IMAGE_HOST_PATTERN.test(url.hostname) && /^\/images\//i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function displayedPixhostImageUrl(document2, image) {
+    if (!image || image.dataset.x1080xPreviewLarge !== "1") return "";
+    const anchorHref = absoluteHttpUrl(document2, image.closest("a[href]")?.getAttribute("href"));
+    const candidates = [image.currentSrc, image.getAttribute("src"), anchorHref];
+    for (const value of candidates) {
+      const url = absoluteHttpUrl(document2, value);
+      if (url && isPixhostImageUrl(url, document2.baseURI)) return url;
+    }
+    return "";
+  }
+  function textNodesUnder(root) {
+    const view = root.ownerDocument.defaultView;
+    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
+    const walker = root.ownerDocument.createTreeWalker(root, showText);
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function lowestCommonAncestorWithin(first, second, limit) {
+    if (!first || !second || !limit) return null;
+    const ancestors = /* @__PURE__ */ new Set();
+    let current = first.parentNode;
+    while (current) {
+      ancestors.add(current);
+      if (current === limit) break;
+      current = current.parentNode;
+    }
+    current = second.parentNode;
+    while (current) {
+      if (ancestors.has(current)) return current;
+      if (current === limit) break;
+      current = current.parentNode;
+    }
+    return null;
+  }
+  function directChildContaining(ancestor, node) {
+    let current = node;
+    while (current && current.parentNode !== ancestor) current = current.parentNode;
+    return current?.parentNode === ancestor ? current : null;
+  }
+  function markDownloadAreaNode(document2, node) {
+    if (!node) return false;
+    if (node.nodeType === 1) {
+      node.setAttribute(DOWNLOAD_HIDDEN_ATTR, "1");
+      node.style.setProperty("display", "none", "important");
+      return true;
+    }
+    if (node.nodeType === 3 && normalizeText(node.nodeValue)) {
+      const wrapper = document2.createElement("span");
+      wrapper.setAttribute(DOWNLOAD_HIDDEN_ATTR, "1");
+      wrapper.setAttribute(DOWNLOAD_WRAPPER_ATTR, "1");
+      wrapper.style.setProperty("display", "none", "important");
+      node.parentNode?.insertBefore(wrapper, node);
+      wrapper.append(node);
+      return true;
+    }
+    return false;
+  }
+  function clearHdblogDownloadAreaMarkers(document2) {
+    if (!document2) return;
+    [...document2.querySelectorAll(`[${DOWNLOAD_HIDDEN_ATTR}="1"]`)].forEach((element) => {
+      if (element.getAttribute(DOWNLOAD_WRAPPER_ATTR) === "1") {
+        element.replaceWith(...element.childNodes);
+        return;
+      }
+      element.style.removeProperty("display");
+      element.removeAttribute(DOWNLOAD_HIDDEN_ATTR);
+    });
+  }
+  function applyHdblogDownloadAreaVisibility(document2, visible = true) {
+    if (!document2) return 0;
+    clearHdblogDownloadAreaMarkers(document2);
+    if (visible) return 0;
+    const content = articleContentElement(document2);
+    if (!content) return 0;
+    const nodes = textNodesUnder(content);
+    const start = nodes.find((node) => DOWNLOAD_SECTION_LABEL_PATTERN.test(normalizeText(node.nodeValue)));
+    if (!start) return 0;
+    const preview = nodes.find((node) => isAfter(start, node) && PREVIEW_LABEL_PATTERN.test(normalizeText(node.nodeValue)));
+    if (!preview) return 0;
+    const common = lowestCommonAncestorWithin(start, preview, content);
+    if (!common) return 0;
+    const first = directChildContaining(common, start);
+    const stop = directChildContaining(common, preview);
+    if (!first || !stop || first === stop) return 0;
+    let hidden = 0;
+    let current = first;
+    while (current && current !== stop) {
+      const next = current.nextSibling;
+      if (markDownloadAreaNode(document2, current)) hidden += 1;
+      current = next;
+    }
+    return hidden;
+  }
+  function isAfter(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
+  }
+  function previewRange(content) {
+    const nodes = textNodesUnder(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
+    if (!marker) return null;
+    const boundary = nodes.find((node) => isAfter(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))) || null;
+    return { marker, boundary };
+  }
+  function inPreviewRange(range, node) {
+    if (!range || !isAfter(range.marker, node)) return false;
+    return !range.boundary || !isAfter(range.boundary, node);
+  }
+  function collectHdblogPixhostPreviewImages(document2) {
+    const content = articleContentElement(document2);
+    if (!content) return [];
+    const range = previewRange(content);
+    if (!range) return [];
+    const seen = /* @__PURE__ */ new Set();
+    return [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(range, anchor)).map((anchor) => {
+      const image = anchor.querySelector("img");
+      if (!image) return null;
+      const href = absoluteHttpUrl(document2, anchor.getAttribute("href"));
+      const pixhostShowUrl = isPixhostShowUrl(href, document2.baseURI) ? href : "";
+      const directUrl = displayedPixhostImageUrl(document2, image);
+      if (!pixhostShowUrl && !directUrl) return null;
+      return {
+        image,
+        pixhostShowUrl,
+        thumbUrl: thumbnailUrl(document2, image),
+        directUrl
+      };
+    }).filter(Boolean).filter((candidate) => {
+      const key = candidate.pixhostShowUrl || candidate.directUrl;
+      return !seen.has(key) && seen.add(key);
+    }).slice(0, 24);
+  }
+  function hdblogImageFilename(code, index, total, extension = "jpg") {
+    const safeCode = normalizeText(code).replace(/[<>:"/\\|?*]/g, "-");
+    const safeExtension = String(extension || "jpg").replace(/^\./, "").toLowerCase();
+    const suffix = total > 1 ? `-${index + 1}` : "";
+    return `${safeCode}${suffix}.${safeExtension || "jpg"}`;
+  }
+  function extensionFromUrl(value) {
+    try {
+      const match = new URL(value).pathname.match(/\.((?:jpe?g|png|webp|gif|avif))$/i);
+      return match?.[1]?.toLowerCase().replace("jpeg", "jpg") || "";
+    } catch {
+      return "";
+    }
+  }
+  function extensionFromBlob(blob, url) {
+    const type = String(blob?.type || "").toLowerCase();
+    if (type.includes("jpeg")) return "jpg";
+    if (type.includes("png")) return "png";
+    if (type.includes("webp")) return "webp";
+    if (type.includes("gif")) return "gif";
+    if (type.includes("avif")) return "avif";
+    return extensionFromUrl(url) || "jpg";
+  }
+  function requestImageBlob(url, referer, gmRequest = globalThis.GM_xmlhttpRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest !== "function") {
+        reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
+        return;
+      }
+      gmRequest({
+        method: "GET",
+        url,
+        responseType: "blob",
+        timeout: REQUEST_TIMEOUT3,
+        headers: referer ? { Referer: referer } : void 0,
+        onload: (response) => {
+          if (response.status < 200 || response.status >= 300 || !response.response) {
+            reject(new Error(`\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
+            return;
+          }
+          resolve(response.response);
+        },
+        onerror: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\u3002")),
+        ontimeout: () => reject(new Error(`\u56FE\u7247\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT3 / 1e3} \u79D2\uFF09\u3002`))
+      });
+    });
+  }
+  function saveBlob2(document2, blob, name) {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document2.createElement("a");
+    anchor.hidden = true;
+    anchor.download = name;
+    anchor.href = objectUrl;
+    document2.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+      document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    }
+  }
+  async function resolveCandidateUrl(document2, candidate, gmRequest) {
+    const displayed = displayedPixhostImageUrl(document2, candidate.image);
+    if (displayed) return displayed;
+    if (!candidate.pixhostShowUrl) return candidate.directUrl;
+    return resolvePixhostShowUrl(
+      document2,
+      candidate.pixhostShowUrl,
+      candidate.thumbUrl,
+      gmRequest
+    );
+  }
+  async function downloadHdblogArticleImages(button, document2, locationObject, gmRequest, initialCandidates = []) {
+    const view = document2.defaultView;
+    const code = extractHdblogArticleCode(document2);
+    if (!code) {
+      view?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\uFF0C\u672A\u5F00\u59CB\u4E0B\u8F7D\u3002");
+      return;
+    }
+    const candidates = initialCandidates.length ? initialCandidates : collectHdblogPixhostPreviewImages(document2);
+    if (!candidates.length) {
+      view?.alert("Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
+      return;
+    }
+    button.disabled = true;
+    const failures = [];
+    try {
+      button.textContent = "\u89E3\u6790 Preview\u2026";
+      const resolved = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const candidate of candidates) {
+        try {
+          const url = await resolveCandidateUrl(document2, candidate, gmRequest);
+          if (url && !seen.has(url)) {
+            seen.add(url);
+            resolved.push(url);
+          }
+        } catch (error) {
+          failures.push(error?.message || "Pixhost \u5927\u56FE\u5730\u5740\u89E3\u6790\u5931\u8D25");
+        }
+      }
+      if (!resolved.length) throw new Error("\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u4E0B\u8F7D\u7684 Pixhost Preview \u5927\u56FE\u3002");
+      for (const [index, url] of resolved.entries()) {
+        button.textContent = `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
+        try {
+          const blob = await requestImageBlob(url, locationObject?.href, gmRequest);
+          const extension = extensionFromBlob(blob, url);
+          saveBlob2(document2, blob, hdblogImageFilename(code, index, resolved.length, extension));
+        } catch (error) {
+          failures.push(`${index + 1}. ${error?.message || "\u4E0B\u8F7D\u5931\u8D25"}`);
+        }
+      }
+    } catch (error) {
+      failures.push(error?.message || "\u4E0B\u8F7D\u5931\u8D25");
+    } finally {
+      button.disabled = false;
+      button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}\uFF09` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
+      view?.setTimeout(() => {
+        button.textContent = "\u2B07";
+      }, 2500);
+    }
+    if (failures.length) view?.alert(`\u90E8\u5206\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A
+
+${failures.join("\n")}`);
+  }
+  function installDownloadButton(document2, locationObject, gmRequest) {
+    if (document2.getElementById(DOWNLOAD_BUTTON_ID)) return;
+    const title = articleTitleElement(document2);
+    if (!title) return;
+    const initialCandidates = collectHdblogPixhostPreviewImages(document2);
+    const button = document2.createElement("button");
+    button.id = DOWNLOAD_BUTTON_ID;
+    button.type = "button";
+    button.textContent = "\u2B07";
+    button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
+    button.setAttribute("aria-label", "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE");
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 12px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      justifyContent: "center",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      if (!button.disabled) button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      if (!button.disabled) button.style.background = "#398bd4";
+    });
+    button.addEventListener("click", () => void downloadHdblogArticleImages(
+      button,
+      document2,
+      locationObject,
+      gmRequest,
+      initialCandidates
+    ));
+    title.append(" ", button);
+  }
+  function rawStoredWidth() {
+    if (typeof GM_getValue !== "function") return "";
+    const value = GM_getValue(HDBLOG_ARTICLE_WIDTH_KEY, "");
+    return value === null || value === void 0 ? "" : String(value).trim();
+  }
+  function readStoredWidth() {
+    const stored = rawStoredWidth();
+    return stored ? normalizeHdblogArticleWidth(stored, DEFAULT_HDBLOG_ARTICLE_WIDTH) : null;
+  }
+  function readDownloadAreaVisible() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, true) !== false;
+  }
+  function readImageDownloadButtonVisible() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, true) !== false;
+  }
+  function isHdblogPreviewExpansionEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, true) !== false;
+  }
+  function readBlockedKeywordsText() {
+    if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BLOCKED_KEYWORDS;
+    const stored = GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY, null);
+    return stored === null || stored === void 0 ? DEFAULT_HDBLOG_BLOCKED_KEYWORDS : String(stored);
+  }
+  function normalizeBlockedKeywordsText(value) {
+    const seen = /* @__PURE__ */ new Set();
+    return String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).filter((entry) => {
+      const key = entry.normalize("NFKC").toLocaleLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).join("\n");
+  }
+  function closeHdblogSettingsPanel(document2) {
+    document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID)?.remove();
+  }
+  function openHdblogSettingsPanel(document2 = globalThis.document) {
+    if (!document2?.body) return null;
+    closeHdblogSettingsPanel(document2);
+    const overlay = document2.createElement("div");
+    overlay.id = HDBLOG_SETTINGS_PANEL_ID;
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483646",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "20px",
+      background: "rgba(0,0,0,.42)",
+      boxSizing: "border-box"
+    });
+    const panel = document2.createElement("form");
+    Object.assign(panel.style, {
+      width: "min(560px, 100%)",
+      maxHeight: "calc(100vh - 40px)",
+      overflow: "auto",
+      padding: "22px",
+      borderRadius: "10px",
+      background: "#fff",
+      color: "#222",
+      boxShadow: "0 18px 60px rgba(0,0,0,.28)",
+      boxSizing: "border-box",
+      font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    });
+    panel.innerHTML = `
+    <h2 style="margin:0 0 18px;font-size:20px">x1080x-ex \xB7 hdblog \u8BBE\u7F6E</h2>
+    <label style="display:block;margin-bottom:16px">
+      <span style="display:block;font-weight:600;margin-bottom:6px">\u6587\u7AE0\u4E3B\u5185\u5BB9\u533A\u5BBD\u5EA6\uFF08px\uFF09</span>
+      <input data-setting="width" type="number" min="${MIN_HDBLOG_ARTICLE_WIDTH}" max="${MAX_HDBLOG_ARTICLE_WIDTH}" step="1"
+        placeholder="\u7559\u7A7A = \u7F51\u7AD9\u9ED8\u8BA4\u5BBD\u5EA6"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+      <small style="display:block;margin-top:5px;color:#666">\u53EA\u6269\u5C55\u767D\u8272\u4E3B\u5185\u5BB9\u533A\u57DF\uFF1B\u539F\u6B63\u6587\u5BBD\u5EA6\u4FDD\u6301\u4E0D\u53D8\u5E76\u5C45\u4E2D\u3002</small>
+    </label>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:10px">\u6587\u7AE0\u9875\u663E\u793A</div>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="show-downloads" type="checkbox">
+        \u663E\u793A Btfile / katfile / Freedl / Rapidgator \u7F51\u76D8\u4E0B\u8F7D\u533A\u57DF
+      </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="show-image-download" type="checkbox">
+        \u663E\u793A\u6807\u9898\u65C1\u7684\u56FE\u7247\u4E0B\u8F7D\u6309\u94AE\uFF08\u2B07\uFF09
+      </label>
+      <label style="display:flex;align-items:center;gap:9px">
+        <input data-setting="expand-preview" type="checkbox">
+        \u81EA\u52A8\u5C55\u5F00 Preview \u5927\u56FE
+      </label>
+      <small style="display:block;margin-top:9px;color:#666">\u5173\u95ED Preview \u5927\u56FE\u540E\u4FDD\u7559\u7F51\u7AD9\u539F\u59CB\u7F29\u7565\u56FE\uFF1B\u4FDD\u5B58\u8BBE\u7F6E\u540E\u9875\u9762\u4F1A\u81EA\u52A8\u5237\u65B0\u3002</small>
+    </div>
+    <label style="display:block;margin-bottom:18px">
+      <span style="display:block;font-weight:600;margin-bottom:6px">\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD</span>
+      <textarea data-setting="keywords" rows="5" placeholder="\u7559\u7A7A = \u4E0D\u5C4F\u853D"
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
+      <small style="display:block;margin-top:5px;color:#666">\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u641C\u7D22\u9875\u5237\u65B0\u540E\u751F\u6548\u3002</small>
+    </label>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
+      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
+    </div>`;
+    const widthInput = panel.querySelector('[data-setting="width"]');
+    const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
+    const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
+    const previewInput = panel.querySelector('[data-setting="expand-preview"]');
+    const keywordsInput = panel.querySelector('[data-setting="keywords"]');
+    widthInput.value = rawStoredWidth();
+    downloadsInput.checked = readDownloadAreaVisible();
+    imageDownloadInput.checked = readImageDownloadButtonVisible();
+    previewInput.checked = isHdblogPreviewExpansionEnabled();
+    keywordsInput.value = readBlockedKeywordsText();
+    panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeHdblogSettingsPanel(document2));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeHdblogSettingsPanel(document2);
+    });
+    panel.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const widthText = widthInput.value.trim();
+      let numeric = null;
+      if (widthText) {
+        numeric = Number.parseInt(widthText, 10);
+        if (!Number.isFinite(numeric) || numeric < MIN_HDBLOG_ARTICLE_WIDTH || numeric > MAX_HDBLOG_ARTICLE_WIDTH) {
+          document2.defaultView?.alert(`\u8BF7\u8F93\u5165 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} \u4E4B\u95F4\u7684\u6574\u6570\uFF0C\u6216\u7559\u7A7A\u4F7F\u7528\u7F51\u7AD9\u9ED8\u8BA4\u5BBD\u5EA6\u3002`);
+          widthInput.focus();
+          return;
+        }
+      }
+      if (typeof GM_setValue === "function") {
+        GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, widthText ? numeric : "");
+        GM_setValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, downloadsInput.checked);
+        GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
+        GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, previewInput.checked);
+        GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
+      }
+      closeHdblogSettingsPanel(document2);
+      const view = document2.defaultView;
+      if (view?.location?.reload) view.location.reload();
+    });
+    overlay.append(panel);
+    document2.body.append(overlay);
+    return overlay;
+  }
+  function registerHdblogSettingsMenu(document2, locationObject) {
+    if (!isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== "function") return;
+    GM_registerMenuCommand("\u2699\uFE0F hdblog \u8BBE\u7F6E", () => openHdblogSettingsPanel(document2));
+  }
+  function installHdblogArticleEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+    if (!document2) return;
+    registerHdblogSettingsMenu(document2, locationObject);
+    if (!isHdblogArticlePage(document2, locationObject)) return;
+    const storedWidth = readStoredWidth();
+    if (storedWidth === null) clearHdblogArticleLayout(document2);
+    else applyHdblogArticleLayout(document2, storedWidth);
+    applyHdblogDownloadAreaVisibility(document2, readDownloadAreaVisible());
+    if (readImageDownloadButtonVisible()) installDownloadButton(document2, locationObject, gmRequest);
+    else document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
+  }
+
+  // src/hdblog-preview.js
+  var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
+  var PREVIEW_BOUNDARY_PATTERN2 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  var PREVIEW_VIEWPORT_WIDTH = "min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))";
+  function normalizeText2(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function isHdblogHost2(locationObject) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
+  }
+  function absoluteHttpUrl2(document2, value) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(value)) return "";
+    try {
+      const url = new URL(value, document2.baseURI);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function pixhostShowHref(document2, anchor) {
+    const href = absoluteHttpUrl2(document2, anchor?.getAttribute("href"));
+    return href && isPixhostShowUrl(href, document2.baseURI) ? href : "";
+  }
+  function directImageHref2(document2, anchor) {
+    const href = absoluteHttpUrl2(document2, anchor?.getAttribute("href"));
+    if (!href || isPixhostShowUrl(href, document2.baseURI)) return "";
+    try {
+      return IMAGE_EXTENSION_PATTERN2.test(new URL(href).pathname) ? href : "";
+    } catch {
+      return "";
+    }
+  }
+  function wordpressOriginalUrl(document2, value) {
+    const href = absoluteHttpUrl2(document2, value);
+    if (!href) return "";
+    try {
+      const url = new URL(href);
+      if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return "";
+      const originalPath = url.pathname.replace(
+        /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
+        ""
+      );
+      if (originalPath === url.pathname) return "";
+      url.pathname = originalPath;
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+  function largestSrcsetUrl3(document2, value) {
+    const candidates = String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
+      const match = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)(w|x)$/i);
+      const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
+      const amount = match ? Number(match[2]) : order;
+      const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
+      const url = absoluteHttpUrl2(document2, rawUrl);
+      return url ? { url, score } : null;
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+    return candidates[0]?.url || "";
+  }
   function previewThumbnailUrl(document2, image) {
     const candidates = [
       image?.currentSrc,
@@ -1362,7 +2154,7 @@ ${failures.join("\n")}
       image?.getAttribute("data-src")
     ];
     for (const candidate of candidates) {
-      const url = absoluteHttpUrl(document2, candidate);
+      const url = absoluteHttpUrl2(document2, candidate);
       if (url) return url;
     }
     return "";
@@ -1380,7 +2172,7 @@ ${failures.join("\n")}
       image.getAttribute("src")
     ];
     for (const candidate of rawCandidates) {
-      const direct = absoluteHttpUrl(document2, candidate);
+      const direct = absoluteHttpUrl2(document2, candidate);
       if (!direct) continue;
       const original = wordpressOriginalUrl(document2, direct);
       if (original) return original;
@@ -1394,16 +2186,16 @@ ${failures.join("\n")}
       image.getAttribute("srcset")
     ];
     for (const value of srcsetCandidates) {
-      const url = largestSrcsetUrl2(document2, value);
+      const url = largestSrcsetUrl3(document2, value);
       if (url) return wordpressOriginalUrl(document2, url) || url;
     }
     for (const candidate of rawCandidates) {
-      const url = absoluteHttpUrl(document2, candidate);
+      const url = absoluteHttpUrl2(document2, candidate);
       if (url) return url;
     }
     return "";
   }
-  function textNodesUnder(root) {
+  function textNodesUnder2(root) {
     const view = root.ownerDocument.defaultView;
     const walker = root.ownerDocument.createTreeWalker(root, view.NodeFilter.SHOW_TEXT);
     const nodes = [];
@@ -1416,21 +2208,21 @@ ${failures.join("\n")}
     return nodes;
   }
   function findPreviewMarker(root) {
-    return textNodesUnder(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue))) || null;
+    return textNodesUnder2(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue))) || null;
   }
-  function isAfter(reference, node) {
+  function isAfter2(reference, node) {
     return Boolean(reference.compareDocumentPosition(node) & 4);
   }
   function findBoundary(root, marker) {
-    return textNodesUnder(root).find((node) => {
-      if (!isAfter(marker, node)) return false;
-      const text = normalizeText(node.nodeValue);
-      return text && PREVIEW_BOUNDARY_PATTERN.test(text);
+    return textNodesUnder2(root).find((node) => {
+      if (!isAfter2(marker, node)) return false;
+      const text = normalizeText2(node.nodeValue);
+      return text && PREVIEW_BOUNDARY_PATTERN2.test(text);
     }) || null;
   }
-  function inPreviewRange(marker, boundary, node) {
-    if (!isAfter(marker, node)) return false;
-    return !boundary || !isAfter(boundary, node);
+  function inPreviewRange2(marker, boundary, node) {
+    if (!isAfter2(marker, node)) return false;
+    return !boundary || !isAfter2(boundary, node);
   }
   function findArticleContent(document2) {
     const article = document2.querySelector(
@@ -1518,8 +2310,8 @@ ${failures.join("\n")}
     }
     return true;
   }
-  function previewRange(document2, locationObject) {
-    if (!document2 || !isHdblogHost(locationObject)) return null;
+  function previewRange2(document2, locationObject) {
+    if (!document2 || !isHdblogHost2(locationObject)) return null;
     const content = findArticleContent(document2);
     if (!content) return null;
     const marker = findPreviewMarker(content);
@@ -1527,19 +2319,19 @@ ${failures.join("\n")}
     return { content, marker, boundary: findBoundary(content, marker) };
   }
   function expandHdblogPreviewImages2(document2, locationObject = document2?.location) {
-    const range = previewRange(document2, locationObject);
+    const range = previewRange2(document2, locationObject);
     if (!range) return 0;
     const { content, marker, boundary } = range;
     let expanded = 0;
     const handled = /* @__PURE__ */ new Set();
-    [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(marker, boundary, anchor)).forEach((anchor) => {
+    [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange2(marker, boundary, anchor)).forEach((anchor) => {
       if (pixhostShowHref(document2, anchor)) return;
       const fullUrl = directImageHref2(document2, anchor);
       if (!fullUrl) return;
       let image = anchor.querySelector("img");
       if (!image) {
         image = document2.createElement("img");
-        image.alt = normalizeText(anchor.textContent) || "Preview";
+        image.alt = normalizeText2(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
       if (styleExpandedImage(image, wordpressOriginalUrl(document2, fullUrl) || fullUrl)) {
@@ -1547,24 +2339,24 @@ ${failures.join("\n")}
         expanded += 1;
       }
     });
-    [...content.querySelectorAll("img")].filter((image) => inPreviewRange(marker, boundary, image) && !handled.has(image)).forEach((image) => {
+    [...content.querySelectorAll("img")].filter((image) => inPreviewRange2(marker, boundary, image) && !handled.has(image)).forEach((image) => {
       if (styleExpandedImage(image, bestPreviewImageUrl(document2, image))) expanded += 1;
     });
     return expanded;
   }
   async function expandHdblogPixhostPreviewImages(document2, locationObject = document2?.location, gmRequest = globalThis.GM_xmlhttpRequest) {
-    const range = previewRange(document2, locationObject);
+    const range = previewRange2(document2, locationObject);
     if (!range) return 0;
     const { content, marker, boundary } = range;
-    const anchors = [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(marker, boundary, anchor)).map((anchor) => ({ anchor, showUrl: pixhostShowHref(document2, anchor) })).filter(({ showUrl }) => showUrl);
+    const anchors = [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange2(marker, boundary, anchor)).map((anchor) => ({ anchor, showUrl: pixhostShowHref(document2, anchor) })).filter(({ showUrl }) => showUrl);
     const results = await Promise.all(anchors.map(async ({ anchor, showUrl }) => {
       let image = anchor.querySelector("img");
-      const thumbnailUrl = previewThumbnailUrl(document2, image);
-      const fullUrl = await resolvePixhostShowUrl(document2, showUrl, thumbnailUrl, gmRequest);
+      const thumbnailUrl2 = previewThumbnailUrl(document2, image);
+      const fullUrl = await resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2, gmRequest);
       if (!fullUrl) return false;
       if (!image) {
         image = document2.createElement("img");
-        image.alt = normalizeText(anchor.textContent) || "Preview";
+        image.alt = normalizeText2(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
       return styleExpandedImage(image, fullUrl);
@@ -1572,8 +2364,9 @@ ${failures.join("\n")}
     return results.filter(Boolean).length;
   }
   function installHdblogPreviewImages(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isHdblogHost(locationObject)) return;
+    if (!document2 || !isHdblogHost2(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
     const run = () => {
+      if (!isHdblogPreviewExpansionEnabled()) return;
       expandHdblogPreviewImages2(document2, locationObject);
       void expandHdblogPixhostPreviewImages(document2, locationObject);
     };
@@ -1662,28 +2455,6 @@ ${failures.join("\n")}
     }
     return parseBlockedKeywords(stored);
   }
-  function saveBlockedKeywords(keywords) {
-    GM_setValue(STORAGE_KEY2, keywords.join("\n"));
-  }
-  function registerSettingsMenu2() {
-    if (typeof GM_registerMenuCommand !== "function") return;
-    GM_registerMenuCommand("\u{1F6AB} \u8BBE\u7F6E hdblog \u641C\u7D22\u5C4F\u853D\u5173\u952E\u8BCD", () => {
-      const current = getBlockedKeywords().join("\n");
-      const input = window.prompt(
-        "\u8BF7\u8F93\u5165 hdblog \u641C\u7D22\u7ED3\u679C\u9700\u8981\u5C4F\u853D\u7684\u6807\u9898\u5173\u952E\u8BCD\u3002\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u7559\u7A7A\u8868\u793A\u5173\u95ED\u5173\u952E\u8BCD\u5C4F\u853D\uFF1A",
-        current
-      );
-      if (input === null) return;
-      const keywords = parseBlockedKeywords(input);
-      saveBlockedKeywords(keywords);
-      window.alert(
-        keywords.length ? `\u5DF2\u4FDD\u5B58\u5C4F\u853D\u5173\u952E\u8BCD\uFF1A
-${keywords.join("\n")}
-
-\u5237\u65B0\u641C\u7D22\u7ED3\u679C\u9875\u540E\u751F\u6548\u3002` : "\u5DF2\u6E05\u7A7A\u5C4F\u853D\u5173\u952E\u8BCD\u3002\u5237\u65B0\u641C\u7D22\u7ED3\u679C\u9875\u540E\u751F\u6548\u3002"
-      );
-    });
-  }
   function applyHdblogSearchEnhancement(windowObject = window) {
     if (!isHdblogSearchUrl(windowObject.location.href)) {
       return { blocked: [], remaining: [], redirectTarget: "" };
@@ -1697,12 +2468,12 @@ ${keywords.join("\n")}
     return { ...result, redirectTarget };
   }
   function installHdblogSearchEnhancement() {
-    registerSettingsMenu2();
     if (typeof window === "undefined" || typeof document === "undefined") return;
     applyHdblogSearchEnhancement(window);
   }
 
   // src/index.js
+  installHdblogArticleEnhancement();
   installHdblogPreviewImages();
   installHdblogSearchEnhancement();
 })();
