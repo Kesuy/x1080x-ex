@@ -1,0 +1,42 @@
+name: Validate hdblog article enhancement
+
+on:
+  push:
+    branches:
+      - feat/hdblog-article-layout-download
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Sync lockfile version
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full validation
+        run: npm run check
+
+      - name: Commit generated files and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/validate-hdblog-article.yml
+          git add package-lock.json dist/x1080x-ex.user.js
+          git commit -m "chore: build v1.7.0 and remove temporary validation workflow"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
