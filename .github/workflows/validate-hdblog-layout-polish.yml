@@ -1,0 +1,167 @@
+name: Validate centered responsive hdblog layout
+
+on:
+  push:
+    branches: [feat/hdblog-article-layout-download]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply layout polish
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          source_path = Path('src/hdblog-article.js')
+          source = source_path.read_text(encoding='utf-8')
+
+          start = source.index('@media (min-width: 1100px) {')
+          end_marker = '\n}\n`;\n  return true;'
+          end = source.index(end_marker, start)
+
+          responsive_css = r'''body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+          body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+          body.${ARTICLE_BODY_CLASS} .site-inner,
+          body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+            box-sizing: border-box !important;
+            margin-left: auto !important;
+            margin-right: auto !important;
+          }
+          body.${ARTICLE_BODY_CLASS} article.entry,
+          body.${ARTICLE_BODY_CLASS} article.post,
+          body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+          body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+          body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+          body.${ARTICLE_BODY_CLASS} article.post > .entry-content {
+            width: 100% !important;
+            max-width: none !important;
+            box-sizing: border-box !important;
+            margin-left: auto !important;
+            margin-right: auto !important;
+          }
+          body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            width: 100% !important;
+            max-width: none !important;
+          }
+          @media (min-width: 1100px) {
+            body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+            body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+            body.${ARTICLE_BODY_CLASS} .site-inner,
+            body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+              width: min(
+                calc(var(--x1080x-hdblog-article-width) + var(--x1080x-hdblog-sidebar-width) + var(--x1080x-hdblog-column-gap)),
+                calc(100vw - 40px)
+              ) !important;
+              max-width: none !important;
+            }
+            body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+              display: grid !important;
+              grid-template-columns: minmax(0, 1fr) var(--x1080x-hdblog-sidebar-width) !important;
+              column-gap: var(--x1080x-hdblog-column-gap) !important;
+              align-items: start !important;
+            }
+            body.${ARTICLE_BODY_CLASS} main#genesis-content,
+            body.${ARTICLE_BODY_CLASS} #genesis-content.content {
+              width: 100% !important;
+              max-width: var(--x1080x-hdblog-article-width) !important;
+              float: none !important;
+              margin: 0 !important;
+            }
+            body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+            body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+              width: 100% !important;
+              max-width: var(--x1080x-hdblog-sidebar-width) !important;
+              float: none !important;
+              margin-left: 0 !important;
+              margin-right: 0 !important;
+            }
+          }
+          @media (max-width: 1099px) {
+            body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+            body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+            body.${ARTICLE_BODY_CLASS} .site-inner,
+            body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+              width: calc(100vw - 24px) !important;
+              max-width: none !important;
+            }
+            body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+              display: block !important;
+            }
+            body.${ARTICLE_BODY_CLASS} main#genesis-content,
+            body.${ARTICLE_BODY_CLASS} #genesis-content.content,
+            body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+            body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+              width: 100% !important;
+              max-width: none !important;
+              float: none !important;
+              margin-left: 0 !important;
+              margin-right: 0 !important;
+            }
+            body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+            body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+              margin-top: 28px !important;
+            }
+          }'''
+
+          source = source[:start] + responsive_css + source[end + 2:]
+          source = source.replace("button.textContent = '⬇ 下载图片';", "button.textContent = '⬇';")
+          source = source.replace("button.title = '只下载 Preview 区由 Pixhost show 提供的大图，并自动按影片番号重命名';", "button.title = '下载 Pixhost Preview 大图，并自动按影片番号重命名';\n  button.setAttribute('aria-label', '下载 Pixhost Preview 大图');")
+          source = source.replace("padding: '5px 10px',", "padding: '5px 8px',\n    minWidth: '34px',\n    justifyContent: 'center',")
+          source_path.write_text(source, encoding='utf-8')
+
+          test_path = Path('test/hdblog-article.test.js')
+          test = test_path.read_text(encoding='utf-8')
+          test = test.replace(
+              '  isHdblogArticlePage,\n  normalizeHdblogArticleWidth,',
+              '  isHdblogArticlePage,\n  installHdblogArticleEnhancement,\n  normalizeHdblogArticleWidth,'
+          )
+          needle = "  assert.match(style.textContent, /--x1080x-hdblog-article-width:\\s*1280px/);\n"
+          replacement = needle + "  assert.match(style.textContent, /\\.site-header \\.wrap/);\n  assert.match(style.textContent, /\\.nav-primary \\.wrap/);\n  assert.match(style.textContent, /article\\.entry,[\\s\\S]*?width:\\s*100% !important/);\n  assert.match(style.textContent, /display:\\s*grid !important/);\n"
+          if needle not in test:
+              raise SystemExit('layout assertion anchor not found')
+          test = test.replace(needle, replacement, 1)
+          test += """
+
+test('article download button uses an icon-only idle label', () => {
+  const dom = articleDom({ content: '<p>Preview:</p>' });
+  installHdblogArticleEnhancement(dom.window.document, dom.window.location, () => {});
+  const button = dom.window.document.querySelector('#x1080x-ex-hdblog-image-download');
+  assert.ok(button);
+  assert.equal(button.textContent, '⬇');
+  assert.equal(button.getAttribute('aria-label'), '下载 Pixhost Preview 大图');
+});
+"""
+          test_path.write_text(test, encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full validation
+        run: npm run check
+
+      - name: Commit generated userscript and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/validate-hdblog-layout-polish.yml
+          git add src/hdblog-article.js test/hdblog-article.test.js dist/x1080x-ex.user.js
+          git commit -m "style: center and responsively align hdblog article layout"
+          git push origin HEAD:feat/hdblog-article-layout-download
