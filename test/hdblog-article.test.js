@@ -131,6 +131,10 @@ test('article width defaults to 1280, accepts blank as default, is bounded, and 
   assert.match(style.textContent, /\.nav-primary \.wrap/);
   assert.match(style.textContent, /article\.entry,[\s\S]*?width:\s*100% !important/);
   assert.match(style.textContent, /display:\s*grid !important/);
+  assert.match(style.textContent, /grid-column:\s*1 !important/);
+  assert.match(style.textContent, /grid-column:\s*2 !important/);
+  assert.match(style.textContent, /content-sidebar-wrap::before/);
+  assert.match(style.textContent, /content:\s*none !important/);
 
   applyHdblogArticleLayout(dom.window.document, 1500);
   assert.match(style.textContent, /--x1080x-hdblog-article-width:\s*1500px/);

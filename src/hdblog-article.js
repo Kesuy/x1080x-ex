@@ -136,22 +136,48 @@ body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
   }
   body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) var(--x1080x-hdblog-sidebar-width) !important;
+    grid-template-columns: minmax(0, var(--x1080x-hdblog-article-width)) var(--x1080x-hdblog-sidebar-width) !important;
     column-gap: var(--x1080x-hdblog-column-gap) !important;
+    justify-content: center !important;
     align-items: start !important;
+    position: static !important;
+    float: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::before,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::after {
+    content: none !important;
+    display: none !important;
   }
   body.${ARTICLE_BODY_CLASS} main#genesis-content,
   body.${ARTICLE_BODY_CLASS} #genesis-content.content {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
     width: 100% !important;
     max-width: var(--x1080x-hdblog-article-width) !important;
+    min-width: 0 !important;
+    justify-self: stretch !important;
+    align-self: start !important;
     float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
     margin: 0 !important;
   }
   body.${ARTICLE_BODY_CLASS} .sidebar-primary,
   body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
     width: 100% !important;
     max-width: var(--x1080x-hdblog-sidebar-width) !important;
+    min-width: 0 !important;
+    justify-self: stretch !important;
+    align-self: start !important;
     float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
     margin-left: 0 !important;
     margin-right: 0 !important;
   }
@@ -171,9 +197,15 @@ body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
   body.${ARTICLE_BODY_CLASS} #genesis-content.content,
   body.${ARTICLE_BODY_CLASS} .sidebar-primary,
   body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    grid-column: auto !important;
+    grid-row: auto !important;
     width: 100% !important;
     max-width: none !important;
     float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
     margin-left: 0 !important;
     margin-right: 0 !important;
   }
