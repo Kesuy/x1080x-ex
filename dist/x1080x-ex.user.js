@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.7.1
+// @version      1.7.2
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -2454,6 +2454,197 @@ ${failures.join("\n")}`);
     view.setTimeout(run, 1400);
   }
 
+  // src/hdblog-refer.js
+  var REQUEST_TIMEOUT4 = 3e4;
+  var PREVIEW_BOUNDARY_PATTERN3 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  var resolutionCache2 = /* @__PURE__ */ new Map();
+  function normalizeText3(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function isHdblogHostname(hostname) {
+    const host = String(hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return host === "hdblog.me" || host.endsWith(".hdblog.me");
+  }
+  function absoluteHttpUrl3(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function isHdblogReferUrl(value, baseUrl = "https://hdblog.me/") {
+    const href = absoluteHttpUrl3(value, baseUrl);
+    if (!href) return false;
+    try {
+      const url = new URL(href);
+      return isHdblogHostname(url.hostname) && /^\/refer\/[^?#]+/i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function responseHeadersMap(value) {
+    const headers = /* @__PURE__ */ new Map();
+    String(value ?? "").split(/\r?\n/).forEach((line) => {
+      const separator = line.indexOf(":");
+      if (separator <= 0) return;
+      headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
+    });
+    return headers;
+  }
+  function htmlRedirectTarget(document2, html, baseUrl) {
+    if (!document2 || !html) return "";
+    try {
+      const parsed = document2.implementation.createHTMLDocument("hdblog-refer");
+      parsed.documentElement.innerHTML = String(html);
+      const meta = parsed.querySelector("meta[http-equiv]");
+      if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
+        const content = meta.getAttribute("content") || "";
+        const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
+        const target = absoluteHttpUrl3(match?.[1], baseUrl);
+        if (target) return target;
+      }
+    } catch {
+    }
+    const scriptMatch = String(html).match(
+      /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
+    );
+    return absoluteHttpUrl3(scriptMatch?.[1], baseUrl);
+  }
+  function targetFromResponse(document2, response, referUrl) {
+    const finalUrl = absoluteHttpUrl3(
+      response?.finalUrl || response?.responseURL,
+      referUrl
+    );
+    if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
+      return finalUrl;
+    }
+    const location2 = responseHeadersMap(response?.responseHeaders).get("location");
+    const locationUrl = absoluteHttpUrl3(location2, referUrl);
+    if (locationUrl && !isHdblogReferUrl(locationUrl, referUrl)) return locationUrl;
+    const html = String(response?.responseText ?? response?.response ?? "");
+    const htmlTarget = htmlRedirectTarget(document2, html, referUrl);
+    return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
+  }
+  function requestReferTarget(document2, referUrl, gmRequest, referer) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      gmRequest({
+        method: "GET",
+        url: referUrl,
+        responseType: "text",
+        timeout: REQUEST_TIMEOUT4,
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          ...referer ? { Referer: referer } : {}
+        },
+        onload(response) {
+          if (response.status >= 400 || response.status === 0) {
+            reject(new Error(`hdblog refer \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
+            return;
+          }
+          const target = targetFromResponse(document2, response, referUrl);
+          if (!target) {
+            reject(new Error("hdblog refer \u6CA1\u6709\u8FD4\u56DE\u53EF\u8BC6\u522B\u7684\u8DF3\u8F6C\u5730\u5740"));
+            return;
+          }
+          resolve(target);
+        },
+        onerror: () => reject(new Error("hdblog refer \u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF")),
+        ontimeout: () => reject(new Error("hdblog refer \u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  function resolveHdblogReferUrl(document2, referUrl, gmRequest = globalThis.GM_xmlhttpRequest) {
+    const absoluteReferUrl = absoluteHttpUrl3(referUrl, document2?.baseURI || "https://hdblog.me/");
+    if (!absoluteReferUrl || !isHdblogReferUrl(absoluteReferUrl, document2?.baseURI)) {
+      return Promise.resolve("");
+    }
+    if (resolutionCache2.has(absoluteReferUrl)) return resolutionCache2.get(absoluteReferUrl);
+    const promise = requestReferTarget(
+      document2,
+      absoluteReferUrl,
+      gmRequest,
+      document2?.location?.href
+    ).catch(() => "");
+    resolutionCache2.set(absoluteReferUrl, promise);
+    return promise;
+  }
+  function textNodesUnder3(root) {
+    const view = root.ownerDocument.defaultView;
+    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
+    const walker = root.ownerDocument.createTreeWalker(root, showText);
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function isAfter3(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
+  }
+  function findArticleContent2(document2) {
+    const article = document2.querySelector(
+      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post, article"
+    );
+    if (article) {
+      return article.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article;
+    }
+    return document2.querySelector("main#genesis-content, main, #content") || document2.body;
+  }
+  function previewRange3(document2, locationObject) {
+    if (!document2 || !isHdblogHostname(locationObject?.hostname)) return null;
+    const content = findArticleContent2(document2);
+    if (!content) return null;
+    const nodes = textNodesUnder3(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue)));
+    if (!marker) return null;
+    const boundary = nodes.find((node) => isAfter3(marker, node) && PREVIEW_BOUNDARY_PATTERN3.test(normalizeText3(node.nodeValue))) || null;
+    return { content, marker, boundary };
+  }
+  function inPreviewRange3(range, node) {
+    if (!range || !isAfter3(range.marker, node)) return false;
+    return !range.boundary || !isAfter3(range.boundary, node);
+  }
+  async function resolveHdblogPreviewReferLinks(document2, locationObject = document2?.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+    const range = previewRange3(document2, locationObject);
+    if (!range) return 0;
+    const anchors = [...range.content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange3(range, anchor)).map((anchor) => ({
+      anchor,
+      referUrl: absoluteHttpUrl3(anchor.getAttribute("href"), document2.baseURI)
+    })).filter(({ referUrl }) => isHdblogReferUrl(referUrl, document2.baseURI));
+    if (!anchors.length) return 0;
+    const results = await Promise.all(anchors.map(async ({ anchor, referUrl }) => {
+      const target = await resolveHdblogReferUrl(document2, referUrl, gmRequest);
+      if (!target) return false;
+      anchor.dataset.x1080xHdblogReferUrl = referUrl;
+      anchor.href = target;
+      return true;
+    }));
+    const resolved = results.filter(Boolean).length;
+    if (resolved) {
+      expandHdblogPreviewImages2(document2, locationObject);
+      await expandHdblogPixhostPreviewImages(document2, locationObject, gmRequest);
+    }
+    return resolved;
+  }
+  function installHdblogReferResolver(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isHdblogHostname(locationObject?.hostname)) return;
+    const run = () => void resolveHdblogPreviewReferLinks(document2, locationObject, gmRequest);
+    run();
+    const view = document2.defaultView;
+    if (!view) return;
+    view.setTimeout(run, 500);
+    view.setTimeout(run, 1500);
+  }
+
   // src/hdblog-search.js
   var STORAGE_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
   var DEFAULT_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
@@ -2551,6 +2742,7 @@ ${failures.join("\n")}`);
 
   // src/index.js
   installHdblogImageHostSettings();
+  installHdblogReferResolver();
   installHdblogArticleEnhancement();
   installHdblogPreviewImages();
   installHdblogSearchEnhancement();
