@@ -21,6 +21,7 @@ test('识别 hdblog /refer/ 中转链接', () => {
 test('通过 GM_xmlhttpRequest 的 finalUrl 取得 refer 实际跳转地址', async () => {
   const dom = new JSDOM('', { url: 'https://hdblog.me/987652/fc2-4973170/' });
   const requested = [];
+  const probeReferUrl = `${REFER_URL}?probe=1`;
   const gmRequest = (details) => {
     requested.push(details.url);
     queueMicrotask(() => details.onload({
@@ -31,9 +32,9 @@ test('通过 GM_xmlhttpRequest 的 finalUrl 取得 refer 实际跳转地址', as
     }));
   };
 
-  const resolved = await resolveHdblogReferUrl(dom.window.document, REFER_URL, gmRequest);
+  const resolved = await resolveHdblogReferUrl(dom.window.document, probeReferUrl, gmRequest);
   assert.equal(resolved, SHOW_URL);
-  assert.deepEqual(requested, [REFER_URL]);
+  assert.deepEqual(requested, [probeReferUrl]);
   dom.window.close();
 });
 
