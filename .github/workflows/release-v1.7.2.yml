@@ -1,0 +1,74 @@
+name: Validate and release v1.7.2
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Sync lockfile version
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full validation
+        run: npm run check
+
+      - name: Commit generated release files and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/release-v1.7.2.yml
+          git add package-lock.json dist/x1080x-ex.user.js
+          git commit -m "chore: build v1.7.2 and remove temporary release workflow"
+          git push origin HEAD:main
+
+      - name: Tag release
+        run: |
+          git tag v1.7.2
+          git push origin v1.7.2
+
+      - name: Create release assets
+        run: |
+          git archive --format=zip --prefix=x1080x-ex-1.7.2/ --output=x1080x-ex-1.7.2-source.zip HEAD
+          cat > release-notes.md <<'NOTES'
+          ## 更新内容
+
+          - 修复 hdblog.me Preview 图片经过 `/refer/...` 中转后无法识别 Pixhost 大图的问题。
+          - 新增 hdblog refer 解析层：通过 Tampermonkey 请求读取真实跳转后的 `finalUrl`，无需破解或依赖 refer token 格式。
+          - refer 解析完成后会自动把 Preview 链接还原为真实图床地址，并继续使用现有 Pixhost show 页解析与大图展开逻辑。
+          - 兼容 HTTP Location、meta refresh 和常见 JavaScript location 跳转作为后备。
+          - 仅处理文章 `Preview:` 区域内的 hdblog `/refer/` 链接，不改写页面其他中转链接。
+
+          ## 验证
+
+          - 自动化测试直接覆盖 `FC2-4973170` 当前 `/refer/` 链接到 `pixhost.to/show/5553/...` 的实际跳转形式。
+          - Node 22 下执行完整 `npm run check`，测试、build、smoke 全部通过后才创建正式标签和 Release。
+          NOTES
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v1.7.2 \
+            dist/x1080x-ex.user.js \
+            x1080x-ex-1.7.2-source.zip \
+            --title "x1080x-ex v1.7.2" \
+            --notes-file release-notes.md
