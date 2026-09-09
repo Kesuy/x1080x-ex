@@ -1,6 +1,9 @@
+import { isHdblogImagePageHost } from './hdblog-image-hosts.js';
+
 const PIXHOST_PAGE_HOST_PATTERN = /^(?:www\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
-const PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(pixhost\.(?:to|cc)|pixho\.st)$/i;
+const PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(.+)$/i;
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
+const CANONICAL_SHOW_PATH_PATTERN = /^\/show\/\d+\/[^/?#]+$/i;
 const REQUEST_TIMEOUT = 30000;
 const resolutionCache = new Map();
 
@@ -14,13 +17,26 @@ function absoluteUrl(value, baseUrl) {
   }
 }
 
+function isDirectImageDeliveryUrl(url) {
+  return /^img\d+\./i.test(url.hostname)
+    || /^\/(?:images?|thumbs?|full|raw)\//i.test(url.pathname);
+}
+
 export function isPixhostShowUrl(value, baseUrl = 'https://pixhost.to/') {
   const href = absoluteUrl(value, baseUrl);
   if (!href) return false;
   try {
     const url = new URL(href);
-    return PIXHOST_PAGE_HOST_PATTERN.test(url.hostname)
-      && /^\/show\/\d+\/\d+_[^/?#]+$/i.test(url.pathname);
+    if (isDirectImageDeliveryUrl(url)) return false;
+
+    // Pixhost 及同类图床常把文件名（含 .jpg）放在 /show/ 展示页 URL 中。
+    // 因此这里按路径结构识别，而不是再把图床域名写死。
+    if (CANONICAL_SHOW_PATH_PATTERN.test(url.pathname)) return true;
+
+    // 对用户在「hdblog 图床设置」里补充的主域名，允许页面路径以后变化。
+    return (PIXHOST_PAGE_HOST_PATTERN.test(url.hostname) || isHdblogImagePageHost(url.hostname))
+      && !/^\/(?:images?|thumbs?)\//i.test(url.pathname)
+      && !IMAGE_EXTENSION_PATTERN.test(url.pathname);
   } catch {
     return false;
   }
@@ -33,6 +49,9 @@ export function derivePixhostImageUrlFromThumbnail(value, baseUrl = 'https://pix
     const url = new URL(href);
     const hostMatch = url.hostname.match(PIXHOST_THUMB_HOST_PATTERN);
     if (!hostMatch || !/^\/thumbs\//i.test(url.pathname)) return '';
+
+    // 不再限制 pixhost.to / pixhost.cc。只要图床继续采用
+    // tN.<domain>/thumbs -> imgN.<domain>/images 结构，就能自动跟随新域名。
     url.hostname = `img${hostMatch[1]}.${hostMatch[2]}`;
     url.pathname = url.pathname.replace(/^\/thumbs\//i, '/images/');
     return url.href;
@@ -44,26 +63,30 @@ export function derivePixhostImageUrlFromThumbnail(value, baseUrl = 'https://pix
 function candidateUrl(value, pageUrl) {
   const href = absoluteUrl(value, pageUrl);
   if (!href || isPixhostShowUrl(href, pageUrl)) return '';
-  try {
-    const url = new URL(href);
-    return IMAGE_EXTENSION_PATTERN.test(url.pathname) ? href : '';
-  } catch {
-    return '';
-  }
+  return href;
 }
 
 export function parsePixhostImagePage(document, html, pageUrl) {
   if (!document || !html) return '';
-  const parsed = document.implementation.createHTMLDocument('pixhost');
+  const parsed = document.implementation.createHTMLDocument('image-host');
   parsed.documentElement.innerHTML = String(html);
 
+  // 先匹配常见“主图”结构，再退回 Open Graph / Twitter 元数据。
+  // img 元素本身就是图片资源，因此不要求 URL 必须以扩展名结尾，兼容 CDN 无后缀地址。
   const selectors = [
     ['img.image-img[src]', 'src'],
     ['img.image-img[data-src]', 'data-src'],
+    ['img.image-img[data-original]', 'data-original'],
+    ['img#image[src]', 'src'],
+    ['img#image[data-src]', 'data-src'],
+    ['figure img[src]', 'src'],
+    ['a#image[href]', 'href'],
+    ['a.image[href]', 'href'],
     ['meta[property="og:image"]', 'content'],
     ['meta[name="twitter:image"]', 'content'],
     ['link[rel="image_src"]', 'href'],
     ['main img[src]', 'src'],
+    ['main img[data-src]', 'data-src'],
   ];
   for (const [selector, attribute] of selectors) {
     const value = parsed.querySelector(selector)?.getAttribute(attribute);
@@ -92,13 +115,16 @@ function requestPixhostPage(showUrl, gmRequest, referer) {
       },
       onload(response) {
         if (response.status < 200 || response.status >= 300) {
-          reject(new Error(`Pixhost 页面请求失败（HTTP ${response.status || 0}）`));
+          reject(new Error(`图床页面请求失败（HTTP ${response.status || 0}）`));
           return;
         }
-        resolve(String(response.responseText ?? response.response ?? ''));
+        resolve({
+          html: String(response.responseText ?? response.response ?? ''),
+          finalUrl: response.finalUrl || response.responseURL || showUrl,
+        });
       },
-      onerror: () => reject(new Error('Pixhost 页面请求发生网络错误')),
-      ontimeout: () => reject(new Error('Pixhost 页面请求超时')),
+      onerror: () => reject(new Error('图床页面请求发生网络错误')),
+      ontimeout: () => reject(new Error('图床页面请求超时')),
     });
   });
 }
@@ -117,7 +143,7 @@ export function resolvePixhostShowUrl(
 
   const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl, document?.baseURI || absoluteShowUrl);
   const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document?.location?.href)
-    .then((html) => parsePixhostImagePage(document, html, absoluteShowUrl) || fallback)
+    .then(({ html, finalUrl }) => parsePixhostImagePage(document, html, finalUrl || absoluteShowUrl) || fallback)
     .catch(() => fallback);
   resolutionCache.set(absoluteShowUrl, promise);
   return promise;

@@ -1,0 +1,75 @@
+name: Validate and release v1.7.1
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Sync lockfile version
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full validation
+        run: npm run check
+
+      - name: Commit generated release files and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/release-v1.7.1.yml
+          git add package-lock.json dist/x1080x-ex.user.js
+          git commit -m "chore: build v1.7.1 and remove temporary release workflow"
+          git push origin HEAD:main
+
+      - name: Tag release
+        run: |
+          git tag v1.7.1
+          git push origin v1.7.1
+
+      - name: Create release assets
+        run: |
+          git archive --format=zip --prefix=x1080x-ex-1.7.1/ --output=x1080x-ex-1.7.1-source.zip HEAD
+          cat > release-notes.md <<'NOTES'
+          ## 更新内容
+
+          - 修复 hdblog Preview 大图因图床地址/域名变化后无法展开的问题。
+          - Pixhost `/show/` 展示页改为按 URL 结构识别，不再只依赖固定域名白名单。
+          - 缩略图 `tN.<domain>/thumbs` 到原图 `imgN.<domain>/images` 的后备转换改为域名无关，可自动跟随同结构的新图床域名。
+          - 图床页面解析新增更多主图选择器，并支持没有 jpg/png 等扩展名的 CDN 图片 URL。
+          - 新增 `🖼️ hdblog 图床设置` 菜单；以后图床换主域名或展示页路径时，可直接增加域名，无需修改脚本代码。
+          - 保留 pixhost.to、pixhost.cc、pixho.st 及历史 pixhost.org 兼容。
+
+          ## 验证
+
+          - 新增未知图床 `/show/`、自定义图床域名、无扩展名 CDN 图片和实际 Preview 展开测试。
+          - Node 22 下执行完整 `npm run check`，测试、build、smoke 全部通过后才创建正式标签和 Release。
+          NOTES
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v1.7.1 \
+            dist/x1080x-ex.user.js \
+            x1080x-ex-1.7.1-source.zip \
+            --title "x1080x-ex v1.7.1" \
+            --notes-file release-notes.md
