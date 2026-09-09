@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.7.0
+// @version      1.7.1
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1185,10 +1185,77 @@ ${failures.join("\n")}
     if (isBatchOpenPage()) addBatchOpenButton();
   }
 
+  // src/hdblog-image-hosts.js
+  var HDBLOG_IMAGE_HOSTS_KEY = "x1080x-ex:hdblog-image-hosts";
+  var DEFAULT_HDBLOG_IMAGE_HOSTS = Object.freeze([
+    "pixhost.to",
+    "pixhost.cc",
+    "pixho.st",
+    // 旧版本代码曾兼容该域名，保留以免历史文章失效。
+    "pixhost.org"
+  ]);
+  function normalizeHostname(value) {
+    const text = String(value ?? "").trim();
+    if (!text) return "";
+    try {
+      const url = new URL(text.includes("://") ? text : `https://${text}`);
+      return url.hostname.toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
+    } catch {
+      return "";
+    }
+  }
+  function parseHdblogImageHosts(value) {
+    const seen = /* @__PURE__ */ new Set();
+    return String(value ?? "").split(/[\s,;，；]+/).map(normalizeHostname).filter(Boolean).filter((hostname) => !seen.has(hostname) && seen.add(hostname));
+  }
+  function getCustomHdblogImageHosts() {
+    if (typeof GM_getValue !== "function") return [];
+    const stored = GM_getValue(HDBLOG_IMAGE_HOSTS_KEY, "");
+    return parseHdblogImageHosts(stored);
+  }
+  function getHdblogImageHosts() {
+    return [.../* @__PURE__ */ new Set([...DEFAULT_HDBLOG_IMAGE_HOSTS, ...getCustomHdblogImageHosts()])];
+  }
+  function isHdblogImagePageHost(hostname) {
+    const host = String(hostname ?? "").toLowerCase().replace(/\.$/, "");
+    if (!host) return false;
+    return getHdblogImageHosts().some((domain) => host === domain || host === `www.${domain}`);
+  }
+  function isHdblogHost(locationObject) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
+  }
+  function installHdblogImageHostSettings(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2 || !isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== "function") return;
+    GM_registerMenuCommand("\u{1F5BC}\uFE0F hdblog \u56FE\u5E8A\u8BBE\u7F6E", () => {
+      const current = getCustomHdblogImageHosts().join("\n");
+      const builtins = DEFAULT_HDBLOG_IMAGE_HOSTS.join("\u3001");
+      const input = document2.defaultView?.prompt(
+        `\u989D\u5916\u56FE\u5E8A\u4E3B\u57DF\u540D\uFF08\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7C98\u8D34\u5B8C\u6574\u7F51\u5740\uFF09\u3002
+
+\u5185\u7F6E\u517C\u5BB9\uFF1A${builtins}
+\u811A\u672C\u8FD8\u4F1A\u81EA\u52A8\u8BC6\u522B Preview \u533A\u5E38\u89C1\u7684 /show/ \u56FE\u7247\u5C55\u793A\u9875\u3002\u4EE5\u540E\u56FE\u5E8A\u6362\u57DF\u540D\u65F6\uFF0C\u5728\u8FD9\u91CC\u8865\u4E00\u884C\u5373\u53EF\uFF0C\u65E0\u9700\u6539\u4EE3\u7801\u3002`,
+        current
+      );
+      if (input === null || input === void 0) return;
+      const hosts = parseHdblogImageHosts(input);
+      if (typeof GM_setValue === "function") {
+        GM_setValue(HDBLOG_IMAGE_HOSTS_KEY, hosts.join("\n"));
+      }
+      document2.defaultView?.alert(
+        hosts.length ? `\u5DF2\u4FDD\u5B58\u989D\u5916\u56FE\u5E8A\uFF1A
+${hosts.join("\n")}
+
+\u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002` : "\u5DF2\u6E05\u7A7A\u989D\u5916\u56FE\u5E8A\uFF0C\u7EE7\u7EED\u4F7F\u7528\u5185\u7F6E\u56FE\u5E8A\u548C\u81EA\u52A8\u8BC6\u522B\u89C4\u5219\u3002\n\n\u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002"
+      );
+    });
+  }
+
   // src/pixhost.js
   var PIXHOST_PAGE_HOST_PATTERN = /^(?:www\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
-  var PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(pixhost\.(?:to|cc)|pixho\.st)$/i;
+  var PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(.+)$/i;
   var IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
+  var CANONICAL_SHOW_PATH_PATTERN = /^\/show\/\d+\/[^/?#]+$/i;
   var REQUEST_TIMEOUT2 = 3e4;
   var resolutionCache = /* @__PURE__ */ new Map();
   function absoluteUrl2(value, baseUrl) {
@@ -1200,12 +1267,17 @@ ${failures.join("\n")}
       return "";
     }
   }
+  function isDirectImageDeliveryUrl(url) {
+    return /^img\d+\./i.test(url.hostname) || /^\/(?:images?|thumbs?|full|raw)\//i.test(url.pathname);
+  }
   function isPixhostShowUrl(value, baseUrl = "https://pixhost.to/") {
     const href = absoluteUrl2(value, baseUrl);
     if (!href) return false;
     try {
       const url = new URL(href);
-      return PIXHOST_PAGE_HOST_PATTERN.test(url.hostname) && /^\/show\/\d+\/\d+_[^/?#]+$/i.test(url.pathname);
+      if (isDirectImageDeliveryUrl(url)) return false;
+      if (CANONICAL_SHOW_PATH_PATTERN.test(url.pathname)) return true;
+      return (PIXHOST_PAGE_HOST_PATTERN.test(url.hostname) || isHdblogImagePageHost(url.hostname)) && !/^\/(?:images?|thumbs?)\//i.test(url.pathname) && !IMAGE_EXTENSION_PATTERN.test(url.pathname);
     } catch {
       return false;
     }
@@ -1227,24 +1299,26 @@ ${failures.join("\n")}
   function candidateUrl(value, pageUrl) {
     const href = absoluteUrl2(value, pageUrl);
     if (!href || isPixhostShowUrl(href, pageUrl)) return "";
-    try {
-      const url = new URL(href);
-      return IMAGE_EXTENSION_PATTERN.test(url.pathname) ? href : "";
-    } catch {
-      return "";
-    }
+    return href;
   }
   function parsePixhostImagePage(document2, html, pageUrl) {
     if (!document2 || !html) return "";
-    const parsed = document2.implementation.createHTMLDocument("pixhost");
+    const parsed = document2.implementation.createHTMLDocument("image-host");
     parsed.documentElement.innerHTML = String(html);
     const selectors = [
       ["img.image-img[src]", "src"],
       ["img.image-img[data-src]", "data-src"],
+      ["img.image-img[data-original]", "data-original"],
+      ["img#image[src]", "src"],
+      ["img#image[data-src]", "data-src"],
+      ["figure img[src]", "src"],
+      ["a#image[href]", "href"],
+      ["a.image[href]", "href"],
       ['meta[property="og:image"]', "content"],
       ['meta[name="twitter:image"]', "content"],
       ['link[rel="image_src"]', "href"],
-      ["main img[src]", "src"]
+      ["main img[src]", "src"],
+      ["main img[data-src]", "data-src"]
     ];
     for (const [selector, attribute] of selectors) {
       const value = parsed.querySelector(selector)?.getAttribute(attribute);
@@ -1271,13 +1345,16 @@ ${failures.join("\n")}
         },
         onload(response) {
           if (response.status < 200 || response.status >= 300) {
-            reject(new Error(`Pixhost \u9875\u9762\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
+            reject(new Error(`\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
             return;
           }
-          resolve(String(response.responseText ?? response.response ?? ""));
+          resolve({
+            html: String(response.responseText ?? response.response ?? ""),
+            finalUrl: response.finalUrl || response.responseURL || showUrl
+          });
         },
-        onerror: () => reject(new Error("Pixhost \u9875\u9762\u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF")),
-        ontimeout: () => reject(new Error("Pixhost \u9875\u9762\u8BF7\u6C42\u8D85\u65F6"))
+        onerror: () => reject(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF")),
+        ontimeout: () => reject(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u8D85\u65F6"))
       });
     });
   }
@@ -1288,7 +1365,7 @@ ${failures.join("\n")}
     }
     if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
     const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2?.baseURI || absoluteShowUrl);
-    const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document2?.location?.href).then((html) => parsePixhostImagePage(document2, html, absoluteShowUrl) || fallback).catch(() => fallback);
+    const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document2?.location?.href).then(({ html, finalUrl }) => parsePixhostImagePage(document2, html, finalUrl || absoluteShowUrl) || fallback).catch(() => fallback);
     resolutionCache.set(absoluteShowUrl, promise);
     return promise;
   }
@@ -1317,7 +1394,7 @@ ${failures.join("\n")}
   function normalizeText(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function isHdblogHost(locationObject) {
+  function isHdblogHost2(locationObject) {
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
   }
@@ -1342,7 +1419,7 @@ ${failures.join("\n")}
     return article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || document2?.querySelector("main#genesis-content .entry-content, .entry-content") || null;
   }
   function isHdblogArticlePage(document2, locationObject = document2?.location) {
-    if (!document2 || !isHdblogHost(locationObject)) return false;
+    if (!document2 || !isHdblogHost2(locationObject)) return false;
     let url;
     try {
       url = new URL(locationObject?.href || document2.baseURI);
@@ -2069,7 +2146,7 @@ ${failures.join("\n")}`);
     return overlay;
   }
   function registerHdblogSettingsMenu(document2, locationObject) {
-    if (!isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== "function") return;
+    if (!isHdblogHost2(locationObject) || typeof GM_registerMenuCommand !== "function") return;
     GM_registerMenuCommand("\u2699\uFE0F hdblog \u8BBE\u7F6E", () => openHdblogSettingsPanel(document2));
   }
   function installHdblogArticleEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
@@ -2091,7 +2168,7 @@ ${failures.join("\n")}`);
   function normalizeText2(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function isHdblogHost2(locationObject) {
+  function isHdblogHost3(locationObject) {
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
   }
@@ -2311,7 +2388,7 @@ ${failures.join("\n")}`);
     return true;
   }
   function previewRange2(document2, locationObject) {
-    if (!document2 || !isHdblogHost2(locationObject)) return null;
+    if (!document2 || !isHdblogHost3(locationObject)) return null;
     const content = findArticleContent(document2);
     if (!content) return null;
     const marker = findPreviewMarker(content);
@@ -2364,7 +2441,7 @@ ${failures.join("\n")}`);
     return results.filter(Boolean).length;
   }
   function installHdblogPreviewImages(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isHdblogHost2(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
+    if (!document2 || !isHdblogHost3(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
     const run = () => {
       if (!isHdblogPreviewExpansionEnabled()) return;
       expandHdblogPreviewImages2(document2, locationObject);
@@ -2473,6 +2550,7 @@ ${failures.join("\n")}`);
   }
 
   // src/index.js
+  installHdblogImageHostSettings();
   installHdblogArticleEnhancement();
   installHdblogPreviewImages();
   installHdblogSearchEnhancement();
