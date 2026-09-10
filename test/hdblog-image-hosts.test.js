@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   HDBLOG_IMAGE_HOSTS_KEY,
+  installHdblogImageHostSettings,
   parseHdblogImageHosts,
 } from '../src/hdblog-image-hosts.js';
 import {
@@ -17,6 +18,51 @@ test('hdblog 图床设置可解析域名和完整 URL，并自动去重', () => 
     parseHdblogImageHosts('newhost.example\nhttps://www.other.example/path newhost.example'),
     ['newhost.example', 'www.other.example']
   );
+});
+
+test('图床设置并入现有 hdblog 设置面板，不再注册独立油猴菜单', async () => {
+  const dom = new JSDOM('<body></body>', { url: 'https://hdblog.me/987652/fc2-4973170/' });
+  const previousGetValue = globalThis.GM_getValue;
+  const previousSetValue = globalThis.GM_setValue;
+  const previousRegisterMenu = globalThis.GM_registerMenuCommand;
+  const writes = [];
+  let menuRegistrations = 0;
+  globalThis.GM_getValue = (key, fallback) => (
+    key === HDBLOG_IMAGE_HOSTS_KEY ? 'future-host.example' : fallback
+  );
+  globalThis.GM_setValue = (key, value) => writes.push([key, value]);
+  globalThis.GM_registerMenuCommand = () => { menuRegistrations += 1; };
+
+  try {
+    installHdblogImageHostSettings(dom.window.document, dom.window.location);
+    const overlay = dom.window.document.createElement('div');
+    overlay.id = 'x1080x-ex-hdblog-settings-panel';
+    overlay.innerHTML = '<form><div data-actions><button type="submit">保存</button></div></form>';
+    dom.window.document.body.append(overlay);
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    const textarea = overlay.querySelector('[data-setting="image-hosts"]');
+    assert.ok(textarea);
+    assert.equal(textarea.value, 'future-host.example');
+    assert.equal(menuRegistrations, 0);
+    assert.match(overlay.textContent, /额外图床域名/);
+    assert.match(overlay.textContent, /pixhost\.to/);
+
+    textarea.value = 'newhost.example\nhttps://cdn.example/path';
+    overlay.querySelector('form').dispatchEvent(new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }));
+    assert.deepEqual(writes.at(-1), [HDBLOG_IMAGE_HOSTS_KEY, 'newhost.example\ncdn.example']);
+  } finally {
+    if (previousGetValue === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = previousGetValue;
+    if (previousSetValue === undefined) delete globalThis.GM_setValue;
+    else globalThis.GM_setValue = previousSetValue;
+    if (previousRegisterMenu === undefined) delete globalThis.GM_registerMenuCommand;
+    else globalThis.GM_registerMenuCommand = previousRegisterMenu;
+    dom.window.close();
+  }
 });
 
 test('未知图床只要采用 /show/ 展示页结构即可自动识别', () => {
