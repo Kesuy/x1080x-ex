@@ -8,6 +8,10 @@ export const DEFAULT_HDBLOG_IMAGE_HOSTS = Object.freeze([
   'pixhost.org',
 ]);
 
+const HDBLOG_SETTINGS_PANEL_ID = 'x1080x-ex-hdblog-settings-panel';
+const IMAGE_HOSTS_FIELD_ATTR = 'data-x1080x-hdblog-image-hosts-field';
+const IMAGE_HOSTS_BOUND_ATTR = 'data-x1080x-hdblog-image-hosts-bound';
+
 function normalizeHostname(value) {
   const text = String(value ?? '').trim();
   if (!text) return '';
@@ -49,30 +53,58 @@ function isHdblogHost(locationObject) {
   return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
 }
 
+function enhanceHdblogSettingsPanel(document) {
+  const overlay = document?.getElementById(HDBLOG_SETTINGS_PANEL_ID);
+  const panel = overlay?.querySelector('form');
+  if (!panel || panel.querySelector(`[${IMAGE_HOSTS_FIELD_ATTR}]`)) return false;
+
+  const label = document.createElement('label');
+  label.setAttribute(IMAGE_HOSTS_FIELD_ATTR, '1');
+  label.style.cssText = 'display:block;margin-bottom:18px';
+
+  const title = document.createElement('span');
+  title.textContent = '额外图床域名';
+  title.style.cssText = 'display:block;font-weight:600;margin-bottom:6px';
+
+  const textarea = document.createElement('textarea');
+  textarea.setAttribute('data-setting', 'image-hosts');
+  textarea.rows = 4;
+  textarea.placeholder = '通常无需填写；图床更换域名时每行添加一个';
+  textarea.value = getCustomHdblogImageHosts().join('\n');
+  textarea.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical';
+
+  const help = document.createElement('small');
+  help.style.cssText = 'display:block;margin-top:5px;color:#666';
+  help.textContent = `内置兼容：${DEFAULT_HDBLOG_IMAGE_HOSTS.join('、')}。可填主域名或完整 URL；脚本也会自动识别常见 /show/ 图片展示页。`;
+
+  label.append(title, textarea, help);
+  panel.insertBefore(label, panel.lastElementChild || null);
+
+  if (panel.getAttribute(IMAGE_HOSTS_BOUND_ATTR) !== '1') {
+    panel.setAttribute(IMAGE_HOSTS_BOUND_ATTR, '1');
+    // 使用捕获阶段，确保先于 hdblog 设置面板原本的保存/刷新逻辑执行。
+    panel.addEventListener('submit', () => {
+      const input = panel.querySelector('[data-setting="image-hosts"]');
+      if (!input || typeof GM_setValue !== 'function') return;
+      const hosts = parseHdblogImageHosts(input.value);
+      GM_setValue(HDBLOG_IMAGE_HOSTS_KEY, hosts.join('\n'));
+    }, true);
+  }
+  return true;
+}
+
 export function installHdblogImageHostSettings(
   document = globalThis.document,
   locationObject = globalThis.location
 ) {
-  if (!document || !isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== 'function') return;
+  if (!document?.body || !isHdblogHost(locationObject)) return;
 
-  GM_registerMenuCommand('🖼️ hdblog 图床设置', () => {
-    const current = getCustomHdblogImageHosts().join('\n');
-    const builtins = DEFAULT_HDBLOG_IMAGE_HOSTS.join('、');
-    const input = document.defaultView?.prompt(
-      `额外图床主域名（每行一个，也可粘贴完整网址）。\n\n内置兼容：${builtins}\n` +
-      '脚本还会自动识别 Preview 区常见的 /show/ 图片展示页。以后图床换域名时，在这里补一行即可，无需改代码。',
-      current
-    );
-    if (input === null || input === undefined) return;
+  // 图床配置属于 hdblog 高级设置，不再单独占用 Tampermonkey 菜单项。
+  // 当现有“hdblog 设置”面板打开时，把图床字段注入同一面板。
+  enhanceHdblogSettingsPanel(document);
 
-    const hosts = parseHdblogImageHosts(input);
-    if (typeof GM_setValue === 'function') {
-      GM_setValue(HDBLOG_IMAGE_HOSTS_KEY, hosts.join('\n'));
-    }
-    document.defaultView?.alert(
-      hosts.length
-        ? `已保存额外图床：\n${hosts.join('\n')}\n\n刷新页面后生效。`
-        : '已清空额外图床，继续使用内置图床和自动识别规则。\n\n刷新页面后生效。'
-    );
-  });
+  const MutationObserverCtor = document.defaultView?.MutationObserver || globalThis.MutationObserver;
+  if (typeof MutationObserverCtor !== 'function') return;
+  const observer = new MutationObserverCtor(() => enhanceHdblogSettingsPanel(document));
+  observer.observe(document.body, { childList: true, subtree: true });
 }
