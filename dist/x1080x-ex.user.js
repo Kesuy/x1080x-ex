@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.7.2
+// @version      1.7.3
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1194,6 +1194,9 @@ ${failures.join("\n")}
     // 旧版本代码曾兼容该域名，保留以免历史文章失效。
     "pixhost.org"
   ]);
+  var HDBLOG_SETTINGS_PANEL_ID = "x1080x-ex-hdblog-settings-panel";
+  var IMAGE_HOSTS_FIELD_ATTR = "data-x1080x-hdblog-image-hosts-field";
+  var IMAGE_HOSTS_BOUND_ATTR = "data-x1080x-hdblog-image-hosts-bound";
   function normalizeHostname(value) {
     const text = String(value ?? "").trim();
     if (!text) return "";
@@ -1225,30 +1228,45 @@ ${failures.join("\n")}
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
   }
-  function installHdblogImageHostSettings(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== "function") return;
-    GM_registerMenuCommand("\u{1F5BC}\uFE0F hdblog \u56FE\u5E8A\u8BBE\u7F6E", () => {
-      const current = getCustomHdblogImageHosts().join("\n");
-      const builtins = DEFAULT_HDBLOG_IMAGE_HOSTS.join("\u3001");
-      const input = document2.defaultView?.prompt(
-        `\u989D\u5916\u56FE\u5E8A\u4E3B\u57DF\u540D\uFF08\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7C98\u8D34\u5B8C\u6574\u7F51\u5740\uFF09\u3002
-
-\u5185\u7F6E\u517C\u5BB9\uFF1A${builtins}
-\u811A\u672C\u8FD8\u4F1A\u81EA\u52A8\u8BC6\u522B Preview \u533A\u5E38\u89C1\u7684 /show/ \u56FE\u7247\u5C55\u793A\u9875\u3002\u4EE5\u540E\u56FE\u5E8A\u6362\u57DF\u540D\u65F6\uFF0C\u5728\u8FD9\u91CC\u8865\u4E00\u884C\u5373\u53EF\uFF0C\u65E0\u9700\u6539\u4EE3\u7801\u3002`,
-        current
-      );
-      if (input === null || input === void 0) return;
-      const hosts = parseHdblogImageHosts(input);
-      if (typeof GM_setValue === "function") {
+  function enhanceHdblogSettingsPanel(document2) {
+    const overlay = document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID);
+    const panel = overlay?.querySelector("form");
+    if (!panel || panel.querySelector(`[${IMAGE_HOSTS_FIELD_ATTR}]`)) return false;
+    const label = document2.createElement("label");
+    label.setAttribute(IMAGE_HOSTS_FIELD_ATTR, "1");
+    label.style.cssText = "display:block;margin-bottom:18px";
+    const title = document2.createElement("span");
+    title.textContent = "\u989D\u5916\u56FE\u5E8A\u57DF\u540D";
+    title.style.cssText = "display:block;font-weight:600;margin-bottom:6px";
+    const textarea = document2.createElement("textarea");
+    textarea.setAttribute("data-setting", "image-hosts");
+    textarea.rows = 4;
+    textarea.placeholder = "\u901A\u5E38\u65E0\u9700\u586B\u5199\uFF1B\u56FE\u5E8A\u66F4\u6362\u57DF\u540D\u65F6\u6BCF\u884C\u6DFB\u52A0\u4E00\u4E2A";
+    textarea.value = getCustomHdblogImageHosts().join("\n");
+    textarea.style.cssText = "width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical";
+    const help = document2.createElement("small");
+    help.style.cssText = "display:block;margin-top:5px;color:#666";
+    help.textContent = `\u5185\u7F6E\u517C\u5BB9\uFF1A${DEFAULT_HDBLOG_IMAGE_HOSTS.join("\u3001")}\u3002\u53EF\u586B\u4E3B\u57DF\u540D\u6216\u5B8C\u6574 URL\uFF1B\u811A\u672C\u4E5F\u4F1A\u81EA\u52A8\u8BC6\u522B\u5E38\u89C1 /show/ \u56FE\u7247\u5C55\u793A\u9875\u3002`;
+    label.append(title, textarea, help);
+    panel.insertBefore(label, panel.lastElementChild || null);
+    if (panel.getAttribute(IMAGE_HOSTS_BOUND_ATTR) !== "1") {
+      panel.setAttribute(IMAGE_HOSTS_BOUND_ATTR, "1");
+      panel.addEventListener("submit", () => {
+        const input = panel.querySelector('[data-setting="image-hosts"]');
+        if (!input || typeof GM_setValue !== "function") return;
+        const hosts = parseHdblogImageHosts(input.value);
         GM_setValue(HDBLOG_IMAGE_HOSTS_KEY, hosts.join("\n"));
-      }
-      document2.defaultView?.alert(
-        hosts.length ? `\u5DF2\u4FDD\u5B58\u989D\u5916\u56FE\u5E8A\uFF1A
-${hosts.join("\n")}
-
-\u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002` : "\u5DF2\u6E05\u7A7A\u989D\u5916\u56FE\u5E8A\uFF0C\u7EE7\u7EED\u4F7F\u7528\u5185\u7F6E\u56FE\u5E8A\u548C\u81EA\u52A8\u8BC6\u522B\u89C4\u5219\u3002\n\n\u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002"
-      );
-    });
+      }, true);
+    }
+    return true;
+  }
+  function installHdblogImageHostSettings(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2?.body || !isHdblogHost(locationObject)) return;
+    enhanceHdblogSettingsPanel(document2);
+    const MutationObserverCtor = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
+    if (typeof MutationObserverCtor !== "function") return;
+    const observer = new MutationObserverCtor(() => enhanceHdblogSettingsPanel(document2));
+    observer.observe(document2.body, { childList: true, subtree: true });
   }
 
   // src/pixhost.js
@@ -1378,7 +1396,7 @@ ${hosts.join("\n")}
   var HDBLOG_BLOCKED_KEYWORDS_KEY = "x1080x-ex:hdblog-blocked-keywords";
   var DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
   var DEFAULT_HDBLOG_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
-  var HDBLOG_SETTINGS_PANEL_ID = "x1080x-ex-hdblog-settings-panel";
+  var HDBLOG_SETTINGS_PANEL_ID2 = "x1080x-ex-hdblog-settings-panel";
   var DOWNLOAD_HIDDEN_ATTR = "data-x1080x-hdblog-download-hidden";
   var DOWNLOAD_WRAPPER_ATTR = "data-x1080x-hdblog-download-wrapper";
   var DOWNLOAD_SECTION_LABEL_PATTERN = /^(?:bt(?:a)?file|katfile|freedl|rapidgator)\s*[:：]?$/i;
@@ -2038,13 +2056,13 @@ ${failures.join("\n")}`);
     }).join("\n");
   }
   function closeHdblogSettingsPanel(document2) {
-    document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID)?.remove();
+    document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID2)?.remove();
   }
   function openHdblogSettingsPanel(document2 = globalThis.document) {
     if (!document2?.body) return null;
     closeHdblogSettingsPanel(document2);
     const overlay = document2.createElement("div");
-    overlay.id = HDBLOG_SETTINGS_PANEL_ID;
+    overlay.id = HDBLOG_SETTINGS_PANEL_ID2;
     Object.assign(overlay.style, {
       position: "fixed",
       inset: "0",
