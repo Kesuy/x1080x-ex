@@ -189,6 +189,7 @@
     return "attachment.rar";
   }
   function isContentImage(image) {
+    if (image.hasAttribute(HDBLOG_PREVIEW_URL_ATTR)) return false;
     if (image.closest(".attp, .attach, .pattl, .smilie, .avatar")) return false;
     const className = image.className || "";
     const src = image.getAttribute("src") || "";
@@ -297,17 +298,6 @@
       url: attachment.url,
       name: buildAttachmentFilename(resources.title, attachment.sourceName)
     })));
-    if (resources.hdblogPreviews.length) {
-      const safeCode = sanitizeFilename(resources.title.code || "preview");
-      resources.hdblogPreviews.forEach((image, index) => {
-        jobs.push({
-          kind: "image",
-          url: image.url,
-          name: `${safeCode} -${index + 1}.jpg`
-        });
-      });
-      return jobs;
-    }
     if (resources.title.code.startsWith("FC2-")) {
       resources.images.forEach((image, index) => {
         const preferredUrl = image.cacheUrl || image.url;
@@ -322,14 +312,22 @@
           )
         });
       });
-      return jobs;
-    }
-    if (resources.imageUrl) {
+    } else if (resources.imageUrl) {
       const preferredUrl = resources.imageCacheUrl || resources.imageUrl;
       jobs.push({
         kind: "image",
         url: preferredUrl,
         name: resources.imageFilename
+      });
+    }
+    if (resources.hdblogPreviews.length) {
+      const safeCode = sanitizeFilename(resources.title.code || "preview");
+      resources.hdblogPreviews.forEach((image, index) => {
+        jobs.push({
+          kind: "image",
+          url: image.url,
+          name: `${safeCode} -${index + 1}.jpg`
+        });
       });
     }
     return jobs;
