@@ -107,7 +107,7 @@ test('fetches hdblog Preview images including refer -> Pixhost resolution', asyn
   ]);
 });
 
-test('download jobs keep the agaghhh cover and append injected Preview images', () => {
+test('download jobs name the agaghhh cover A and injected Preview images B1/B2', () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
     <h1 id="thread_subject">SVMGM-050 Sample</h1>
     <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
@@ -130,9 +130,9 @@ test('download jobs keep the agaghhh cover and append injected Preview images', 
   const images = jobs.filter((job) => job.kind === 'image');
   assert.equal(attachment?.name, 'SVMGM-050 Sample.rar');
   assert.deepEqual(images.map((job) => job.name), [
-    'SVMGM-050.jpg',
-    'SVMGM-050 -1.jpg',
-    'SVMGM-050 -2.jpg',
+    'SVMGM-050 A.jpg',
+    'SVMGM-050 B1.jpg',
+    'SVMGM-050 B2.jpg',
   ]);
   assert.deepEqual(images.map((job) => job.url), [
     'https://agaghhh.cc/original.jpg',
@@ -153,8 +153,8 @@ test('injected Preview images never replace the original-cover candidate', () =>
 
   const images = buildDownloadJobs(dom.window.document).filter((job) => job.kind === 'image');
   assert.deepEqual(images.map((job) => job.name), [
-    'SVMGM-050.jpg',
-    'SVMGM-050 -1.jpg',
+    'SVMGM-050 A.jpg',
+    'SVMGM-050 B1.jpg',
   ]);
   assert.deepEqual(images.map((job) => job.url), [
     'https://agaghhh.cc/original.jpg',

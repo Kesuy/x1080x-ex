@@ -115,8 +115,8 @@ assert.deepEqual(calls, [
 ]);
 assert.deepEqual(saved, [
   { url: 'blob:smoke-1', name: 'ABCD-123 本文タイトル.rar' },
-  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },
-  { url: 'blob:smoke-3', name: 'ABCD-123 -1.jpg' },
+  { url: 'blob:smoke-2', name: 'ABCD-123 A.jpg' },
+  { url: 'blob:smoke-3', name: 'ABCD-123 B1.jpg' },
 ]);
 assert.deepEqual(revoked, ['blob:smoke-1', 'blob:smoke-2', 'blob:smoke-3']);
 assert.equal(dom.window.location.href, 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806');
