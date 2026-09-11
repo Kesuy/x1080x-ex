@@ -49,7 +49,7 @@
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)（油猴）。
 2. 点击安装脚本：
-   **[安装 x1080x-ex](https://raw.githubusercontent.com/Kesuy/x1080x-ex/main/dist/x1080x-ex.user.js)**
+   **[安装 x1080x-ex](https://raw.githubusercontent.com/Kesuy/x1080x-ex/main/dist/x1080x-ex.user.js?v=1.8.0)**
 3. 打开帖子详情页，标题右侧会出现 **“⬇”** 下载按钮；打开列表页，Discuz 分页栏或 `hdblog.me` 归档标题右侧会出现 **“后台顺序打开本页主题”** 按钮。
 
 > 同源 Discuz 附件使用页面请求上下文并携带当前登录状态，跨域图片使用 Tampermonkey 请求；响应验证通过后才会保存到浏览器下载目录。首次批量下载时，浏览器可能会询问下载权限，请选择允许。
