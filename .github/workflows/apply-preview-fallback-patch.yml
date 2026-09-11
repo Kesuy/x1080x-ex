@@ -1,0 +1,249 @@
+name: Apply preview fallback patch
+
+on:
+  push:
+    branches:
+      - test/agaghhh-hdblog-preview
+    paths:
+      - .github/workflows/apply-preview-fallback-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/agaghhh-hdblog-preview
+      - name: Apply source patches
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'expected block not found in {path}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          preview = 'src/agaghhh-hdblog-preview.js'
+          replace_once(preview,
+          """import {
+            derivePixhostImageUrlFromThumbnail,
+            isPixhostShowUrl,
+            parsePixhostImagePage,
+          } from './pixhost.js';
+
+          const HDBLOG_ORIGIN = 'https://hdblog.me';""",
+          """import {
+            derivePixhostImageUrlFromThumbnail,
+            isPixhostShowUrl,
+            parsePixhostImagePage,
+          } from './pixhost.js';
+          import {
+            fetchOfficialPreviewFallbackForCode,
+            installOfficialPreviewFallbackSetting,
+            isOfficialPreviewFallbackEnabled,
+          } from './agaghhh-preview-official.js';
+
+          installOfficialPreviewFallbackSetting();
+
+          const HDBLOG_ORIGIN = 'https://hdblog.me';""")
+
+          replace_once(preview,
+          """  source.href = result.articleUrl;
+            source.target = '_blank';
+            source.rel = 'noopener noreferrer';
+            source.textContent = `HDblog Preview · ${result.code}`;""",
+          """  source.href = result.sourceUrl || result.articleUrl || '#';
+            source.target = '_blank';
+            source.rel = 'noopener noreferrer';
+            source.textContent = `${result.sourceName || 'HDblog'} Preview · ${result.code}`;""")
+
+          replace_once(preview,
+          """  result.imageUrls.forEach((url, index) => {
+            const anchor = document.createElement('a');""",
+          """  const previewReferer = result.referer || result.articleUrl || result.sourceUrl || '';
+            result.imageUrls.forEach((url, index) => {
+            const anchor = document.createElement('a');""")
+
+          replace_once(preview,
+          """    image.setAttribute(PREVIEW_IMAGE_ATTR, url);
+            image.style.cssText = 'display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain';""",
+          """    image.setAttribute(PREVIEW_IMAGE_ATTR, url);
+            if (previewReferer) image.setAttribute('data-x1080x-preview-referer', previewReferer);
+            image.style.cssText = 'display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain';""")
+
+          replace_once(preview,
+          """  try {
+            const result = await fetchHdblogPreviewForCode(code, gmRequest, document);
+            return renderAgaghhhHdblogPreview(document, result);
+          } catch (error) {
+            console.warn('[x1080x-ex] hdblog preview lookup failed', {
+              code,
+              error: error?.message || String(error),
+            });
+            return null;
+          }
+          }""",
+          """  let result = null;
+            try {
+              result = await fetchHdblogPreviewForCode(code, gmRequest, document);
+            } catch (error) {
+              console.warn('[x1080x-ex] hdblog preview lookup failed', {
+                code,
+                error: error?.message || String(error),
+              });
+            }
+
+            if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
+              try {
+                result = await fetchOfficialPreviewFallbackForCode(code, gmRequest, document);
+              } catch (error) {
+                console.warn('[x1080x-ex] official preview fallback failed', {
+                  code,
+                  error: error?.message || String(error),
+                });
+              }
+            }
+            return renderAgaghhhHdblogPreview(document, result);
+          }""")
+
+          userscript = 'src/userscript.js'
+          replace_once(userscript,
+          """const REQUEST_TIMEOUT = 60000;
+          const DEFAULT_OPEN_TIMING""",
+          """const REQUEST_TIMEOUT = 60000;
+          const PREVIEW_IMAGE_URL_ATTR = 'data-x1080x-hdblog-preview-url';
+          const PREVIEW_REFERER_ATTR = 'data-x1080x-preview-referer';
+          const DEFAULT_OPEN_TIMING""")
+
+          replace_once(userscript,
+          """function requestBlobWithGmXhr(job) {
+            return new Promise((resolve, reject) => {
+              GM_xmlhttpRequest({
+                method: 'GET',
+                url: job.url,
+                responseType: 'blob',
+                timeout: REQUEST_TIMEOUT,
+                headers: { Referer: location.href },
+                onload: (response) => {
+                  validateResponse(response).then(resolve, reject);
+                },
+                onerror: (error) => {
+                  const details = safeErrorDetails(error);
+                  console.error('[x1080x-ex] GM_xmlhttpRequest failed', details);
+                  reject(new Error(
+                    `网络请求失败：error=${details.error || 'unknown_error'}；`
+                    + `details=${details.details || details.message || '无详细信息'}`
+                  ));
+                },
+                ontimeout: () => reject(new Error(`网络请求超时（${REQUEST_TIMEOUT / 1000} 秒）`)),
+              });
+            });
+          }""",
+          """function previewRefererForJob(job) {
+            if (job.kind !== 'image') return '';
+            let target = '';
+            try {
+              target = new URL(job.url, location.href).href;
+            } catch {
+              return '';
+            }
+            const image = [...document.querySelectorAll(`img[${PREVIEW_IMAGE_URL_ATTR}]`)]
+              .find((candidate) => {
+                try {
+                  return new URL(candidate.getAttribute(PREVIEW_IMAGE_URL_ATTR), location.href).href === target;
+                } catch {
+                  return false;
+                }
+              });
+            if (!image) return '';
+            return image.getAttribute(PREVIEW_REFERER_ATTR)
+              || image.closest('section')?.querySelector('a[href]')?.href
+              || '';
+          }
+
+          function requestBlobWithGmXhrOnce(job, referer) {
+            return new Promise((resolve, reject) => {
+              GM_xmlhttpRequest({
+                method: 'GET',
+                url: job.url,
+                responseType: 'blob',
+                timeout: REQUEST_TIMEOUT,
+                ...(referer ? { headers: { Referer: referer } } : {}),
+                onload: (response) => {
+                  validateResponse(response).then(resolve, reject);
+                },
+                onerror: (error) => {
+                  const details = safeErrorDetails(error);
+                  reject(new Error(
+                    `网络请求失败：error=${details.error || 'unknown_error'}；`
+                    + `details=${details.details || details.message || '无详细信息'}`
+                  ));
+                },
+                ontimeout: () => reject(new Error(`网络请求超时（${REQUEST_TIMEOUT / 1000} 秒）`)),
+              });
+            });
+          }
+
+          async function requestBlobWithGmXhr(job) {
+            const sourceReferer = previewRefererForJob(job);
+            const referers = sourceReferer
+              ? [sourceReferer, '', location.href]
+              : [location.href, ''];
+            const uniqueReferers = [...new Set(referers)];
+            let lastError = null;
+            for (const referer of uniqueReferers) {
+              try {
+                return await requestBlobWithGmXhrOnce(job, referer);
+              } catch (error) {
+                lastError = error;
+              }
+            }
+            console.error('[x1080x-ex] GM_xmlhttpRequest failed after referer retries', safeErrorDetails(lastError));
+            throw lastError || new Error('网络请求失败');
+          }""")
+
+          smoke = Path('scripts/smoke.mjs')
+          text = smoke.read_text(encoding='utf-8')
+          text = text.replace(
+          """      <img id=\"aimg_1\" src=\"/data/attachment/forum/cover.jpg\" width=\"1920\" height=\"1080\">""",
+          """      <img id=\"aimg_1\" src=\"/data/attachment/forum/cover.jpg\" width=\"1920\" height=\"1080\">
+              <section><a href=\"https://hdblog.me/123/abcd-123/\"><img src=\"https://img1.pixhost.to/images/preview.jpg\" data-x1080x-hdblog-preview-url=\"https://img1.pixhost.to/images/preview.jpg\" data-x1080x-preview-referer=\"https://hdblog.me/123/abcd-123/\"></a></section>""", 1)
+          text = text.replace(
+          """    anonymous: details.anonymous,
+            });""",
+          """    anonymous: details.anonymous,
+              referer: details.headers?.Referer,
+            });""", 1)
+          text = text.replace(
+          """    url: 'https://agaghhh.cc/data/attachment/forum/cover.jpg',
+              responseType: 'blob',
+              anonymous: undefined,
+              blobSize: 3,""",
+          """    url: 'https://img1.pixhost.to/images/preview.jpg',
+              responseType: 'blob',
+              anonymous: undefined,
+              referer: 'https://hdblog.me/123/abcd-123/',
+              blobSize: 3,""", 1)
+          text = text.replace(
+          """  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },""",
+          """  { url: 'blob:smoke-2', name: 'ABCD-123 -1.jpg' },""", 1)
+          if 'data-x1080x-preview-referer' not in text or "ABCD-123 -1.jpg" not in text:
+              raise SystemExit('smoke patch did not apply')
+          smoke.write_text(text, encoding='utf-8')
+          PY
+      - name: Commit patched sources
+        shell: bash
+        run: |
+          git config user.name 'xshare.cc'
+          git config user.email 'nicbest@163.com'
+          git add src/agaghhh-hdblog-preview.js src/userscript.js scripts/smoke.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: download preview images and add official fallback flow'
+          git push origin HEAD:test/agaghhh-hdblog-preview
