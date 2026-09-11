@@ -373,7 +373,9 @@ export function buildDownloadJobs(document) {
       jobs.push({
         kind: 'image',
         url: image.url,
-        name: resources.title.code.startsWith('FC2-') ? `${safeCode} -${index + 1}.jpg` : `${safeCode} B${index + 1}.jpg`,
+        name: resources.title.code.startsWith('FC2-')
+          ? `${safeCode} -${index + 1}.jpg`
+          : (resources.hdblogPreviews.length === 1 ? `${safeCode} B.jpg` : `${safeCode} B${index + 1}.jpg`),
       });
     });
   }

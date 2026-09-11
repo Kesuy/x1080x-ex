@@ -154,7 +154,7 @@ test('injected Preview images never replace the original-cover candidate', () =>
   const images = buildDownloadJobs(dom.window.document).filter((job) => job.kind === 'image');
   assert.deepEqual(images.map((job) => job.name), [
     'SVMGM-050 A.jpg',
-    'SVMGM-050 B1.jpg',
+    'SVMGM-050 B.jpg',
   ]);
   assert.deepEqual(images.map((job) => job.url), [
     'https://agaghhh.cc/original.jpg',
