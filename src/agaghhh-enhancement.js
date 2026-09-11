@@ -1,9 +1,11 @@
 import { parseThreadTitle } from './core.js';
-import { openHdblogSettingsPanel } from './hdblog-article.js';
 
-export const AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-enabled';
+export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
+export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
+export const AGAGHHH_REAL_ACTRESS_ENABLED_KEY = 'x1080x-ex:agaghhh-real-actress-enabled';
+const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-enabled';
 
-const SETTINGS_PANEL_ID = 'x1080x-ex-hdblog-settings-panel';
+const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
@@ -11,9 +13,6 @@ const AV_WIKI_ORIGIN = 'https://av-wiki.net';
 const AV_WIKI_TIMEOUT = 20000;
 const REAL_ACTRESS_BOUND_ATTR = 'data-x1080x-real-actress-bound';
 const REAL_ACTRESS_BYPASS_ATTR = 'data-x1080x-real-actress-bypass';
-const AGAGHHH_SETTINGS_FIELD_ATTR = 'data-x1080x-agaghhh-settings-field';
-const LEGACY_HDBLOG_MENU_TITLE = '⚙️ hdblog 设置';
-let restoreMenuRegistration = null;
 
 function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -24,14 +23,28 @@ export function isAgaghhhHost(locationObject = globalThis.location) {
   return hostname === 'agaghhh.cc' || hostname.endsWith('.agaghhh.cc');
 }
 
-function isHdblogHost(locationObject = globalThis.location) {
-  const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
+function legacyDefault() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY, true) !== false;
 }
 
-export function isAgaghhhEnhancementEnabled() {
+function readBooleanSetting(key) {
   if (typeof GM_getValue !== 'function') return true;
-  return GM_getValue(AGAGHHH_ENHANCEMENT_ENABLED_KEY, true) !== false;
+  const stored = GM_getValue(key, null);
+  if (stored === null || stored === undefined) return legacyDefault();
+  return stored !== false;
+}
+
+export function isAgaghhhBatchOpenEnabled() {
+  return readBooleanSetting(AGAGHHH_BATCH_OPEN_ENABLED_KEY);
+}
+
+export function isAgaghhhDownloadEnabled() {
+  return readBooleanSetting(AGAGHHH_DOWNLOAD_ENABLED_KEY);
+}
+
+export function isAgaghhhRealActressEnabled() {
+  return readBooleanSetting(AGAGHHH_REAL_ACTRESS_ENABLED_KEY);
 }
 
 function firstPostContent(document) {
@@ -275,75 +288,85 @@ function bindRealActressDownload(document, gmRequest) {
   }, true);
 }
 
-function disableAgaghhhEnhancements(document) {
-  document.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
-  document.getElementById(BATCH_BUTTON_ID)?.remove();
-  document.getElementById(BATCH_TOOLBAR_ID)?.remove();
-}
-
-function injectAgaghhhSettings(document, overlay) {
-  const panel = overlay?.querySelector('form');
-  if (!panel) return overlay;
-  const heading = panel.querySelector('h2');
-  if (heading) heading.textContent = 'x1080x 设置';
-  if (panel.querySelector(`[${AGAGHHH_SETTINGS_FIELD_ATTR}]`)) return overlay;
-
-  const section = document.createElement('div');
-  section.setAttribute(AGAGHHH_SETTINGS_FIELD_ATTR, '1');
-  section.style.cssText = 'margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa';
-  section.innerHTML = `
-    <div style="font-weight:700;margin-bottom:10px">agaghhh.cc</div>
-    <label style="display:flex;align-items:center;gap:9px">
-      <input data-setting="agaghhh-enabled" type="checkbox">
-      启用 agaghhh.cc 增强功能
-    </label>
-    <small style="display:block;margin-top:9px;color:#666">包括帖子下载、列表页后台顺序打开，以及出演者为空时从 av-wiki 获取真实演员并用于附件命名。</small>`;
-  const checkbox = section.querySelector('[data-setting="agaghhh-enabled"]');
-  checkbox.checked = isAgaghhhEnhancementEnabled();
-  panel.insertBefore(section, heading?.nextElementSibling || panel.firstElementChild);
-
-  panel.addEventListener('submit', () => {
-    if (typeof GM_setValue === 'function') {
-      GM_setValue(AGAGHHH_ENHANCEMENT_ENABLED_KEY, checkbox.checked);
-    }
-  }, true);
-  return overlay;
+function closeX1080xSettingsPanel(document) {
+  document?.getElementById(SETTINGS_PANEL_ID)?.remove();
 }
 
 export function openX1080xSettingsPanel(document = globalThis.document) {
-  const overlay = openHdblogSettingsPanel(document);
-  return injectAgaghhhSettings(document, overlay);
+  if (!document?.body) return null;
+  closeX1080xSettingsPanel(document);
+
+  const overlay = document.createElement('div');
+  overlay.id = SETTINGS_PANEL_ID;
+  Object.assign(overlay.style, {
+    position: 'fixed', inset: '0', zIndex: '2147483646', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', padding: '20px',
+    background: 'rgba(0,0,0,.42)', boxSizing: 'border-box',
+  });
+
+  const panel = document.createElement('form');
+  Object.assign(panel.style, {
+    width: 'min(520px, 100%)', maxHeight: 'calc(100vh - 40px)', overflow: 'auto',
+    padding: '22px', borderRadius: '10px', background: '#fff', color: '#222',
+    boxShadow: '0 18px 60px rgba(0,0,0,.28)', boxSizing: 'border-box',
+    font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  });
+  panel.innerHTML = `
+    <h2 style="margin:0 0 18px;font-size:20px">x1080x 设置</h2>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:11px">agaghhh.cc 增强功能</div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="batch-open" type="checkbox" style="margin-top:3px">
+        <span><strong>批量打开帖子功能</strong><small style="display:block;margin-top:2px;color:#666">在列表页显示“后台顺序打开本页主题”按钮。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="download" type="checkbox" style="margin-top:3px">
+        <span><strong>下载增强</strong><small style="display:block;margin-top:2px;color:#666">在帖子页显示下载按钮，并使用现有附件、图片、种子下载与自动命名逻辑。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px">
+        <input data-setting="real-actress" type="checkbox" style="margin-top:3px">
+        <span><strong>查真实演员信息</strong><small style="display:block;margin-top:2px;color:#666">仅当帖子“出演者”为空且启用了下载增强时，通过 av-wiki 查询演员并追加到附件文件名。</small></span>
+      </label>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
+      <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
+    </div>`;
+
+  const batchInput = panel.querySelector('[data-setting="batch-open"]');
+  const downloadInput = panel.querySelector('[data-setting="download"]');
+  const actressInput = panel.querySelector('[data-setting="real-actress"]');
+  batchInput.checked = isAgaghhhBatchOpenEnabled();
+  downloadInput.checked = isAgaghhhDownloadEnabled();
+  actressInput.checked = isAgaghhhRealActressEnabled();
+
+  panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeX1080xSettingsPanel(document));
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) closeX1080xSettingsPanel(document);
+  });
+  panel.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (typeof GM_setValue === 'function') {
+      GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
+      GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+      GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
+    }
+    closeX1080xSettingsPanel(document);
+    const view = document.defaultView;
+    if (view?.location?.reload) view.location.reload();
+  });
+
+  overlay.append(panel);
+  document.body.append(overlay);
+  return overlay;
 }
 
-function trySuppressLegacyHdblogMenu() {
-  if (restoreMenuRegistration || typeof globalThis.GM_registerMenuCommand !== 'function') return;
-  const original = globalThis.GM_registerMenuCommand;
-  const wrapped = function wrappedRegisterMenuCommand(title, callback, ...rest) {
-    if (title === LEGACY_HDBLOG_MENU_TITLE) return undefined;
-    return original.call(this, title, callback, ...rest);
-  };
-  try {
-    globalThis.GM_registerMenuCommand = wrapped;
-    restoreMenuRegistration = () => {
-      try { globalThis.GM_registerMenuCommand = original; } catch { /* no-op */ }
-      restoreMenuRegistration = null;
-    };
-  } catch {
-    restoreMenuRegistration = null;
-  }
-}
-
-export function finishUnifiedSettingsMenuInstall() {
-  restoreMenuRegistration?.();
-}
-
-export function installUnifiedSettingsMenu(
+export function installX1080xSettingsMenu(
   document = globalThis.document,
   locationObject = globalThis.location
 ) {
-  if (!document || (!isAgaghhhHost(locationObject) && !isHdblogHost(locationObject))) return;
+  if (!document || !isAgaghhhHost(locationObject)) return;
   if (typeof GM_registerMenuCommand !== 'function') return;
-  trySuppressLegacyHdblogMenu();
   GM_registerMenuCommand('⚙️ x1080x 设置', () => openX1080xSettingsPanel(document));
 }
 
@@ -353,9 +376,16 @@ export function installAgaghhhEnhancement(
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
   if (!document || !isAgaghhhHost(locationObject)) return;
-  if (!isAgaghhhEnhancementEnabled()) {
-    disableAgaghhhEnhancements(document);
+
+  if (!isAgaghhhBatchOpenEnabled()) {
+    document.getElementById(BATCH_BUTTON_ID)?.remove();
+    document.getElementById(BATCH_TOOLBAR_ID)?.remove();
+  }
+
+  if (!isAgaghhhDownloadEnabled()) {
+    document.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
     return;
   }
-  bindRealActressDownload(document, gmRequest);
+
+  if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
 }
