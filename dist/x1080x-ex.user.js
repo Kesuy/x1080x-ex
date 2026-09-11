@@ -549,13 +549,13 @@
     }
     return true;
   }
-  function requestTorrentUrl(url, gmRequest) {
+  function requestTorrentUrl(url, gmRequest2) {
     return new Promise((resolve, reject) => {
-      if (typeof gmRequest !== "function") {
+      if (typeof gmRequest2 !== "function") {
         reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
         return;
       }
-      gmRequest({
+      gmRequest2({
         method: "GET",
         url,
         responseType: "arraybuffer",
@@ -573,14 +573,14 @@
       });
     });
   }
-  async function requestTorrentBytes(magnet, gmRequest = globalThis.GM_xmlhttpRequest) {
+  async function requestTorrentBytes(magnet, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     const hash = extractBtih(magnet);
     if (!hash) throw new Error("\u78C1\u529B\u94FE\u4E2D\u6CA1\u6709\u6709\u6548\u7684 BTIH");
     const errors = [];
     for (const buildUrl of TORRENT_SOURCES) {
       const url = buildUrl(hash);
       try {
-        const bytes = await requestTorrentUrl(url, gmRequest);
+        const bytes = await requestTorrentUrl(url, gmRequest2);
         const torrentName = parseTorrentName(bytes);
         verifyTorrentHash(bytes, hash);
         return { bytes, hash, torrentName, sourceUrl: url };
@@ -599,6 +599,8 @@
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
   var BATCH_TOOLBAR_ID = "x1080x-ex-open-page-toolbar";
   var REQUEST_TIMEOUT = 6e4;
+  var PREVIEW_IMAGE_URL_ATTR = "data-x1080x-hdblog-preview-url";
+  var PREVIEW_REFERER_ATTR = "data-x1080x-preview-referer";
   var DEFAULT_OPEN_TIMING = Object.freeze({
     initialMin: 300,
     initialMax: 800,
@@ -1007,20 +1009,37 @@ ${failures.join("\n")}`);
       window.clearTimeout(timeoutId);
     }
   }
-  function requestBlobWithGmXhr(job) {
+  function previewRefererForJob(job) {
+    if (job.kind !== "image") return "";
+    let target = "";
+    try {
+      target = new URL(job.url, location.href).href;
+    } catch {
+      return "";
+    }
+    const image = [...document.querySelectorAll(`img[${PREVIEW_IMAGE_URL_ATTR}]`)].find((candidate) => {
+      try {
+        return new URL(candidate.getAttribute(PREVIEW_IMAGE_URL_ATTR), location.href).href === target;
+      } catch {
+        return false;
+      }
+    });
+    if (!image) return "";
+    return image.getAttribute(PREVIEW_REFERER_ATTR) || image.closest("section")?.querySelector("a[href]")?.href || "";
+  }
+  function requestBlobWithGmXhrOnce(job, referer) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: "GET",
         url: job.url,
         responseType: "blob",
         timeout: REQUEST_TIMEOUT,
-        headers: { Referer: location.href },
+        ...referer ? { headers: { Referer: referer } } : {},
         onload: (response) => {
           validateResponse(response).then(resolve, reject);
         },
         onerror: (error) => {
           const details = safeErrorDetails(error);
-          console.error("[x1080x-ex] GM_xmlhttpRequest failed", details);
           reject(new Error(
             `\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25\uFF1Aerror=${details.error || "unknown_error"}\uFF1Bdetails=${details.details || details.message || "\u65E0\u8BE6\u7EC6\u4FE1\u606F"}`
           ));
@@ -1028,6 +1047,20 @@ ${failures.join("\n")}`);
         ontimeout: () => reject(new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT / 1e3} \u79D2\uFF09`))
       });
     });
+  }
+  async function requestBlobWithGmXhr(job) {
+    const sourceReferer = previewRefererForJob(job);
+    const referers = sourceReferer ? [sourceReferer, "", location.href] : [location.href, ""];
+    let lastError = null;
+    for (const referer of [...new Set(referers)]) {
+      try {
+        return await requestBlobWithGmXhrOnce(job, referer);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    console.error("[x1080x-ex] GM_xmlhttpRequest failed after referer retries", safeErrorDetails(lastError));
+    throw lastError || new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25");
   }
   function requestBlob(job) {
     const url = new URL(job.url, location.href);
@@ -1460,13 +1493,13 @@ ${failures.join("\n")}
     const raw = String(html).match(/<img\b(?=[^>]*\bclass=["'][^"']*\bimage-img\b[^"']*["'])[^>]*\bsrc=["']([^"']+)["'][^>]*>/i)?.[1];
     return candidateUrl(raw, pageUrl);
   }
-  function requestPixhostPage(showUrl, gmRequest, referer) {
+  function requestPixhostPage(showUrl, gmRequest2, referer) {
     return new Promise((resolve, reject) => {
-      if (typeof gmRequest !== "function") {
+      if (typeof gmRequest2 !== "function") {
         reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
         return;
       }
-      gmRequest({
+      gmRequest2({
         method: "GET",
         url: showUrl,
         responseType: "text",
@@ -1490,14 +1523,14 @@ ${failures.join("\n")}
       });
     });
   }
-  function resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2 = "", gmRequest = globalThis.GM_xmlhttpRequest) {
+  function resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2 = "", gmRequest2 = globalThis.GM_xmlhttpRequest) {
     const absoluteShowUrl = absoluteUrl2(showUrl, document2?.baseURI || "https://pixhost.to/");
     if (!absoluteShowUrl || !isPixhostShowUrl(absoluteShowUrl, document2?.baseURI)) {
       return Promise.resolve("");
     }
     if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
     const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2?.baseURI || absoluteShowUrl);
-    const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document2?.location?.href).then(({ html, finalUrl }) => parsePixhostImagePage(document2, html, finalUrl || absoluteShowUrl) || fallback).catch(() => fallback);
+    const promise = requestPixhostPage(absoluteShowUrl, gmRequest2, document2?.location?.href).then(({ html, finalUrl }) => parsePixhostImagePage(document2, html, finalUrl || absoluteShowUrl) || fallback).catch(() => fallback);
     resolutionCache.set(absoluteShowUrl, promise);
     return promise;
   }
@@ -1989,13 +2022,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (type.includes("avif")) return "avif";
     return extensionFromUrl(url) || "jpg";
   }
-  function requestImageBlob(url, referer, gmRequest = globalThis.GM_xmlhttpRequest) {
+  function requestImageBlob(url, referer, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     return new Promise((resolve, reject) => {
-      if (typeof gmRequest !== "function") {
+      if (typeof gmRequest2 !== "function") {
         reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
         return;
       }
-      gmRequest({
+      gmRequest2({
         method: "GET",
         url,
         responseType: "blob",
@@ -2027,7 +2060,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     }
   }
-  async function resolveCandidateUrl(document2, candidate, gmRequest) {
+  async function resolveCandidateUrl(document2, candidate, gmRequest2) {
     const displayed = displayedPixhostImageUrl(document2, candidate.image);
     if (displayed) return displayed;
     if (!candidate.pixhostShowUrl) return candidate.directUrl;
@@ -2035,10 +2068,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       document2,
       candidate.pixhostShowUrl,
       candidate.thumbUrl,
-      gmRequest
+      gmRequest2
     );
   }
-  async function downloadHdblogArticleImages(button, document2, locationObject, gmRequest, initialCandidates = []) {
+  async function downloadHdblogArticleImages(button, document2, locationObject, gmRequest2, initialCandidates = []) {
     const view = document2.defaultView;
     const code = extractHdblogArticleCode(document2);
     if (!code) {
@@ -2058,7 +2091,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       const seen = /* @__PURE__ */ new Set();
       for (const candidate of candidates) {
         try {
-          const url = await resolveCandidateUrl(document2, candidate, gmRequest);
+          const url = await resolveCandidateUrl(document2, candidate, gmRequest2);
           if (url && !seen.has(url)) {
             seen.add(url);
             resolved.push(url);
@@ -2071,7 +2104,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       for (const [index, url] of resolved.entries()) {
         button.textContent = `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
         try {
-          const blob = await requestImageBlob(url, locationObject?.href, gmRequest);
+          const blob = await requestImageBlob(url, locationObject?.href, gmRequest2);
           const extension = extensionFromBlob(blob, url);
           saveBlob2(document2, blob, hdblogImageFilename(code, index, resolved.length, extension));
         } catch (error) {
@@ -2091,7 +2124,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
 
 ${failures.join("\n")}`);
   }
-  function installDownloadButton(document2, locationObject, gmRequest) {
+  function installDownloadButton(document2, locationObject, gmRequest2) {
     if (document2.getElementById(DOWNLOAD_BUTTON_ID)) return;
     const title = articleTitleElement(document2);
     if (!title) return;
@@ -2129,7 +2162,7 @@ ${failures.join("\n")}`);
       button,
       document2,
       locationObject,
-      gmRequest,
+      gmRequest2,
       initialCandidates
     ));
     title.append(" ", button);
@@ -2281,7 +2314,7 @@ ${failures.join("\n")}`);
     if (!isHdblogHost2(locationObject) || typeof GM_registerMenuCommand !== "function") return;
     GM_registerMenuCommand("\u2699\uFE0F hdblog \u8BBE\u7F6E", () => openHdblogSettingsPanel(document2));
   }
-  function installHdblogArticleEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+  function installHdblogArticleEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2) return;
     registerHdblogSettingsMenu(document2, locationObject);
     if (!isHdblogArticlePage(document2, locationObject)) return;
@@ -2289,7 +2322,7 @@ ${failures.join("\n")}`);
     if (storedWidth === null) clearHdblogArticleLayout(document2);
     else applyHdblogArticleLayout(document2, storedWidth);
     applyHdblogDownloadAreaVisibility(document2, readDownloadAreaVisible());
-    if (readImageDownloadButtonVisible()) installDownloadButton(document2, locationObject, gmRequest);
+    if (readImageDownloadButtonVisible()) installDownloadButton(document2, locationObject, gmRequest2);
     else document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
   }
 
@@ -2553,7 +2586,7 @@ ${failures.join("\n")}`);
     });
     return expanded;
   }
-  async function expandHdblogPixhostPreviewImages(document2, locationObject = document2?.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+  async function expandHdblogPixhostPreviewImages(document2, locationObject = document2?.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     const range = previewRange2(document2, locationObject);
     if (!range) return 0;
     const { content, marker, boundary } = range;
@@ -2561,7 +2594,7 @@ ${failures.join("\n")}`);
     const results = await Promise.all(anchors.map(async ({ anchor, showUrl }) => {
       let image = anchor.querySelector("img");
       const thumbnailUrl2 = previewThumbnailUrl(document2, image);
-      const fullUrl = await resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2, gmRequest);
+      const fullUrl = await resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2, gmRequest2);
       if (!fullUrl) return false;
       if (!image) {
         image = document2.createElement("img");
@@ -2659,13 +2692,13 @@ ${failures.join("\n")}`);
     const htmlTarget = htmlRedirectTarget(document2, html, referUrl);
     return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
   }
-  function requestReferTarget(document2, referUrl, gmRequest, referer) {
+  function requestReferTarget(document2, referUrl, gmRequest2, referer) {
     return new Promise((resolve, reject) => {
-      if (typeof gmRequest !== "function") {
+      if (typeof gmRequest2 !== "function") {
         reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
         return;
       }
-      gmRequest({
+      gmRequest2({
         method: "GET",
         url: referUrl,
         responseType: "text",
@@ -2691,7 +2724,7 @@ ${failures.join("\n")}`);
       });
     });
   }
-  function resolveHdblogReferUrl(document2, referUrl, gmRequest = globalThis.GM_xmlhttpRequest) {
+  function resolveHdblogReferUrl(document2, referUrl, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     const absoluteReferUrl = absoluteHttpUrl3(referUrl, document2?.baseURI || "https://hdblog.me/");
     if (!absoluteReferUrl || !isHdblogReferUrl(absoluteReferUrl, document2?.baseURI)) {
       return Promise.resolve("");
@@ -2700,7 +2733,7 @@ ${failures.join("\n")}`);
     const promise = requestReferTarget(
       document2,
       absoluteReferUrl,
-      gmRequest,
+      gmRequest2,
       document2?.location?.href
     ).catch(() => "");
     resolutionCache2.set(absoluteReferUrl, promise);
@@ -2745,7 +2778,7 @@ ${failures.join("\n")}`);
     if (!range || !isAfter3(range.marker, node)) return false;
     return !range.boundary || !isAfter3(range.boundary, node);
   }
-  async function resolveHdblogPreviewReferLinks(document2, locationObject = document2?.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+  async function resolveHdblogPreviewReferLinks(document2, locationObject = document2?.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     const range = previewRange3(document2, locationObject);
     if (!range) return 0;
     const anchors = [...range.content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange3(range, anchor)).map((anchor) => ({
@@ -2754,7 +2787,7 @@ ${failures.join("\n")}`);
     })).filter(({ referUrl }) => isHdblogReferUrl(referUrl, document2.baseURI));
     if (!anchors.length) return 0;
     const results = await Promise.all(anchors.map(async ({ anchor, referUrl }) => {
-      const target = await resolveHdblogReferUrl(document2, referUrl, gmRequest);
+      const target = await resolveHdblogReferUrl(document2, referUrl, gmRequest2);
       if (!target) return false;
       anchor.dataset.x1080xHdblogReferUrl = referUrl;
       anchor.href = target;
@@ -2763,13 +2796,13 @@ ${failures.join("\n")}`);
     const resolved = results.filter(Boolean).length;
     if (resolved) {
       expandHdblogPreviewImages2(document2, locationObject);
-      await expandHdblogPixhostPreviewImages(document2, locationObject, gmRequest);
+      await expandHdblogPixhostPreviewImages(document2, locationObject, gmRequest2);
     }
     return resolved;
   }
-  function installHdblogReferResolver(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+  function installHdblogReferResolver(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2 || !isHdblogHostname(locationObject?.hostname)) return;
-    const run = () => void resolveHdblogPreviewReferLinks(document2, locationObject, gmRequest);
+    const run = () => void resolveHdblogPreviewReferLinks(document2, locationObject, gmRequest2);
     run();
     const view = document2.defaultView;
     if (!view) return;
@@ -2777,15 +2810,14 @@ ${failures.join("\n")}`);
     view.setTimeout(run, 1500);
   }
 
-  // src/agaghhh-hdblog-preview.js
-  var HDBLOG_ORIGIN = "https://hdblog.me";
-  var HDBLOG_BLOCKED_KEYWORDS_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
-  var DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  // src/agaghhh-preview-official.js
+  var AV_WIKI_ORIGIN = "https://av-wiki.net";
+  var FANZA_IMAGE_ORIGIN = "https://pics.dmm.co.jp";
+  var FANZA_REFERER = "https://www.dmm.co.jp/";
+  var MGS_ORIGIN = "https://www.mgstage.com";
   var REQUEST_TIMEOUT5 = 3e4;
-  var CONTAINER_ID = "x1080x-ex-agaghhh-hdblog-preview";
-  var PREVIEW_IMAGE_ATTR = "data-x1080x-hdblog-preview-url";
-  var IMAGE_EXTENSION_PATTERN3 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
-  var PREVIEW_BOUNDARY_PATTERN4 = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  var MAX_PREVIEW_IMAGES = 20;
+  var AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:agaghhh-official-preview-fallback-enabled";
   function normalizeText4(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
@@ -2798,17 +2830,325 @@ ${failures.join("\n")}`);
       return "";
     }
   }
-  function requestText(url, gmRequest, referer = "") {
+  function gmRequest(details, request = globalThis.GM_xmlhttpRequest) {
     return new Promise((resolve, reject) => {
-      if (typeof gmRequest !== "function") {
+      if (typeof request !== "function") {
         reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
         return;
       }
-      gmRequest({
+      request({
+        timeout: REQUEST_TIMEOUT5,
+        ...details,
+        onload: resolve,
+        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
+        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  async function requestText(url, request, options = {}) {
+    const response = await gmRequest({
+      method: "GET",
+      url,
+      responseType: "text",
+      headers: {
+        Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        ...options.referer ? { Referer: options.referer } : {},
+        ...options.headers || {}
+      },
+      ...options.cookie ? { cookie: options.cookie } : {}
+    }, request);
+    if (response.status < 200 || response.status >= 400) {
+      throw new Error(`\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`);
+    }
+    return {
+      html: String(response.responseText ?? response.response ?? ""),
+      finalUrl: response.finalUrl || response.responseURL || url
+    };
+  }
+  async function urlExists(url, request, referer = "") {
+    try {
+      const response = await gmRequest({
+        method: "HEAD",
+        url,
+        responseType: "text",
+        headers: referer ? { Referer: referer } : void 0
+      }, request);
+      return response.status >= 200 && response.status < 400;
+    } catch {
+      return false;
+    }
+  }
+  function parseHtml(html, baseUrl, hostDocument = globalThis.document) {
+    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (typeof Parser !== "function") return null;
+    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
+    const base = parsed.createElement("base");
+    base.href = baseUrl;
+    (parsed.head || parsed.documentElement).prepend(base);
+    return parsed;
+  }
+  function codeTokenMatches(text, code) {
+    const target = String(code || "").trim().toUpperCase();
+    if (!target) return false;
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`, "i").test(normalizeText4(text).toUpperCase());
+  }
+  function findAvWikiResultUrl(document2, code) {
+    if (!document2 || !code) return "";
+    const exactPath = `/${String(code).toLowerCase()}/`;
+    const anchors = [...document2.querySelectorAll("a[href]")];
+    for (const anchor of anchors) {
+      const url = absoluteHttpUrl4(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+      if (!url) continue;
+      try {
+        const parsed = new URL(url);
+        if (parsed.origin === AV_WIKI_ORIGIN && parsed.pathname.toLowerCase() === exactPath) return parsed.href;
+      } catch {
+      }
+    }
+    for (const anchor of anchors) {
+      const article = anchor.closest("article");
+      if (!codeTokenMatches(article?.textContent || anchor.textContent, code)) continue;
+      const url = absoluteHttpUrl4(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+      if (!url) continue;
+      try {
+        const parsed = new URL(url);
+        if (parsed.origin === AV_WIKI_ORIGIN && parsed.pathname !== "/") return parsed.href;
+      } catch {
+      }
+    }
+    return "";
+  }
+  function cleanProviderId(value) {
+    return normalizeText4(value).replace(/^(?:MGS|FANZA)\s*品番\s*[:：]?\s*/i, "").split(/\s+/, 1)[0].replace(/[，,;；]+$/u, "").trim();
+  }
+  function labeledValue(document2, labelPattern) {
+    if (!document2) return "";
+    for (const row of document2.querySelectorAll("tr")) {
+      const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
+      if (cells.length < 2) continue;
+      if (labelPattern.test(normalizeText4(cells[0].textContent))) {
+        return cleanProviderId(cells[1].textContent);
+      }
+    }
+    for (const term of document2.querySelectorAll("dt")) {
+      if (!labelPattern.test(normalizeText4(term.textContent))) continue;
+      return cleanProviderId(term.nextElementSibling?.textContent || "");
+    }
+    const lines = String(document2.body?.innerText || document2.body?.textContent || "").replace(/\r/g, "").split("\n").map((line) => normalizeText4(line)).filter(Boolean);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!labelPattern.test(lines[index])) continue;
+      const inline = lines[index].replace(labelPattern, "").replace(/^\s*[:：]\s*/, "");
+      if (inline) return cleanProviderId(inline);
+      return cleanProviderId(lines[index + 1] || "");
+    }
+    return "";
+  }
+  function parseAvWikiProviderIds(document2) {
+    return {
+      fanzaId: labeledValue(document2, /^FANZA\s*品番\s*[:：]?/i),
+      mgsId: labeledValue(document2, /^MGS\s*品番\s*[:：]?/i)
+    };
+  }
+  async function fetchAvWikiProductInfo(code, request, hostDocument) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return { code: "", detailUrl: "", fanzaId: "", mgsId: "" };
+    const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
+    const search = await requestText(searchUrl, request, { referer: `${AV_WIKI_ORIGIN}/` });
+    const searchDocument = parseHtml(search.html, search.finalUrl || searchUrl, hostDocument);
+    const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
+    const detail = await requestText(detailUrl, request, { referer: searchUrl });
+    const detailDocument = parseHtml(detail.html, detail.finalUrl || detailUrl, hostDocument);
+    return {
+      code: normalizedCode,
+      detailUrl,
+      ...parseAvWikiProviderIds(detailDocument)
+    };
+  }
+  function fanzaPreviewUrl(fanzaId, index, large = true) {
+    const id = String(fanzaId || "").trim();
+    if (!id || !Number.isInteger(index) || index < 1) return "";
+    const suffix = large ? `jp-${index}.jpg` : `-${index}.jpg`;
+    return `${FANZA_IMAGE_ORIGIN}/digital/video/${encodeURIComponent(id)}/${encodeURIComponent(id)}${suffix}`;
+  }
+  async function fetchFanzaPreviewImages(fanzaId, request = globalThis.GM_xmlhttpRequest) {
+    const id = String(fanzaId || "").trim();
+    if (!id) return [];
+    const urls = [];
+    let consecutiveMisses = 0;
+    for (let index = 1; index <= MAX_PREVIEW_IMAGES; index += 1) {
+      const thumbnail = fanzaPreviewUrl(id, index, false);
+      const exists = await urlExists(thumbnail, request, FANZA_REFERER);
+      if (exists) {
+        urls.push(fanzaPreviewUrl(id, index, true));
+        consecutiveMisses = 0;
+        continue;
+      }
+      consecutiveMisses += 1;
+      if (urls.length && consecutiveMisses >= 2) break;
+      if (!urls.length && index >= 4) break;
+    }
+    return urls;
+  }
+  function parseMgsPreviewImages(document2, baseUrl) {
+    if (!document2) return [];
+    const seen = /* @__PURE__ */ new Set();
+    return [...document2.querySelectorAll("a.sample_image[href], .sample_image[href]")].map((element) => absoluteHttpUrl4(element.getAttribute("href"), baseUrl)).filter((url) => url && !seen.has(url) && seen.add(url));
+  }
+  async function fetchMgsPreviewImages(mgsId, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+    const id = String(mgsId || "").trim();
+    if (!id) return { productUrl: "", imageUrls: [] };
+    const productUrl = `${MGS_ORIGIN}/product/product_detail/${encodeURIComponent(id)}/`;
+    const response = await requestText(productUrl, request, {
+      referer: `${MGS_ORIGIN}/`,
+      cookie: "adc=1; coc=1",
+      headers: { "Accept-Language": "ja-JP" }
+    });
+    const document2 = parseHtml(response.html, response.finalUrl || productUrl, hostDocument);
+    return {
+      productUrl,
+      imageUrls: parseMgsPreviewImages(document2, response.finalUrl || productUrl)
+    };
+  }
+  function isOfficialPreviewFallbackEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY, true) !== false;
+  }
+  async function fetchOfficialPreviewFallbackForCode(code, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+    const info = await fetchAvWikiProductInfo(code, request, hostDocument);
+    if (!info.code) return { code: "", sourceName: "", sourceUrl: "", referer: "", imageUrls: [] };
+    if (info.fanzaId) {
+      try {
+        const imageUrls = await fetchFanzaPreviewImages(info.fanzaId, request);
+        if (imageUrls.length) {
+          return {
+            code: info.code,
+            sourceName: "FANZA",
+            sourceUrl: info.detailUrl,
+            referer: FANZA_REFERER,
+            imageUrls
+          };
+        }
+      } catch (error) {
+        console.warn("[x1080x-ex] FANZA preview fallback failed", {
+          code: info.code,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    if (info.mgsId) {
+      try {
+        const mgs = await fetchMgsPreviewImages(info.mgsId, request, hostDocument);
+        if (mgs.imageUrls.length) {
+          return {
+            code: info.code,
+            sourceName: "MGStage",
+            sourceUrl: mgs.productUrl || info.detailUrl,
+            referer: mgs.productUrl || `${MGS_ORIGIN}/`,
+            imageUrls: mgs.imageUrls
+          };
+        }
+      } catch (error) {
+        console.warn("[x1080x-ex] MGStage preview fallback failed", {
+          code: info.code,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return {
+      code: info.code,
+      sourceName: "",
+      sourceUrl: info.detailUrl,
+      referer: "",
+      imageUrls: []
+    };
+  }
+  function isAgaghhhHost(locationObject) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
+  }
+  function injectOfficialPreviewFallbackSetting(document2 = globalThis.document) {
+    const overlay = document2?.getElementById("x1080x-ex-settings-panel");
+    const form = overlay?.querySelector("form");
+    const master = form?.querySelector('[data-setting="hdblog-preview"]');
+    if (!form || !master) return false;
+    const masterLabel = master.closest("label");
+    const strong = masterLabel?.querySelector("strong");
+    const small = masterLabel?.querySelector("small");
+    if (strong) strong.textContent = "\u663E\u793A\u5927\u9884\u89C8\u56FE";
+    if (small) small.textContent = "\u4F18\u5148\u6309\u756A\u53F7\u641C\u7D22 hdblog\uFF1Bhdblog \u6CA1\u6709\u5339\u914D\u5927\u56FE\u65F6\uFF0C\u53EF\u7EE7\u7EED\u4F7F\u7528\u5B98\u65B9\u540E\u5907\u6E90\u3002";
+    let input = form.querySelector('[data-setting="official-preview-fallback"]');
+    if (!input) {
+      const label = document2.createElement("label");
+      label.style.cssText = "display:flex;align-items:flex-start;gap:9px;margin:-3px 0 13px 24px";
+      label.innerHTML = `
+      <input data-setting="official-preview-fallback" type="checkbox" style="margin-top:3px">
+      <span><strong>\u5B98\u65B9\u540E\u5907\u9884\u89C8\u56FE\uFF08FANZA / MGStage\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u5728 hdblog \u6CA1\u627E\u5230 Preview \u65F6\u542F\u7528\uFF0C\u987A\u5E8F\u4E3A FANZA \u5B98\u65B9\u56FE\u7247 CDN \u2192 MGStage \u5B98\u65B9\u5546\u54C1\u9875\u3002</small></span>`;
+      masterLabel?.after(label);
+      input = label.querySelector('[data-setting="official-preview-fallback"]');
+    }
+    input.checked = isOfficialPreviewFallbackEnabled();
+    const syncDisabled = () => {
+      input.disabled = !master.checked;
+    };
+    syncDisabled();
+    if (master.dataset.x1080xOfficialFallbackBound !== "1") {
+      master.dataset.x1080xOfficialFallbackBound = "1";
+      master.addEventListener("change", syncDisabled);
+    }
+    if (form.dataset.x1080xOfficialFallbackBound !== "1") {
+      form.dataset.x1080xOfficialFallbackBound = "1";
+      form.addEventListener("submit", () => {
+        if (typeof GM_setValue === "function") {
+          GM_setValue(AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY, input.checked);
+        }
+      }, true);
+    }
+    return true;
+  }
+  function installOfficialPreviewFallbackSetting(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2 || !isAgaghhhHost(locationObject)) return null;
+    if (injectOfficialPreviewFallbackSetting(document2)) return null;
+    const Observer = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
+    if (typeof Observer !== "function" || !document2.body) return null;
+    const observer = new Observer(() => injectOfficialPreviewFallbackSetting(document2));
+    observer.observe(document2.body, { childList: true, subtree: true });
+    return observer;
+  }
+
+  // src/agaghhh-hdblog-preview.js
+  installOfficialPreviewFallbackSetting();
+  var HDBLOG_ORIGIN = "https://hdblog.me";
+  var HDBLOG_BLOCKED_KEYWORDS_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
+  var DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  var REQUEST_TIMEOUT6 = 3e4;
+  var CONTAINER_ID = "x1080x-ex-agaghhh-hdblog-preview";
+  var PREVIEW_IMAGE_ATTR = "data-x1080x-hdblog-preview-url";
+  var IMAGE_EXTENSION_PATTERN3 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
+  var PREVIEW_BOUNDARY_PATTERN4 = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  function normalizeText5(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function absoluteHttpUrl5(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function requestText2(url, gmRequest2, referer = "") {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest2 !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      gmRequest2({
         method: "GET",
         url,
         responseType: "text",
-        timeout: REQUEST_TIMEOUT5,
+        timeout: REQUEST_TIMEOUT6,
         headers: {
           Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
           ...referer ? { Referer: referer } : {}
@@ -2829,7 +3169,7 @@ ${failures.join("\n")}`);
       });
     });
   }
-  function parseHtml(html, baseUrl, hostDocument = globalThis.document) {
+  function parseHtml2(html, baseUrl, hostDocument = globalThis.document) {
     const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
     if (typeof Parser !== "function") return null;
     const parsed = new Parser().parseFromString(String(html || ""), "text/html");
@@ -2844,8 +3184,8 @@ ${failures.join("\n")}`);
       stored === null || stored === void 0 ? DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 : stored
     );
   }
-  function codeTokenMatches(title, code) {
-    const normalized = normalizeText4(title).toUpperCase();
+  function codeTokenMatches2(title, code) {
+    const normalized = normalizeText5(title).toUpperCase();
     const target = String(code || "").trim().toUpperCase();
     if (!target) return false;
     const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2865,7 +3205,7 @@ ${failures.join("\n")}`);
       }
     });
     if (exactSlug.length === 1) return { blocked, remaining, selected: exactSlug[0] };
-    const exactTitle = remaining.filter((candidate) => codeTokenMatches(candidate.title, code));
+    const exactTitle = remaining.filter((candidate) => codeTokenMatches2(candidate.title, code));
     if (exactTitle.length === 1) return { blocked, remaining, selected: exactTitle[0] };
     return { blocked, remaining, selected: null };
   }
@@ -2878,27 +3218,27 @@ ${failures.join("\n")}`);
     return line ? line.slice(line.indexOf(":") + 1).trim() : "";
   }
   function redirectFromHtml(html, baseUrl, hostDocument) {
-    const parsed = parseHtml(html, baseUrl, hostDocument);
+    const parsed = parseHtml2(html, baseUrl, hostDocument);
     const meta = parsed?.querySelector("meta[http-equiv]");
     if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
       const content = meta.getAttribute("content") || "";
       const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
-      const target = absoluteHttpUrl4(match?.[1], baseUrl);
+      const target = absoluteHttpUrl5(match?.[1], baseUrl);
       if (target) return target;
     }
     const scriptMatch = String(html).match(
       /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
     );
-    return absoluteHttpUrl4(scriptMatch?.[1], baseUrl);
+    return absoluteHttpUrl5(scriptMatch?.[1], baseUrl);
   }
-  async function resolveHdblogReferTarget(document2, referUrl, articleUrl, gmRequest) {
+  async function resolveHdblogReferTarget(document2, referUrl, articleUrl, gmRequest2) {
     try {
-      const response = await requestText(referUrl, gmRequest, articleUrl);
-      const finalUrl = absoluteHttpUrl4(response.finalUrl, referUrl);
+      const response = await requestText2(referUrl, gmRequest2, articleUrl);
+      const finalUrl = absoluteHttpUrl5(response.finalUrl, referUrl);
       if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
         return finalUrl;
       }
-      const location2 = absoluteHttpUrl4(responseHeader(response.responseHeaders, "location"), referUrl);
+      const location2 = absoluteHttpUrl5(responseHeader(response.responseHeaders, "location"), referUrl);
       if (location2 && !isHdblogReferUrl(location2, referUrl)) return location2;
       const htmlTarget = redirectFromHtml(response.html, referUrl, document2);
       return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
@@ -2915,13 +3255,13 @@ ${failures.join("\n")}`);
       image?.getAttribute("data-src")
     ];
     for (const candidate of candidates) {
-      const url = absoluteHttpUrl4(candidate, document2.baseURI);
+      const url = absoluteHttpUrl5(candidate, document2.baseURI);
       if (url) return url;
     }
     return "";
   }
   function wordpressOriginalUrl2(value) {
-    const href = absoluteHttpUrl4(value, HDBLOG_ORIGIN);
+    const href = absoluteHttpUrl5(value, HDBLOG_ORIGIN);
     if (!href) return "";
     try {
       const url = new URL(href);
@@ -2941,13 +3281,13 @@ ${failures.join("\n")}`);
       const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
       const amount = match ? Number(match[2]) : order;
       const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
-      const url = absoluteHttpUrl4(rawUrl, document2.baseURI);
+      const url = absoluteHttpUrl5(rawUrl, document2.baseURI);
       return url ? { url, score } : null;
     }).filter(Boolean).sort((a, b) => b.score - a.score)[0]?.url || "";
   }
   function bestImageUrl(document2, image) {
     if (!image) return "";
-    const anchorHref = absoluteHttpUrl4(image.closest("a[href]")?.getAttribute("href"), document2.baseURI);
+    const anchorHref = absoluteHttpUrl5(image.closest("a[href]")?.getAttribute("href"), document2.baseURI);
     const candidates = [
       anchorHref && IMAGE_EXTENSION_PATTERN3.test(anchorHref) ? anchorHref : "",
       image.getAttribute("data-orig-file"),
@@ -2958,7 +3298,7 @@ ${failures.join("\n")}`);
       image.getAttribute("src")
     ];
     for (const candidate of candidates) {
-      const url = absoluteHttpUrl4(candidate, document2.baseURI);
+      const url = absoluteHttpUrl5(candidate, document2.baseURI);
       if (!url) continue;
       return wordpressOriginalUrl2(url) || url;
     }
@@ -2968,10 +3308,10 @@ ${failures.join("\n")}`);
     );
     return wordpressOriginalUrl2(srcset) || srcset;
   }
-  async function resolvePixhostTarget(document2, showUrl, thumbnailUrl2, articleUrl, gmRequest) {
+  async function resolvePixhostTarget(document2, showUrl, thumbnailUrl2, articleUrl, gmRequest2) {
     const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2.baseURI || showUrl);
     try {
-      const response = await requestText(showUrl, gmRequest, articleUrl);
+      const response = await requestText2(showUrl, gmRequest2, articleUrl);
       return parsePixhostImagePage(document2, response.html, response.finalUrl || showUrl) || fallback;
     } catch {
       return fallback;
@@ -3000,36 +3340,36 @@ ${failures.join("\n")}`);
     const content = article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article || document2.querySelector("main#genesis-content, main, #content") || document2.body;
     if (!content) return null;
     const nodes = textNodesUnder4(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText4(node.nodeValue)));
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText5(node.nodeValue)));
     if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter4(marker, node) && PREVIEW_BOUNDARY_PATTERN4.test(normalizeText4(node.nodeValue))) || null;
+    const boundary = nodes.find((node) => isAfter4(marker, node) && PREVIEW_BOUNDARY_PATTERN4.test(normalizeText5(node.nodeValue))) || null;
     return { content, marker, boundary };
   }
   function inPreviewRange4(range, node) {
     if (!range || !isAfter4(range.marker, node)) return false;
     return !range.boundary || !isAfter4(range.boundary, node);
   }
-  async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest) {
+  async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest2) {
     const range = previewRange4(document2);
     if (!range) return [];
     const urls = [];
     const seen = /* @__PURE__ */ new Set();
     const handledImages = /* @__PURE__ */ new Set();
     const add = (value) => {
-      const url = absoluteHttpUrl4(value, articleUrl);
+      const url = absoluteHttpUrl5(value, articleUrl);
       if (!url || seen.has(url)) return;
       seen.add(url);
       urls.push(url);
     };
     for (const anchor of [...range.content.querySelectorAll("a[href]")].filter((node) => inPreviewRange4(range, node))) {
-      let target = absoluteHttpUrl4(anchor.getAttribute("href"), document2.baseURI);
+      let target = absoluteHttpUrl5(anchor.getAttribute("href"), document2.baseURI);
       const image = anchor.querySelector("img");
       const thumbnail = previewThumbnailUrl2(document2, image);
       if (isHdblogReferUrl(target, document2.baseURI)) {
-        target = await resolveHdblogReferTarget(document2, target, articleUrl, gmRequest);
+        target = await resolveHdblogReferTarget(document2, target, articleUrl, gmRequest2);
       }
       if (target && isPixhostShowUrl(target, document2.baseURI)) {
-        target = await resolvePixhostTarget(document2, target, thumbnail, articleUrl, gmRequest);
+        target = await resolvePixhostTarget(document2, target, thumbnail, articleUrl, gmRequest2);
       }
       if (target && (IMAGE_EXTENSION_PATTERN3.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
         add(wordpressOriginalUrl2(target) || target);
@@ -3049,12 +3389,12 @@ ${failures.join("\n")}`);
     }
     return urls;
   }
-  async function fetchHdblogPreviewForCode(code, gmRequest = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+  async function fetchHdblogPreviewForCode(code, gmRequest2 = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
     const normalizedCode = String(code || "").trim().toUpperCase();
     if (!normalizedCode) return { code: "", articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
     const searchUrl = `${HDBLOG_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
-    const searchResponse = await requestText(searchUrl, gmRequest, `${HDBLOG_ORIGIN}/`);
-    const searchDocument = parseHtml(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
+    const searchResponse = await requestText2(searchUrl, gmRequest2, `${HDBLOG_ORIGIN}/`);
+    const searchDocument = parseHtml2(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
     if (!searchDocument) return { code: normalizedCode, articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
     const candidates = collectHdblogSearchResults(searchDocument);
     const selection = chooseHdblogSearchResult(candidates, normalizedCode, getHdblogBlockedKeywords());
@@ -3062,9 +3402,9 @@ ${failures.join("\n")}`);
       return { code: normalizedCode, articleUrl: "", imageUrls: [], ...selection };
     }
     const articleUrl = selection.selected.url;
-    const articleResponse = await requestText(articleUrl, gmRequest, searchUrl);
-    const articleDocument = parseHtml(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
-    const imageUrls = articleDocument ? await collectHdblogPreviewImageUrls(articleDocument, articleUrl, gmRequest) : [];
+    const articleResponse = await requestText2(articleUrl, gmRequest2, searchUrl);
+    const articleDocument = parseHtml2(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
+    const imageUrls = articleDocument ? await collectHdblogPreviewImageUrls(articleDocument, articleUrl, gmRequest2) : [];
     return { code: normalizedCode, articleUrl, imageUrls, ...selection };
   }
   function threadCode(document2) {
@@ -3093,13 +3433,14 @@ ${failures.join("\n")}`);
     const heading = document2.createElement("div");
     heading.style.cssText = "margin:0 0 12px;font-size:15px;font-weight:700;color:#444";
     const source = document2.createElement("a");
-    source.href = result.articleUrl;
+    source.href = result.sourceUrl || result.articleUrl || "#";
     source.target = "_blank";
     source.rel = "noopener noreferrer";
-    source.textContent = `HDblog Preview \xB7 ${result.code}`;
+    source.textContent = `${result.sourceName || "HDblog"} Preview \xB7 ${result.code}`;
     source.style.cssText = "color:inherit;text-decoration:none";
     heading.append(source);
     section.append(heading);
+    const previewReferer = result.referer || result.articleUrl || result.sourceUrl || "";
     result.imageUrls.forEach((url, index) => {
       const anchor = document2.createElement("a");
       anchor.href = url;
@@ -3112,6 +3453,7 @@ ${failures.join("\n")}`);
       image.loading = index === 0 ? "eager" : "lazy";
       image.decoding = "async";
       image.setAttribute(PREVIEW_IMAGE_ATTR, url);
+      if (previewReferer) image.setAttribute("data-x1080x-preview-referer", previewReferer);
       image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
       anchor.append(image);
       section.append(anchor);
@@ -3119,20 +3461,30 @@ ${failures.join("\n")}`);
     content.append(section);
     return section;
   }
-  async function installAgaghhhHdblogPreview(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+  async function installAgaghhhHdblogPreview(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2 || !isThreadPage2(locationObject) || document2.getElementById(CONTAINER_ID)) return null;
     const code = threadCode(document2);
     if (!code) return null;
+    let result = null;
     try {
-      const result = await fetchHdblogPreviewForCode(code, gmRequest, document2);
-      return renderAgaghhhHdblogPreview(document2, result);
+      result = await fetchHdblogPreviewForCode(code, gmRequest2, document2);
     } catch (error) {
       console.warn("[x1080x-ex] hdblog preview lookup failed", {
         code,
         error: error?.message || String(error)
       });
-      return null;
     }
+    if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
+      try {
+        result = await fetchOfficialPreviewFallbackForCode(code, gmRequest2, document2);
+      } catch (error) {
+        console.warn("[x1080x-ex] official preview fallback failed", {
+          code,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return renderAgaghhhHdblogPreview(document2, result);
   }
 
   // src/agaghhh-enhancement.js
@@ -3145,14 +3497,14 @@ ${failures.join("\n")}`);
   var DOWNLOAD_BUTTON_ID2 = "x1080x-ex-download";
   var BATCH_BUTTON_ID2 = "x1080x-ex-open-page";
   var BATCH_TOOLBAR_ID2 = "x1080x-ex-open-page-toolbar";
-  var AV_WIKI_ORIGIN = "https://av-wiki.net";
+  var AV_WIKI_ORIGIN2 = "https://av-wiki.net";
   var AV_WIKI_TIMEOUT = 2e4;
   var REAL_ACTRESS_BOUND_ATTR = "data-x1080x-real-actress-bound";
   var REAL_ACTRESS_BYPASS_ATTR = "data-x1080x-real-actress-bypass";
-  function normalizeText5(value) {
+  function normalizeText6(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function isAgaghhhHost(locationObject = globalThis.location) {
+  function isAgaghhhHost2(locationObject = globalThis.location) {
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
   }
@@ -3191,29 +3543,29 @@ ${failures.join("\n")}`);
       const line = lines[index];
       const match = line.match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
       if (!match) continue;
-      const inlineValue = normalizeText5(match[1]);
+      const inlineValue = normalizeText6(match[1]);
       if (inlineValue) return { found: true, value: inlineValue };
-      const nextLine = normalizeText5(lines[index + 1] || "");
+      const nextLine = normalizeText6(lines[index + 1] || "");
       if (nextLine && !/^[^:：]{1,12}\s*[:：]/u.test(nextLine)) {
         return { found: true, value: nextLine };
       }
       return { found: true, value: "" };
     }
-    const flattened = normalizeText5(raw);
+    const flattened = normalizeText6(raw);
     const inline = flattened.match(/(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*([^:：]{1,80}?)(?=\s+[\p{L}\p{N}_-]{1,16}\s*[:：]|$)/iu);
-    if (inline) return { found: true, value: normalizeText5(inline[1]) };
+    if (inline) return { found: true, value: normalizeText6(inline[1]) };
     return { found: false, value: "" };
   }
   function nodeActressText(node) {
     if (!node) return "";
-    const anchors = [...node.querySelectorAll?.("a") || []].map((anchor) => normalizeText5(anchor.textContent)).filter(Boolean).filter((text) => !/^(?:FANZA|ソクミル|DUGA|続きを読む)$/i.test(text));
+    const anchors = [...node.querySelectorAll?.("a") || []].map((anchor) => normalizeText6(anchor.textContent)).filter(Boolean).filter((text) => !/^(?:FANZA|ソクミル|DUGA|続きを読む)$/i.test(text));
     if (anchors.length) return [...new Set(anchors)].join(" ");
-    return normalizeText5(node.textContent).replace(/^AV女優名\s*[:：]?\s*/i, "").replace(/\s+(?:メーカー品番|FANZA品番|SOKMIL品番|DUGA品番|配信開始日)\b.*$/i, "").trim();
+    return normalizeText6(node.textContent).replace(/^AV女優名\s*[:：]?\s*/i, "").replace(/\s+(?:メーカー品番|FANZA品番|SOKMIL品番|DUGA品番|配信開始日)\b.*$/i, "").trim();
   }
   function scopeForCode(document2, code) {
     const upperCode = String(code || "").toUpperCase();
     const articles = [...document2.querySelectorAll("article")];
-    return articles.find((article) => normalizeText5(article.textContent).toUpperCase().includes(upperCode)) || document2.body || document2.documentElement;
+    return articles.find((article) => normalizeText6(article.textContent).toUpperCase().includes(upperCode)) || document2.body || document2.documentElement;
   }
   function parseAvWikiActressesFromDocument(document2, code = "") {
     if (!document2) return "";
@@ -3222,17 +3574,17 @@ ${failures.join("\n")}`);
     for (const row of scope.querySelectorAll("tr")) {
       const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
       if (cells.length < 2) continue;
-      if (/^AV女優名\s*[:：]?$/i.test(normalizeText5(cells[0].textContent))) {
+      if (/^AV女優名\s*[:：]?$/i.test(normalizeText6(cells[0].textContent))) {
         return nodeActressText(cells[1]);
       }
     }
     for (const term of scope.querySelectorAll("dt")) {
-      if (!/^AV女優名\s*[:：]?$/i.test(normalizeText5(term.textContent))) continue;
+      if (!/^AV女優名\s*[:：]?$/i.test(normalizeText6(term.textContent))) continue;
       const value = term.nextElementSibling;
       const text2 = nodeActressText(value);
       if (text2) return text2;
     }
-    const labels = [...scope.querySelectorAll("strong, b, span, div, p, li")].filter((element) => /^AV女優名\s*[:：]?$/i.test(normalizeText5(element.textContent)));
+    const labels = [...scope.querySelectorAll("strong, b, span, div, p, li")].filter((element) => /^AV女優名\s*[:：]?$/i.test(normalizeText6(element.textContent)));
     for (const label of labels) {
       const candidates = [
         label.nextElementSibling,
@@ -3245,51 +3597,51 @@ ${failures.join("\n")}`);
       }
     }
     const text = String(scope.innerText || scope.textContent || "").replace(/\r/g, "");
-    const lines = text.split("\n").map((line) => normalizeText5(line)).filter(Boolean);
+    const lines = text.split("\n").map((line) => normalizeText6(line)).filter(Boolean);
     const labelIndex = lines.findIndex((line) => /^AV女優名\s*[:：]?$/i.test(line));
-    if (labelIndex >= 0) return normalizeText5(lines[labelIndex + 1] || "");
+    if (labelIndex >= 0) return normalizeText6(lines[labelIndex + 1] || "");
     const inline = lines.find((line) => /^AV女優名\s*[:：]/i.test(line));
-    return inline ? normalizeText5(inline.replace(/^AV女優名\s*[:：]\s*/i, "")) : "";
+    return inline ? normalizeText6(inline.replace(/^AV女優名\s*[:：]\s*/i, "")) : "";
   }
-  function findAvWikiResultUrl(document2, code) {
+  function findAvWikiResultUrl2(document2, code) {
     if (!document2 || !code) return "";
     const targetCode = String(code).toUpperCase();
     const targetPath = `/${String(code).toLowerCase()}/`;
     const anchors = [...document2.querySelectorAll("a[href]")];
     for (const anchor of anchors) {
       try {
-        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
-        if (url.origin !== AV_WIKI_ORIGIN) continue;
+        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN2);
+        if (url.origin !== AV_WIKI_ORIGIN2) continue;
         if (url.pathname.toLowerCase() === targetPath) return url.href;
       } catch {
       }
     }
     for (const anchor of anchors) {
       const article = anchor.closest("article");
-      const text = normalizeText5(article?.textContent || anchor.textContent).toUpperCase();
+      const text = normalizeText6(article?.textContent || anchor.textContent).toUpperCase();
       if (!text.includes(targetCode)) continue;
       try {
-        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
-        if (url.origin === AV_WIKI_ORIGIN && url.pathname !== "/") return url.href;
+        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN2);
+        if (url.origin === AV_WIKI_ORIGIN2 && url.pathname !== "/") return url.href;
       } catch {
       }
     }
     return "";
   }
-  function requestHtml(url, gmRequest = globalThis.GM_xmlhttpRequest) {
+  function requestHtml(url, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     return new Promise((resolve, reject) => {
-      if (typeof gmRequest !== "function") {
+      if (typeof gmRequest2 !== "function") {
         reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
         return;
       }
-      gmRequest({
+      gmRequest2({
         method: "GET",
         url,
         responseType: "text",
         timeout: AV_WIKI_TIMEOUT,
         headers: {
           Accept: "text/html,application/xhtml+xml",
-          Referer: `${AV_WIKI_ORIGIN}/`
+          Referer: `${AV_WIKI_ORIGIN2}/`
         },
         onload: (response) => {
           if (response.status < 200 || response.status >= 300) {
@@ -3303,26 +3655,26 @@ ${failures.join("\n")}`);
       });
     });
   }
-  function parseHtml2(html, document2 = globalThis.document) {
+  function parseHtml3(html, document2 = globalThis.document) {
     const Parser = document2?.defaultView?.DOMParser || globalThis.DOMParser;
     if (typeof Parser !== "function") return null;
     return new Parser().parseFromString(String(html || ""), "text/html");
   }
-  async function fetchRealActressFromAvWiki(code, gmRequest = globalThis.GM_xmlhttpRequest, document2 = globalThis.document) {
+  async function fetchRealActressFromAvWiki(code, gmRequest2 = globalThis.GM_xmlhttpRequest, document2 = globalThis.document) {
     const normalizedCode = String(code || "").trim().toUpperCase();
     if (!normalizedCode) return "";
-    const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
-    const searchDocument = parseHtml2(await requestHtml(searchUrl, gmRequest), document2);
+    const searchUrl = `${AV_WIKI_ORIGIN2}/?s=${encodeURIComponent(normalizedCode)}`;
+    const searchDocument = parseHtml3(await requestHtml(searchUrl, gmRequest2), document2);
     if (!searchDocument) return "";
     const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
     if (fromSearch) return fromSearch;
-    const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
-    const detailDocument = parseHtml2(await requestHtml(detailUrl, gmRequest), document2);
+    const detailUrl = findAvWikiResultUrl2(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN2}/${normalizedCode.toLowerCase()}/`;
+    const detailDocument = parseHtml3(await requestHtml(detailUrl, gmRequest2), document2);
     return parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
   }
   function appendActressToTitleText(titleText, actress) {
-    const cleanTitle = normalizeText5(titleText);
-    const cleanActress = normalizeText5(actress);
+    const cleanTitle = normalizeText6(titleText);
+    const cleanActress = normalizeText6(actress);
     if (!cleanActress || cleanTitle.includes(cleanActress)) return cleanTitle;
     return `${cleanTitle} ${cleanActress}`;
   }
@@ -3332,7 +3684,7 @@ ${failures.join("\n")}`);
   function threadCode2(document2) {
     return parseThreadTitle(threadTitleElement(document2)?.textContent || document2.title).code;
   }
-  function bindRealActressDownload(document2, gmRequest) {
+  function bindRealActressDownload(document2, gmRequest2) {
     const button = document2.getElementById(DOWNLOAD_BUTTON_ID2);
     if (!button || button.getAttribute(REAL_ACTRESS_BOUND_ATTR) === "1") return;
     button.setAttribute(REAL_ACTRESS_BOUND_ATTR, "1");
@@ -3352,7 +3704,7 @@ ${failures.join("\n")}`);
       button.textContent = "\u67E5\u6F14\u5458\u2026";
       let actress = "";
       try {
-        actress = await fetchRealActressFromAvWiki(code, gmRequest, document2);
+        actress = await fetchRealActressFromAvWiki(code, gmRequest2, document2);
       } catch (error) {
         console.warn("[x1080x-ex] av-wiki actress lookup failed", {
           code,
@@ -3458,24 +3810,24 @@ ${failures.join("\n")}`);
     return overlay;
   }
   function installX1080xSettingsMenu(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isAgaghhhHost(locationObject)) return;
+    if (!document2 || !isAgaghhhHost2(locationObject)) return;
     if (typeof GM_registerMenuCommand !== "function") return;
     GM_registerMenuCommand("\u2699\uFE0F x1080x \u8BBE\u7F6E", () => openX1080xSettingsPanel(document2));
   }
-  function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
-    if (!document2 || !isAgaghhhHost(locationObject)) return;
+  function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isAgaghhhHost2(locationObject)) return;
     if (!isAgaghhhBatchOpenEnabled()) {
       document2.getElementById(BATCH_BUTTON_ID2)?.remove();
       document2.getElementById(BATCH_TOOLBAR_ID2)?.remove();
     }
     if (isAgaghhhHdblogPreviewEnabled()) {
-      void installAgaghhhHdblogPreview(document2, locationObject, gmRequest);
+      void installAgaghhhHdblogPreview(document2, locationObject, gmRequest2);
     }
     if (!isAgaghhhDownloadEnabled()) {
       document2.getElementById(DOWNLOAD_BUTTON_ID2)?.remove();
       return;
     }
-    if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest);
+    if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
   }
 
   // src/index.js
