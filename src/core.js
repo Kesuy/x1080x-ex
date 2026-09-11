@@ -6,6 +6,7 @@ const FC2_RELEASE_TAG_PATTERN = /^(?:\[(?:BT|FC2|FC2HD)\]|\((?:BT|FC2|FC2HD)\))\
 const LEADING_GROUP_PATTERN = /^(\[([^\]]*)\]|\(([^)]*)\))\s*/u;
 const MGS_RELEASE_PREFIX_PATTERN = /^\[BT\]\s*\(MGS\)\s*\(([^)]+)\)\s*/i;
 const MAGNET_PATTERN = /magnet:\?xt=urn:btih:[a-z0-9]+(?:&[^\s<>"']+)*/gi;
+const HDBLOG_PREVIEW_URL_ATTR = 'data-x1080x-hdblog-preview-url';
 
 export function parseDomainList(value) {
   const domains = String(value ?? '')
@@ -262,6 +263,15 @@ function contentImages(document, content) {
     .filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
 }
 
+function hdblogPreviewImages(document, content) {
+  if (!content) return [];
+  const seen = new Set();
+  return [...content.querySelectorAll(`img[${HDBLOG_PREVIEW_URL_ATTR}]`)]
+    .map((image) => absoluteUrl(document, image.getAttribute(HDBLOG_PREVIEW_URL_ATTR)))
+    .filter((url) => url && !seen.has(url) && seen.add(url))
+    .map((url) => ({ url }));
+}
+
 function contentMagnets(content) {
   const matches = String(content?.textContent ?? '').match(MAGNET_PATTERN) || [];
   return [...new Set(matches.map((value) => value.replace(/[),.;，。；]+$/u, '')))];
@@ -300,6 +310,7 @@ export function extractThreadResources(document) {
     .filter((attachment) => attachment.url);
 
   const images = contentImages(document, content);
+  const hdblogPreviews = hdblogPreviewImages(document, content);
   const magnets = contentMagnets(content);
   const largestImage = images.reduce((largest, image) => {
     if (!largest) return image;
@@ -310,6 +321,7 @@ export function extractThreadResources(document) {
     title,
     attachments,
     images,
+    hdblogPreviews,
     magnets,
     useFc2AbImageNames: isFc2PpvTitle(rawTitle),
     imageUrl: largestImage?.url || '',
@@ -330,6 +342,19 @@ export function buildDownloadJobs(document) {
     url: attachment.url,
     name: buildAttachmentFilename(resources.title, attachment.sourceName),
   })));
+
+  if (resources.hdblogPreviews.length) {
+    const safeCode = sanitizeFilename(resources.title.code || 'preview');
+    resources.hdblogPreviews.forEach((image, index) => {
+      jobs.push({
+        kind: 'image',
+        url: image.url,
+        name: `${safeCode} -${index + 1}.jpg`,
+      });
+    });
+    return jobs;
+  }
+
   if (resources.title.code.startsWith('FC2-')) {
     resources.images.forEach((image, index) => {
       const preferredUrl = image.cacheUrl || image.url;
