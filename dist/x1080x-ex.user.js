@@ -28,6 +28,7 @@
   var LEADING_GROUP_PATTERN = /^(\[([^\]]*)\]|\(([^)]*)\))\s*/u;
   var MGS_RELEASE_PREFIX_PATTERN = /^\[BT\]\s*\(MGS\)\s*\(([^)]+)\)\s*/i;
   var MAGNET_PATTERN = /magnet:\?xt=urn:btih:[a-z0-9]+(?:&[^\s<>"']+)*/gi;
+  var HDBLOG_PREVIEW_URL_ATTR = "data-x1080x-hdblog-preview-url";
   function parseDomainList(value) {
     const domains = String(value ?? "").split(/[\s,;，；]+/).map((entry) => entry.trim()).filter(Boolean).map((entry) => {
       try {
@@ -236,6 +237,11 @@
       order
     })).filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
   }
+  function hdblogPreviewImages(document2, content) {
+    if (!content) return [];
+    const seen = /* @__PURE__ */ new Set();
+    return [...content.querySelectorAll(`img[${HDBLOG_PREVIEW_URL_ATTR}]`)].map((image) => absoluteUrl(document2, image.getAttribute(HDBLOG_PREVIEW_URL_ATTR))).filter((url) => url && !seen.has(url) && seen.add(url)).map((url) => ({ url }));
+  }
   function contentMagnets(content) {
     const matches = String(content?.textContent ?? "").match(MAGNET_PATTERN) || [];
     return [...new Set(matches.map((value) => value.replace(/[),.;，。；]+$/u, "")))];
@@ -261,6 +267,7 @@
       sourceName: attachmentSourceName(link)
     })).filter((attachment) => attachment.url);
     const images = contentImages(document2, content);
+    const hdblogPreviews = hdblogPreviewImages(document2, content);
     const magnets = contentMagnets(content);
     const largestImage = images.reduce((largest, image) => {
       if (!largest) return image;
@@ -270,6 +277,7 @@
       title,
       attachments,
       images,
+      hdblogPreviews,
       magnets,
       useFc2AbImageNames: isFc2PpvTitle(rawTitle),
       imageUrl: largestImage?.url || "",
@@ -289,6 +297,17 @@
       url: attachment.url,
       name: buildAttachmentFilename(resources.title, attachment.sourceName)
     })));
+    if (resources.hdblogPreviews.length) {
+      const safeCode = sanitizeFilename(resources.title.code || "preview");
+      resources.hdblogPreviews.forEach((image, index) => {
+        jobs.push({
+          kind: "image",
+          url: image.url,
+          name: `${safeCode} -${index + 1}.jpg`
+        });
+      });
+      return jobs;
+    }
     if (resources.title.code.startsWith("FC2-")) {
       resources.images.forEach((image, index) => {
         const preferredUrl = image.cacheUrl || image.url;
@@ -1185,333 +1204,99 @@ ${failures.join("\n")}
     if (isBatchOpenPage()) addBatchOpenButton();
   }
 
-  // src/agaghhh-enhancement.js
-  var AGAGHHH_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:agaghhh-batch-open-enabled";
-  var AGAGHHH_DOWNLOAD_ENABLED_KEY = "x1080x-ex:agaghhh-download-enabled";
-  var AGAGHHH_REAL_ACTRESS_ENABLED_KEY = "x1080x-ex:agaghhh-real-actress-enabled";
-  var LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = "x1080x-ex:agaghhh-enhancement-enabled";
-  var SETTINGS_PANEL_ID = "x1080x-ex-settings-panel";
-  var DOWNLOAD_BUTTON_ID = "x1080x-ex-download";
-  var BATCH_BUTTON_ID2 = "x1080x-ex-open-page";
-  var BATCH_TOOLBAR_ID2 = "x1080x-ex-open-page-toolbar";
-  var AV_WIKI_ORIGIN = "https://av-wiki.net";
-  var AV_WIKI_TIMEOUT = 2e4;
-  var REAL_ACTRESS_BOUND_ATTR = "data-x1080x-real-actress-bound";
-  var REAL_ACTRESS_BYPASS_ATTR = "data-x1080x-real-actress-bypass";
-  function normalizeText(value) {
-    return String(value ?? "").replace(/\s+/g, " ").trim();
+  // src/hdblog-search.js
+  var STORAGE_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
+  var DEFAULT_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  function normalizeKeyword(value) {
+    return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
   }
-  function isAgaghhhHost(locationObject = globalThis.location) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
+  function parseBlockedKeywords(value) {
+    const seen = /* @__PURE__ */ new Set();
+    const keywords = [];
+    String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).forEach((entry) => {
+      const normalized = normalizeKeyword(entry);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      keywords.push(entry);
+    });
+    return keywords;
   }
-  function legacyDefault() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY, true) !== false;
+  function isBlockedTitle(title, keywords) {
+    const normalizedTitle = normalizeKeyword(title);
+    return keywords.some((keyword) => {
+      const normalizedKeyword = normalizeKeyword(keyword);
+      return normalizedKeyword && normalizedTitle.includes(normalizedKeyword);
+    });
   }
-  function readBooleanSetting(key) {
-    if (typeof GM_getValue !== "function") return true;
-    const stored = GM_getValue(key, null);
-    if (stored === null || stored === void 0) return legacyDefault();
-    return stored !== false;
-  }
-  function isAgaghhhBatchOpenEnabled() {
-    return readBooleanSetting(AGAGHHH_BATCH_OPEN_ENABLED_KEY);
-  }
-  function isAgaghhhDownloadEnabled() {
-    return readBooleanSetting(AGAGHHH_DOWNLOAD_ENABLED_KEY);
-  }
-  function isAgaghhhRealActressEnabled() {
-    return readBooleanSetting(AGAGHHH_REAL_ACTRESS_ENABLED_KEY);
-  }
-  function firstPostContent(document2) {
-    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
-    return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
-  }
-  function extractThreadPerformerField(document2) {
-    const content = firstPostContent(document2);
-    if (!content) return { found: false, value: "" };
-    const raw = String(content.innerText || content.textContent || "").replace(/\r/g, "");
-    const lines = raw.split("\n").map((line) => line.trim());
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index];
-      const match = line.match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
-      if (!match) continue;
-      const inlineValue = normalizeText(match[1]);
-      if (inlineValue) return { found: true, value: inlineValue };
-      const nextLine = normalizeText(lines[index + 1] || "");
-      if (nextLine && !/^[^:：]{1,12}\s*[:：]/u.test(nextLine)) {
-        return { found: true, value: nextLine };
-      }
-      return { found: true, value: "" };
+  function isHdblogSearchUrl(value) {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase().replace(/\.$/, "");
+      return (host === "hdblog.me" || host.endsWith(".hdblog.me")) && url.searchParams.has("s") && Boolean(url.searchParams.get("s")?.trim());
+    } catch {
+      return false;
     }
-    const flattened = normalizeText(raw);
-    const inline = flattened.match(/(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*([^:：]{1,80}?)(?=\s+[\p{L}\p{N}_-]{1,16}\s*[:：]|$)/iu);
-    if (inline) return { found: true, value: normalizeText(inline[1]) };
-    return { found: false, value: "" };
   }
-  function nodeActressText(node) {
-    if (!node) return "";
-    const anchors = [...node.querySelectorAll?.("a") || []].map((anchor) => normalizeText(anchor.textContent)).filter(Boolean).filter((text) => !/^(?:FANZA|ソクミル|DUGA|続きを読む)$/i.test(text));
-    if (anchors.length) return [...new Set(anchors)].join(" ");
-    return normalizeText(node.textContent).replace(/^AV女優名\s*[:：]?\s*/i, "").replace(/\s+(?:メーカー品番|FANZA品番|SOKMIL品番|DUGA品番|配信開始日)\b.*$/i, "").trim();
-  }
-  function scopeForCode(document2, code) {
-    const upperCode = String(code || "").toUpperCase();
-    const articles = [...document2.querySelectorAll("article")];
-    return articles.find((article) => normalizeText(article.textContent).toUpperCase().includes(upperCode)) || document2.body || document2.documentElement;
-  }
-  function parseAvWikiActressesFromDocument(document2, code = "") {
-    if (!document2) return "";
-    const scope = scopeForCode(document2, code);
-    if (!scope) return "";
-    for (const row of scope.querySelectorAll("tr")) {
-      const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
-      if (cells.length < 2) continue;
-      if (/^AV女優名\s*[:：]?$/i.test(normalizeText(cells[0].textContent))) {
-        return nodeActressText(cells[1]);
-      }
+  function filterSearchCandidates(candidates, keywords) {
+    const blocked = [];
+    const remaining = [];
+    for (const candidate of candidates) {
+      (isBlockedTitle(candidate.title, keywords) ? blocked : remaining).push(candidate);
     }
-    for (const term of scope.querySelectorAll("dt")) {
-      if (!/^AV女優名\s*[:：]?$/i.test(normalizeText(term.textContent))) continue;
-      const value = term.nextElementSibling;
-      const text2 = nodeActressText(value);
-      if (text2) return text2;
-    }
-    const labels = [...scope.querySelectorAll("strong, b, span, div, p, li")].filter((element) => /^AV女優名\s*[:：]?$/i.test(normalizeText(element.textContent)));
-    for (const label of labels) {
-      const candidates = [
-        label.nextElementSibling,
-        label.parentElement?.nextElementSibling,
-        label.parentElement?.querySelector(":scope > *:not(strong):not(b):not(span)")
-      ];
-      for (const candidate of candidates) {
-        const text2 = nodeActressText(candidate);
-        if (text2) return text2;
-      }
-    }
-    const text = String(scope.innerText || scope.textContent || "").replace(/\r/g, "");
-    const lines = text.split("\n").map((line) => normalizeText(line)).filter(Boolean);
-    const labelIndex = lines.findIndex((line) => /^AV女優名\s*[:：]?$/i.test(line));
-    if (labelIndex >= 0) return normalizeText(lines[labelIndex + 1] || "");
-    const inline = lines.find((line) => /^AV女優名\s*[:：]/i.test(line));
-    return inline ? normalizeText(inline.replace(/^AV女優名\s*[:：]\s*/i, "")) : "";
+    return { blocked, remaining };
   }
-  function findAvWikiResultUrl(document2, code) {
-    if (!document2 || !code) return "";
-    const targetCode = String(code).toUpperCase();
-    const targetPath = `/${String(code).toLowerCase()}/`;
-    const anchors = [...document2.querySelectorAll("a[href]")];
-    for (const anchor of anchors) {
+  function redirectTargetForSearch(candidates) {
+    return candidates.length === 1 ? candidates[0].url : "";
+  }
+  function collectHdblogSearchResults(document2) {
+    const baseUrl = new URL(document2.baseURI);
+    return [...document2.querySelectorAll("main#genesis-content article.entry")].map((article) => {
+      const link = article.querySelector(
+        ".entry-header .entry-title a[href], h2.entry-title a[href], .entry-title a[href]"
+      );
+      if (!link) return null;
       try {
-        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
-        if (url.origin !== AV_WIKI_ORIGIN) continue;
-        if (url.pathname.toLowerCase() === targetPath) return url.href;
+        const url = new URL(link.getAttribute("href"), document2.baseURI);
+        if (!/^https?:$/.test(url.protocol) || url.origin !== baseUrl.origin) return null;
+        return {
+          article,
+          link,
+          title: String(link.textContent ?? "").replace(/\s+/g, " ").trim(),
+          url: url.href
+        };
       } catch {
+        return null;
       }
+    }).filter(Boolean);
+  }
+  function filterHdblogSearchResults(document2, keywords) {
+    const candidates = collectHdblogSearchResults(document2);
+    const { blocked, remaining } = filterSearchCandidates(candidates, keywords);
+    blocked.forEach(({ article }) => article.remove());
+    return { blocked, remaining };
+  }
+  function getBlockedKeywords() {
+    const stored = GM_getValue(STORAGE_KEY2, null);
+    if (stored === null || stored === void 0) {
+      return parseBlockedKeywords(DEFAULT_BLOCKED_KEYWORDS);
     }
-    for (const anchor of anchors) {
-      const article = anchor.closest("article");
-      const text = normalizeText(article?.textContent || anchor.textContent).toUpperCase();
-      if (!text.includes(targetCode)) continue;
-      try {
-        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
-        if (url.origin === AV_WIKI_ORIGIN && url.pathname !== "/") return url.href;
-      } catch {
-      }
+    return parseBlockedKeywords(stored);
+  }
+  function applyHdblogSearchEnhancement(windowObject = window) {
+    if (!isHdblogSearchUrl(windowObject.location.href)) {
+      return { blocked: [], remaining: [], redirectTarget: "" };
     }
-    return "";
-  }
-  function requestHtml(url, gmRequest = globalThis.GM_xmlhttpRequest) {
-    return new Promise((resolve, reject) => {
-      if (typeof gmRequest !== "function") {
-        reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
-        return;
-      }
-      gmRequest({
-        method: "GET",
-        url,
-        responseType: "text",
-        timeout: AV_WIKI_TIMEOUT,
-        headers: {
-          Accept: "text/html,application/xhtml+xml",
-          Referer: `${AV_WIKI_ORIGIN}/`
-        },
-        onload: (response) => {
-          if (response.status < 200 || response.status >= 300) {
-            reject(new Error(`av-wiki \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
-            return;
-          }
-          resolve(String(response.responseText || response.response || ""));
-        },
-        onerror: () => reject(new Error("av-wiki \u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25\u3002")),
-        ontimeout: () => reject(new Error(`av-wiki \u8BF7\u6C42\u8D85\u65F6\uFF08${AV_WIKI_TIMEOUT / 1e3} \u79D2\uFF09\u3002`))
-      });
-    });
-  }
-  function parseHtml(html, document2 = globalThis.document) {
-    const Parser = document2?.defaultView?.DOMParser || globalThis.DOMParser;
-    if (typeof Parser !== "function") return null;
-    return new Parser().parseFromString(String(html || ""), "text/html");
-  }
-  async function fetchRealActressFromAvWiki(code, gmRequest = globalThis.GM_xmlhttpRequest, document2 = globalThis.document) {
-    const normalizedCode = String(code || "").trim().toUpperCase();
-    if (!normalizedCode) return "";
-    const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
-    const searchDocument = parseHtml(await requestHtml(searchUrl, gmRequest), document2);
-    if (!searchDocument) return "";
-    const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
-    if (fromSearch) return fromSearch;
-    const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
-    const detailDocument = parseHtml(await requestHtml(detailUrl, gmRequest), document2);
-    return parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
-  }
-  function appendActressToTitleText(titleText, actress) {
-    const cleanTitle = normalizeText(titleText);
-    const cleanActress = normalizeText(actress);
-    if (!cleanActress || cleanTitle.includes(cleanActress)) return cleanTitle;
-    return `${cleanTitle} ${cleanActress}`;
-  }
-  function threadTitleElement(document2) {
-    return document2.querySelector("#thread_subject") || document2.querySelector("h1.ts, .vwthd h1, h1");
-  }
-  function threadCode(document2) {
-    return parseThreadTitle(threadTitleElement(document2)?.textContent || document2.title).code;
-  }
-  function bindRealActressDownload(document2, gmRequest) {
-    const button = document2.getElementById(DOWNLOAD_BUTTON_ID);
-    if (!button || button.getAttribute(REAL_ACTRESS_BOUND_ATTR) === "1") return;
-    button.setAttribute(REAL_ACTRESS_BOUND_ATTR, "1");
-    button.addEventListener("click", async (event) => {
-      if (button.getAttribute(REAL_ACTRESS_BYPASS_ATTR) === "1") {
-        button.removeAttribute(REAL_ACTRESS_BYPASS_ATTR);
-        return;
-      }
-      const performer = extractThreadPerformerField(document2);
-      if (!performer.found || performer.value) return;
-      const code = threadCode(document2);
-      if (!code) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const idleText = button.textContent;
-      button.disabled = true;
-      button.textContent = "\u67E5\u6F14\u5458\u2026";
-      let actress = "";
-      try {
-        actress = await fetchRealActressFromAvWiki(code, gmRequest, document2);
-      } catch (error) {
-        console.warn("[x1080x-ex] av-wiki actress lookup failed", {
-          code,
-          error: error?.message || String(error)
-        });
-      }
-      button.disabled = false;
-      button.textContent = idleText;
-      const title = threadTitleElement(document2);
-      const originalTitle = title?.textContent || "";
-      if (actress && title) {
-        title.textContent = appendActressToTitleText(originalTitle, actress);
-        console.info("[x1080x-ex] real actress resolved", { code, actress });
-      }
-      button.setAttribute(REAL_ACTRESS_BYPASS_ATTR, "1");
-      button.click();
-      if (title && actress) title.textContent = originalTitle;
-    }, true);
-  }
-  function closeX1080xSettingsPanel(document2) {
-    document2?.getElementById(SETTINGS_PANEL_ID)?.remove();
-  }
-  function openX1080xSettingsPanel(document2 = globalThis.document) {
-    if (!document2?.body) return null;
-    closeX1080xSettingsPanel(document2);
-    const overlay = document2.createElement("div");
-    overlay.id = SETTINGS_PANEL_ID;
-    Object.assign(overlay.style, {
-      position: "fixed",
-      inset: "0",
-      zIndex: "2147483646",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: "20px",
-      background: "rgba(0,0,0,.42)",
-      boxSizing: "border-box"
-    });
-    const panel = document2.createElement("form");
-    Object.assign(panel.style, {
-      width: "min(520px, 100%)",
-      maxHeight: "calc(100vh - 40px)",
-      overflow: "auto",
-      padding: "22px",
-      borderRadius: "10px",
-      background: "#fff",
-      color: "#222",
-      boxShadow: "0 18px 60px rgba(0,0,0,.28)",
-      boxSizing: "border-box",
-      font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    });
-    panel.innerHTML = `
-    <h2 style="margin:0 0 18px;font-size:20px">x1080x \u8BBE\u7F6E</h2>
-    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
-      <div style="font-weight:700;margin-bottom:11px">agaghhh.cc \u589E\u5F3A\u529F\u80FD</div>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
-        <input data-setting="batch-open" type="checkbox" style="margin-top:3px">
-        <span><strong>\u6279\u91CF\u6253\u5F00\u5E16\u5B50\u529F\u80FD</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5217\u8868\u9875\u663E\u793A\u201C\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\u201D\u6309\u94AE\u3002</small></span>
-      </label>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
-        <input data-setting="download" type="checkbox" style="margin-top:3px">
-        <span><strong>\u4E0B\u8F7D\u589E\u5F3A</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u9875\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u5E76\u4F7F\u7528\u73B0\u6709\u9644\u4EF6\u3001\u56FE\u7247\u3001\u79CD\u5B50\u4E0B\u8F7D\u4E0E\u81EA\u52A8\u547D\u540D\u903B\u8F91\u3002</small></span>
-      </label>
-      <label style="display:flex;align-items:flex-start;gap:9px">
-        <input data-setting="real-actress" type="checkbox" style="margin-top:3px">
-        <span><strong>\u67E5\u771F\u5B9E\u6F14\u5458\u4FE1\u606F</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u5F53\u5E16\u5B50\u201C\u51FA\u6F14\u8005\u201D\u4E3A\u7A7A\u4E14\u542F\u7528\u4E86\u4E0B\u8F7D\u589E\u5F3A\u65F6\uFF0C\u901A\u8FC7 av-wiki \u67E5\u8BE2\u6F14\u5458\u5E76\u8FFD\u52A0\u5230\u9644\u4EF6\u6587\u4EF6\u540D\u3002</small></span>
-      </label>
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px">
-      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
-      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
-    </div>`;
-    const batchInput = panel.querySelector('[data-setting="batch-open"]');
-    const downloadInput = panel.querySelector('[data-setting="download"]');
-    const actressInput = panel.querySelector('[data-setting="real-actress"]');
-    batchInput.checked = isAgaghhhBatchOpenEnabled();
-    downloadInput.checked = isAgaghhhDownloadEnabled();
-    actressInput.checked = isAgaghhhRealActressEnabled();
-    panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeX1080xSettingsPanel(document2));
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) closeX1080xSettingsPanel(document2);
-    });
-    panel.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (typeof GM_setValue === "function") {
-        GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
-        GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
-        GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
-      }
-      closeX1080xSettingsPanel(document2);
-      const view = document2.defaultView;
-      if (view?.location?.reload) view.location.reload();
-    });
-    overlay.append(panel);
-    document2.body.append(overlay);
-    return overlay;
-  }
-  function installX1080xSettingsMenu(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isAgaghhhHost(locationObject)) return;
-    if (typeof GM_registerMenuCommand !== "function") return;
-    GM_registerMenuCommand("\u2699\uFE0F x1080x \u8BBE\u7F6E", () => openX1080xSettingsPanel(document2));
-  }
-  function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
-    if (!document2 || !isAgaghhhHost(locationObject)) return;
-    if (!isAgaghhhBatchOpenEnabled()) {
-      document2.getElementById(BATCH_BUTTON_ID2)?.remove();
-      document2.getElementById(BATCH_TOOLBAR_ID2)?.remove();
+    const keywords = getBlockedKeywords();
+    const result = filterHdblogSearchResults(windowObject.document, keywords);
+    const redirectTarget = redirectTargetForSearch(result.remaining);
+    if (redirectTarget && redirectTarget !== windowObject.location.href) {
+      windowObject.location.assign(redirectTarget);
     }
-    if (!isAgaghhhDownloadEnabled()) {
-      document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
-      return;
-    }
-    if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest);
+    return { ...result, redirectTarget };
+  }
+  function installHdblogSearchEnhancement() {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    applyHdblogSearchEnhancement(window);
   }
 
   // src/hdblog-image-hosts.js
@@ -1733,12 +1518,12 @@ ${failures.join("\n")}
   var MIN_HDBLOG_ARTICLE_WIDTH = 600;
   var MAX_HDBLOG_ARTICLE_WIDTH = 3e3;
   var LAYOUT_STYLE_ID = "x1080x-ex-hdblog-article-layout";
-  var DOWNLOAD_BUTTON_ID2 = "x1080x-ex-hdblog-image-download";
+  var DOWNLOAD_BUTTON_ID = "x1080x-ex-hdblog-image-download";
   var ARTICLE_BODY_CLASS = "x1080x-hdblog-single";
   var REQUEST_TIMEOUT3 = 6e4;
   var PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
   var PIXHOST_IMAGE_HOST_PATTERN = /^img\d+\.(?:pixhost\.(?:to|cc)|pixho\.st)$/i;
-  function normalizeText2(value) {
+  function normalizeText(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
   function isHdblogHost2(locationObject) {
@@ -1977,7 +1762,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return true;
   }
   function extractHdblogVideoCode(value) {
-    const text = normalizeText2(value).toUpperCase();
+    const text = normalizeText(value).toUpperCase();
     if (!text) return "";
     const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
     if (fc2) return `FC2${fc2[1] ? "-PPV" : ""}-${fc2[2]}`;
@@ -1988,12 +1773,12 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return `${prefix}-${standard[2]}`;
   }
   function extractHdblogArticleCode(document2) {
-    const titleText = normalizeText2(articleTitleElement(document2)?.textContent || document2?.title);
+    const titleText = normalizeText(articleTitleElement(document2)?.textContent || document2?.title);
     const fromTitle = extractHdblogVideoCode(titleText);
     if (fromTitle) return fromTitle;
     const content = articleContentElement(document2);
     if (!content) return "";
-    const text = normalizeText2(content.textContent).slice(0, 5e3);
+    const text = normalizeText(content.textContent).slice(0, 5e3);
     const labelled = text.match(/(?:品番|品號|品号|番号|番號|code)\s*[:：]?\s*([A-Z0-9 _-]{4,30})/i);
     return extractHdblogVideoCode(labelled?.[1] || text);
   }
@@ -2096,7 +1881,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       node.style.setProperty("display", "none", "important");
       return true;
     }
-    if (node.nodeType === 3 && normalizeText2(node.nodeValue)) {
+    if (node.nodeType === 3 && normalizeText(node.nodeValue)) {
       const wrapper = document2.createElement("span");
       wrapper.setAttribute(DOWNLOAD_HIDDEN_ATTR, "1");
       wrapper.setAttribute(DOWNLOAD_WRAPPER_ATTR, "1");
@@ -2125,9 +1910,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const content = articleContentElement(document2);
     if (!content) return 0;
     const nodes = textNodesUnder(content);
-    const start = nodes.find((node) => DOWNLOAD_SECTION_LABEL_PATTERN.test(normalizeText2(node.nodeValue)));
+    const start = nodes.find((node) => DOWNLOAD_SECTION_LABEL_PATTERN.test(normalizeText(node.nodeValue)));
     if (!start) return 0;
-    const preview = nodes.find((node) => isAfter(start, node) && PREVIEW_LABEL_PATTERN.test(normalizeText2(node.nodeValue)));
+    const preview = nodes.find((node) => isAfter(start, node) && PREVIEW_LABEL_PATTERN.test(normalizeText(node.nodeValue)));
     if (!preview) return 0;
     const common = lowestCommonAncestorWithin(start, preview, content);
     if (!common) return 0;
@@ -2148,9 +1933,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function previewRange(content) {
     const nodes = textNodesUnder(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue)));
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
     if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText2(node.nodeValue))) || null;
+    const boundary = nodes.find((node) => isAfter(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))) || null;
     return { marker, boundary };
   }
   function inPreviewRange(range, node) {
@@ -2182,7 +1967,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }).slice(0, 24);
   }
   function hdblogImageFilename(code, index, total, extension = "jpg") {
-    const safeCode = normalizeText2(code).replace(/[<>:"/\\|?*]/g, "-");
+    const safeCode = normalizeText(code).replace(/[<>:"/\\|?*]/g, "-");
     const safeExtension = String(extension || "jpg").replace(/^\./, "").toLowerCase();
     const suffix = total > 1 ? `-${index + 1}` : "";
     return `${safeCode}${suffix}.${safeExtension || "jpg"}`;
@@ -2307,12 +2092,12 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
 ${failures.join("\n")}`);
   }
   function installDownloadButton(document2, locationObject, gmRequest) {
-    if (document2.getElementById(DOWNLOAD_BUTTON_ID2)) return;
+    if (document2.getElementById(DOWNLOAD_BUTTON_ID)) return;
     const title = articleTitleElement(document2);
     if (!title) return;
     const initialCandidates = collectHdblogPixhostPreviewImages(document2);
     const button = document2.createElement("button");
-    button.id = DOWNLOAD_BUTTON_ID2;
+    button.id = DOWNLOAD_BUTTON_ID;
     button.type = "button";
     button.textContent = "\u2B07";
     button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
@@ -2505,14 +2290,14 @@ ${failures.join("\n")}`);
     else applyHdblogArticleLayout(document2, storedWidth);
     applyHdblogDownloadAreaVisibility(document2, readDownloadAreaVisible());
     if (readImageDownloadButtonVisible()) installDownloadButton(document2, locationObject, gmRequest);
-    else document2.getElementById(DOWNLOAD_BUTTON_ID2)?.remove();
+    else document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
   }
 
   // src/hdblog-preview.js
   var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
   var PREVIEW_BOUNDARY_PATTERN2 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
   var PREVIEW_VIEWPORT_WIDTH = "min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))";
-  function normalizeText3(value) {
+  function normalizeText2(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
   function isHdblogHost3(locationObject) {
@@ -2632,7 +2417,7 @@ ${failures.join("\n")}`);
     return nodes;
   }
   function findPreviewMarker(root) {
-    return textNodesUnder2(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue))) || null;
+    return textNodesUnder2(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue))) || null;
   }
   function isAfter2(reference, node) {
     return Boolean(reference.compareDocumentPosition(node) & 4);
@@ -2640,7 +2425,7 @@ ${failures.join("\n")}`);
   function findBoundary(root, marker) {
     return textNodesUnder2(root).find((node) => {
       if (!isAfter2(marker, node)) return false;
-      const text = normalizeText3(node.nodeValue);
+      const text = normalizeText2(node.nodeValue);
       return text && PREVIEW_BOUNDARY_PATTERN2.test(text);
     }) || null;
   }
@@ -2755,7 +2540,7 @@ ${failures.join("\n")}`);
       let image = anchor.querySelector("img");
       if (!image) {
         image = document2.createElement("img");
-        image.alt = normalizeText3(anchor.textContent) || "Preview";
+        image.alt = normalizeText2(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
       if (styleExpandedImage(image, wordpressOriginalUrl(document2, fullUrl) || fullUrl)) {
@@ -2780,7 +2565,7 @@ ${failures.join("\n")}`);
       if (!fullUrl) return false;
       if (!image) {
         image = document2.createElement("img");
-        image.alt = normalizeText3(anchor.textContent) || "Preview";
+        image.alt = normalizeText2(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
       return styleExpandedImage(image, fullUrl);
@@ -2805,7 +2590,7 @@ ${failures.join("\n")}`);
   var REQUEST_TIMEOUT4 = 3e4;
   var PREVIEW_BOUNDARY_PATTERN3 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
   var resolutionCache2 = /* @__PURE__ */ new Map();
-  function normalizeText4(value) {
+  function normalizeText3(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
   function isHdblogHostname(hostname) {
@@ -2951,9 +2736,9 @@ ${failures.join("\n")}`);
     const content = findArticleContent2(document2);
     if (!content) return null;
     const nodes = textNodesUnder3(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText4(node.nodeValue)));
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue)));
     if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter3(marker, node) && PREVIEW_BOUNDARY_PATTERN3.test(normalizeText4(node.nodeValue))) || null;
+    const boundary = nodes.find((node) => isAfter3(marker, node) && PREVIEW_BOUNDARY_PATTERN3.test(normalizeText3(node.nodeValue))) || null;
     return { content, marker, boundary };
   }
   function inPreviewRange3(range, node) {
@@ -2992,99 +2777,705 @@ ${failures.join("\n")}`);
     view.setTimeout(run, 1500);
   }
 
-  // src/hdblog-search.js
-  var STORAGE_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
-  var DEFAULT_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
-  function normalizeKeyword(value) {
-    return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  // src/agaghhh-hdblog-preview.js
+  var HDBLOG_ORIGIN = "https://hdblog.me";
+  var HDBLOG_BLOCKED_KEYWORDS_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
+  var DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  var REQUEST_TIMEOUT5 = 3e4;
+  var CONTAINER_ID = "x1080x-ex-agaghhh-hdblog-preview";
+  var PREVIEW_IMAGE_ATTR = "data-x1080x-hdblog-preview-url";
+  var IMAGE_EXTENSION_PATTERN3 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
+  var PREVIEW_BOUNDARY_PATTERN4 = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  function normalizeText4(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function parseBlockedKeywords(value) {
-    const seen = /* @__PURE__ */ new Set();
-    const keywords = [];
-    String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).forEach((entry) => {
-      const normalized = normalizeKeyword(entry);
-      if (!normalized || seen.has(normalized)) return;
-      seen.add(normalized);
-      keywords.push(entry);
-    });
-    return keywords;
-  }
-  function isBlockedTitle(title, keywords) {
-    const normalizedTitle = normalizeKeyword(title);
-    return keywords.some((keyword) => {
-      const normalizedKeyword = normalizeKeyword(keyword);
-      return normalizedKeyword && normalizedTitle.includes(normalizedKeyword);
-    });
-  }
-  function isHdblogSearchUrl(value) {
+  function absoluteHttpUrl4(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
     try {
-      const url = new URL(value);
-      const host = url.hostname.toLowerCase().replace(/\.$/, "");
-      return (host === "hdblog.me" || host.endsWith(".hdblog.me")) && url.searchParams.has("s") && Boolean(url.searchParams.get("s")?.trim());
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function requestText(url, gmRequest, referer = "") {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      gmRequest({
+        method: "GET",
+        url,
+        responseType: "text",
+        timeout: REQUEST_TIMEOUT5,
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          ...referer ? { Referer: referer } : {}
+        },
+        onload(response) {
+          if (response.status >= 400 || response.status === 0) {
+            reject(new Error(`\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
+            return;
+          }
+          resolve({
+            html: String(response.responseText ?? response.response ?? ""),
+            finalUrl: response.finalUrl || response.responseURL || url,
+            responseHeaders: response.responseHeaders || ""
+          });
+        },
+        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
+        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  function parseHtml(html, baseUrl, hostDocument = globalThis.document) {
+    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (typeof Parser !== "function") return null;
+    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
+    const base = parsed.createElement("base");
+    base.href = baseUrl;
+    (parsed.head || parsed.documentElement).prepend(base);
+    return parsed;
+  }
+  function getHdblogBlockedKeywords() {
+    const stored = typeof GM_getValue === "function" ? GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY2, null) : null;
+    return parseBlockedKeywords(
+      stored === null || stored === void 0 ? DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 : stored
+    );
+  }
+  function codeTokenMatches(title, code) {
+    const normalized = normalizeText4(title).toUpperCase();
+    const target = String(code || "").trim().toUpperCase();
+    if (!target) return false;
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`, "i").test(normalized);
+  }
+  function chooseHdblogSearchResult(candidates, code, keywords = getHdblogBlockedKeywords()) {
+    const { blocked, remaining } = filterSearchCandidates(candidates, keywords);
+    if (!remaining.length) return { blocked, remaining, selected: null };
+    if (remaining.length === 1) return { blocked, remaining, selected: remaining[0] };
+    const slug = String(code || "").trim().toLowerCase();
+    const exactSlug = remaining.filter((candidate) => {
+      try {
+        const parts = new URL(candidate.url).pathname.toLowerCase().split("/").filter(Boolean);
+        return parts.at(-1) === slug;
+      } catch {
+        return false;
+      }
+    });
+    if (exactSlug.length === 1) return { blocked, remaining, selected: exactSlug[0] };
+    const exactTitle = remaining.filter((candidate) => codeTokenMatches(candidate.title, code));
+    if (exactTitle.length === 1) return { blocked, remaining, selected: exactTitle[0] };
+    return { blocked, remaining, selected: null };
+  }
+  function responseHeader(value, name) {
+    const lower = String(name || "").toLowerCase();
+    const line = String(value || "").split(/\r?\n/).find((entry) => {
+      const separator = entry.indexOf(":");
+      return separator > 0 && entry.slice(0, separator).trim().toLowerCase() === lower;
+    });
+    return line ? line.slice(line.indexOf(":") + 1).trim() : "";
+  }
+  function redirectFromHtml(html, baseUrl, hostDocument) {
+    const parsed = parseHtml(html, baseUrl, hostDocument);
+    const meta = parsed?.querySelector("meta[http-equiv]");
+    if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
+      const content = meta.getAttribute("content") || "";
+      const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
+      const target = absoluteHttpUrl4(match?.[1], baseUrl);
+      if (target) return target;
+    }
+    const scriptMatch = String(html).match(
+      /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
+    );
+    return absoluteHttpUrl4(scriptMatch?.[1], baseUrl);
+  }
+  async function resolveHdblogReferTarget(document2, referUrl, articleUrl, gmRequest) {
+    try {
+      const response = await requestText(referUrl, gmRequest, articleUrl);
+      const finalUrl = absoluteHttpUrl4(response.finalUrl, referUrl);
+      if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
+        return finalUrl;
+      }
+      const location2 = absoluteHttpUrl4(responseHeader(response.responseHeaders, "location"), referUrl);
+      if (location2 && !isHdblogReferUrl(location2, referUrl)) return location2;
+      const htmlTarget = redirectFromHtml(response.html, referUrl, document2);
+      return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
+    } catch {
+      return "";
+    }
+  }
+  function previewThumbnailUrl2(document2, image) {
+    const candidates = [
+      image?.currentSrc,
+      image?.getAttribute("src"),
+      image?.getAttribute("data-original"),
+      image?.getAttribute("data-lazy-src"),
+      image?.getAttribute("data-src")
+    ];
+    for (const candidate of candidates) {
+      const url = absoluteHttpUrl4(candidate, document2.baseURI);
+      if (url) return url;
+    }
+    return "";
+  }
+  function wordpressOriginalUrl2(value) {
+    const href = absoluteHttpUrl4(value, HDBLOG_ORIGIN);
+    if (!href) return "";
+    try {
+      const url = new URL(href);
+      if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return "";
+      url.pathname = url.pathname.replace(
+        /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
+        ""
+      );
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+  function largestSrcsetUrl4(document2, value) {
+    return String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
+      const match = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)(w|x)$/i);
+      const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
+      const amount = match ? Number(match[2]) : order;
+      const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
+      const url = absoluteHttpUrl4(rawUrl, document2.baseURI);
+      return url ? { url, score } : null;
+    }).filter(Boolean).sort((a, b) => b.score - a.score)[0]?.url || "";
+  }
+  function bestImageUrl(document2, image) {
+    if (!image) return "";
+    const anchorHref = absoluteHttpUrl4(image.closest("a[href]")?.getAttribute("href"), document2.baseURI);
+    const candidates = [
+      anchorHref && IMAGE_EXTENSION_PATTERN3.test(anchorHref) ? anchorHref : "",
+      image.getAttribute("data-orig-file"),
+      image.getAttribute("data-original"),
+      image.getAttribute("data-lazy-src"),
+      image.getAttribute("data-src"),
+      image.currentSrc,
+      image.getAttribute("src")
+    ];
+    for (const candidate of candidates) {
+      const url = absoluteHttpUrl4(candidate, document2.baseURI);
+      if (!url) continue;
+      return wordpressOriginalUrl2(url) || url;
+    }
+    const srcset = largestSrcsetUrl4(
+      document2,
+      image.getAttribute("data-srcset") || image.getAttribute("data-lazy-srcset") || image.getAttribute("srcset")
+    );
+    return wordpressOriginalUrl2(srcset) || srcset;
+  }
+  async function resolvePixhostTarget(document2, showUrl, thumbnailUrl2, articleUrl, gmRequest) {
+    const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2.baseURI || showUrl);
+    try {
+      const response = await requestText(showUrl, gmRequest, articleUrl);
+      return parsePixhostImagePage(document2, response.html, response.finalUrl || showUrl) || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  function textNodesUnder4(root) {
+    const view = root.ownerDocument.defaultView;
+    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
+    const walker = root.ownerDocument.createTreeWalker(root, showText);
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function isAfter4(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
+  }
+  function previewRange4(document2) {
+    const article = document2.querySelector(
+      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post, article"
+    );
+    const content = article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article || document2.querySelector("main#genesis-content, main, #content") || document2.body;
+    if (!content) return null;
+    const nodes = textNodesUnder4(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText4(node.nodeValue)));
+    if (!marker) return null;
+    const boundary = nodes.find((node) => isAfter4(marker, node) && PREVIEW_BOUNDARY_PATTERN4.test(normalizeText4(node.nodeValue))) || null;
+    return { content, marker, boundary };
+  }
+  function inPreviewRange4(range, node) {
+    if (!range || !isAfter4(range.marker, node)) return false;
+    return !range.boundary || !isAfter4(range.boundary, node);
+  }
+  async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest) {
+    const range = previewRange4(document2);
+    if (!range) return [];
+    const urls = [];
+    const seen = /* @__PURE__ */ new Set();
+    const handledImages = /* @__PURE__ */ new Set();
+    const add = (value) => {
+      const url = absoluteHttpUrl4(value, articleUrl);
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      urls.push(url);
+    };
+    for (const anchor of [...range.content.querySelectorAll("a[href]")].filter((node) => inPreviewRange4(range, node))) {
+      let target = absoluteHttpUrl4(anchor.getAttribute("href"), document2.baseURI);
+      const image = anchor.querySelector("img");
+      const thumbnail = previewThumbnailUrl2(document2, image);
+      if (isHdblogReferUrl(target, document2.baseURI)) {
+        target = await resolveHdblogReferTarget(document2, target, articleUrl, gmRequest);
+      }
+      if (target && isPixhostShowUrl(target, document2.baseURI)) {
+        target = await resolvePixhostTarget(document2, target, thumbnail, articleUrl, gmRequest);
+      }
+      if (target && (IMAGE_EXTENSION_PATTERN3.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
+        add(wordpressOriginalUrl2(target) || target);
+        if (image) handledImages.add(image);
+        continue;
+      }
+      if (image) {
+        const best = bestImageUrl(document2, image);
+        if (best) {
+          add(best);
+          handledImages.add(image);
+        }
+      }
+    }
+    for (const image of [...range.content.querySelectorAll("img")].filter((node) => inPreviewRange4(range, node) && !handledImages.has(node))) {
+      add(bestImageUrl(document2, image));
+    }
+    return urls;
+  }
+  async function fetchHdblogPreviewForCode(code, gmRequest = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return { code: "", articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
+    const searchUrl = `${HDBLOG_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
+    const searchResponse = await requestText(searchUrl, gmRequest, `${HDBLOG_ORIGIN}/`);
+    const searchDocument = parseHtml(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
+    if (!searchDocument) return { code: normalizedCode, articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
+    const candidates = collectHdblogSearchResults(searchDocument);
+    const selection = chooseHdblogSearchResult(candidates, normalizedCode, getHdblogBlockedKeywords());
+    if (!selection.selected) {
+      return { code: normalizedCode, articleUrl: "", imageUrls: [], ...selection };
+    }
+    const articleUrl = selection.selected.url;
+    const articleResponse = await requestText(articleUrl, gmRequest, searchUrl);
+    const articleDocument = parseHtml(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
+    const imageUrls = articleDocument ? await collectHdblogPreviewImageUrls(articleDocument, articleUrl, gmRequest) : [];
+    return { code: normalizedCode, articleUrl, imageUrls, ...selection };
+  }
+  function threadCode(document2) {
+    const rawTitle = document2.querySelector("#thread_subject")?.textContent || document2.querySelector("h1.ts, .vwthd h1, h1")?.textContent || document2.title;
+    return parseThreadTitle(rawTitle).code;
+  }
+  function firstPostContent(document2) {
+    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
+    return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
+  }
+  function isThreadPage2(locationObject) {
+    try {
+      const url = new URL(locationObject?.href || "");
+      return url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid");
     } catch {
       return false;
     }
   }
-  function filterSearchCandidates(candidates, keywords) {
-    const blocked = [];
-    const remaining = [];
-    for (const candidate of candidates) {
-      (isBlockedTitle(candidate.title, keywords) ? blocked : remaining).push(candidate);
+  function renderAgaghhhHdblogPreview(document2, result) {
+    if (!document2 || !result?.imageUrls?.length || document2.getElementById(CONTAINER_ID)) return null;
+    const content = firstPostContent(document2);
+    if (!content) return null;
+    const section = document2.createElement("section");
+    section.id = CONTAINER_ID;
+    section.style.cssText = "clear:both;margin:24px 0 8px;padding:16px 0 0;border-top:1px solid #ddd";
+    const heading = document2.createElement("div");
+    heading.style.cssText = "margin:0 0 12px;font-size:15px;font-weight:700;color:#444";
+    const source = document2.createElement("a");
+    source.href = result.articleUrl;
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    source.textContent = `HDblog Preview \xB7 ${result.code}`;
+    source.style.cssText = "color:inherit;text-decoration:none";
+    heading.append(source);
+    section.append(heading);
+    result.imageUrls.forEach((url, index) => {
+      const anchor = document2.createElement("a");
+      anchor.href = url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.style.cssText = "display:block;clear:both;margin:14px 0;text-align:center";
+      const image = document2.createElement("img");
+      image.src = url;
+      image.alt = `${result.code} Preview ${index + 1}`;
+      image.loading = index === 0 ? "eager" : "lazy";
+      image.decoding = "async";
+      image.setAttribute(PREVIEW_IMAGE_ATTR, url);
+      image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
+      anchor.append(image);
+      section.append(anchor);
+    });
+    content.append(section);
+    return section;
+  }
+  async function installAgaghhhHdblogPreview(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isThreadPage2(locationObject) || document2.getElementById(CONTAINER_ID)) return null;
+    const code = threadCode(document2);
+    if (!code) return null;
+    try {
+      const result = await fetchHdblogPreviewForCode(code, gmRequest, document2);
+      return renderAgaghhhHdblogPreview(document2, result);
+    } catch (error) {
+      console.warn("[x1080x-ex] hdblog preview lookup failed", {
+        code,
+        error: error?.message || String(error)
+      });
+      return null;
     }
-    return { blocked, remaining };
   }
-  function redirectTargetForSearch(candidates) {
-    return candidates.length === 1 ? candidates[0].url : "";
+
+  // src/agaghhh-enhancement.js
+  var AGAGHHH_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:agaghhh-batch-open-enabled";
+  var AGAGHHH_DOWNLOAD_ENABLED_KEY = "x1080x-ex:agaghhh-download-enabled";
+  var AGAGHHH_REAL_ACTRESS_ENABLED_KEY = "x1080x-ex:agaghhh-real-actress-enabled";
+  var AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = "x1080x-ex:agaghhh-hdblog-preview-enabled";
+  var LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = "x1080x-ex:agaghhh-enhancement-enabled";
+  var SETTINGS_PANEL_ID = "x1080x-ex-settings-panel";
+  var DOWNLOAD_BUTTON_ID2 = "x1080x-ex-download";
+  var BATCH_BUTTON_ID2 = "x1080x-ex-open-page";
+  var BATCH_TOOLBAR_ID2 = "x1080x-ex-open-page-toolbar";
+  var AV_WIKI_ORIGIN = "https://av-wiki.net";
+  var AV_WIKI_TIMEOUT = 2e4;
+  var REAL_ACTRESS_BOUND_ATTR = "data-x1080x-real-actress-bound";
+  var REAL_ACTRESS_BYPASS_ATTR = "data-x1080x-real-actress-bypass";
+  function normalizeText5(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function collectHdblogSearchResults(document2) {
-    const baseUrl = new URL(document2.baseURI);
-    return [...document2.querySelectorAll("main#genesis-content article.entry")].map((article) => {
-      const link = article.querySelector(
-        ".entry-header .entry-title a[href], h2.entry-title a[href], .entry-title a[href]"
-      );
-      if (!link) return null;
-      try {
-        const url = new URL(link.getAttribute("href"), document2.baseURI);
-        if (!/^https?:$/.test(url.protocol) || url.origin !== baseUrl.origin) return null;
-        return {
-          article,
-          link,
-          title: String(link.textContent ?? "").replace(/\s+/g, " ").trim(),
-          url: url.href
-        };
-      } catch {
-        return null;
+  function isAgaghhhHost(locationObject = globalThis.location) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
+  }
+  function legacyDefault() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY, true) !== false;
+  }
+  function readBooleanSetting(key) {
+    if (typeof GM_getValue !== "function") return true;
+    const stored = GM_getValue(key, null);
+    if (stored === null || stored === void 0) return legacyDefault();
+    return stored !== false;
+  }
+  function isAgaghhhBatchOpenEnabled() {
+    return readBooleanSetting(AGAGHHH_BATCH_OPEN_ENABLED_KEY);
+  }
+  function isAgaghhhDownloadEnabled() {
+    return readBooleanSetting(AGAGHHH_DOWNLOAD_ENABLED_KEY);
+  }
+  function isAgaghhhRealActressEnabled() {
+    return readBooleanSetting(AGAGHHH_REAL_ACTRESS_ENABLED_KEY);
+  }
+  function isAgaghhhHdblogPreviewEnabled() {
+    return readBooleanSetting(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY);
+  }
+  function firstPostContent2(document2) {
+    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
+    return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
+  }
+  function extractThreadPerformerField(document2) {
+    const content = firstPostContent2(document2);
+    if (!content) return { found: false, value: "" };
+    const raw = String(content.innerText || content.textContent || "").replace(/\r/g, "");
+    const lines = raw.split("\n").map((line) => line.trim());
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const match = line.match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
+      if (!match) continue;
+      const inlineValue = normalizeText5(match[1]);
+      if (inlineValue) return { found: true, value: inlineValue };
+      const nextLine = normalizeText5(lines[index + 1] || "");
+      if (nextLine && !/^[^:：]{1,12}\s*[:：]/u.test(nextLine)) {
+        return { found: true, value: nextLine };
       }
-    }).filter(Boolean);
-  }
-  function filterHdblogSearchResults(document2, keywords) {
-    const candidates = collectHdblogSearchResults(document2);
-    const { blocked, remaining } = filterSearchCandidates(candidates, keywords);
-    blocked.forEach(({ article }) => article.remove());
-    return { blocked, remaining };
-  }
-  function getBlockedKeywords() {
-    const stored = GM_getValue(STORAGE_KEY2, null);
-    if (stored === null || stored === void 0) {
-      return parseBlockedKeywords(DEFAULT_BLOCKED_KEYWORDS);
+      return { found: true, value: "" };
     }
-    return parseBlockedKeywords(stored);
+    const flattened = normalizeText5(raw);
+    const inline = flattened.match(/(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*([^:：]{1,80}?)(?=\s+[\p{L}\p{N}_-]{1,16}\s*[:：]|$)/iu);
+    if (inline) return { found: true, value: normalizeText5(inline[1]) };
+    return { found: false, value: "" };
   }
-  function applyHdblogSearchEnhancement(windowObject = window) {
-    if (!isHdblogSearchUrl(windowObject.location.href)) {
-      return { blocked: [], remaining: [], redirectTarget: "" };
-    }
-    const keywords = getBlockedKeywords();
-    const result = filterHdblogSearchResults(windowObject.document, keywords);
-    const redirectTarget = redirectTargetForSearch(result.remaining);
-    if (redirectTarget && redirectTarget !== windowObject.location.href) {
-      windowObject.location.assign(redirectTarget);
-    }
-    return { ...result, redirectTarget };
+  function nodeActressText(node) {
+    if (!node) return "";
+    const anchors = [...node.querySelectorAll?.("a") || []].map((anchor) => normalizeText5(anchor.textContent)).filter(Boolean).filter((text) => !/^(?:FANZA|ソクミル|DUGA|続きを読む)$/i.test(text));
+    if (anchors.length) return [...new Set(anchors)].join(" ");
+    return normalizeText5(node.textContent).replace(/^AV女優名\s*[:：]?\s*/i, "").replace(/\s+(?:メーカー品番|FANZA品番|SOKMIL品番|DUGA品番|配信開始日)\b.*$/i, "").trim();
   }
-  function installHdblogSearchEnhancement() {
-    if (typeof window === "undefined" || typeof document === "undefined") return;
-    applyHdblogSearchEnhancement(window);
+  function scopeForCode(document2, code) {
+    const upperCode = String(code || "").toUpperCase();
+    const articles = [...document2.querySelectorAll("article")];
+    return articles.find((article) => normalizeText5(article.textContent).toUpperCase().includes(upperCode)) || document2.body || document2.documentElement;
+  }
+  function parseAvWikiActressesFromDocument(document2, code = "") {
+    if (!document2) return "";
+    const scope = scopeForCode(document2, code);
+    if (!scope) return "";
+    for (const row of scope.querySelectorAll("tr")) {
+      const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
+      if (cells.length < 2) continue;
+      if (/^AV女優名\s*[:：]?$/i.test(normalizeText5(cells[0].textContent))) {
+        return nodeActressText(cells[1]);
+      }
+    }
+    for (const term of scope.querySelectorAll("dt")) {
+      if (!/^AV女優名\s*[:：]?$/i.test(normalizeText5(term.textContent))) continue;
+      const value = term.nextElementSibling;
+      const text2 = nodeActressText(value);
+      if (text2) return text2;
+    }
+    const labels = [...scope.querySelectorAll("strong, b, span, div, p, li")].filter((element) => /^AV女優名\s*[:：]?$/i.test(normalizeText5(element.textContent)));
+    for (const label of labels) {
+      const candidates = [
+        label.nextElementSibling,
+        label.parentElement?.nextElementSibling,
+        label.parentElement?.querySelector(":scope > *:not(strong):not(b):not(span)")
+      ];
+      for (const candidate of candidates) {
+        const text2 = nodeActressText(candidate);
+        if (text2) return text2;
+      }
+    }
+    const text = String(scope.innerText || scope.textContent || "").replace(/\r/g, "");
+    const lines = text.split("\n").map((line) => normalizeText5(line)).filter(Boolean);
+    const labelIndex = lines.findIndex((line) => /^AV女優名\s*[:：]?$/i.test(line));
+    if (labelIndex >= 0) return normalizeText5(lines[labelIndex + 1] || "");
+    const inline = lines.find((line) => /^AV女優名\s*[:：]/i.test(line));
+    return inline ? normalizeText5(inline.replace(/^AV女優名\s*[:：]\s*/i, "")) : "";
+  }
+  function findAvWikiResultUrl(document2, code) {
+    if (!document2 || !code) return "";
+    const targetCode = String(code).toUpperCase();
+    const targetPath = `/${String(code).toLowerCase()}/`;
+    const anchors = [...document2.querySelectorAll("a[href]")];
+    for (const anchor of anchors) {
+      try {
+        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+        if (url.origin !== AV_WIKI_ORIGIN) continue;
+        if (url.pathname.toLowerCase() === targetPath) return url.href;
+      } catch {
+      }
+    }
+    for (const anchor of anchors) {
+      const article = anchor.closest("article");
+      const text = normalizeText5(article?.textContent || anchor.textContent).toUpperCase();
+      if (!text.includes(targetCode)) continue;
+      try {
+        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+        if (url.origin === AV_WIKI_ORIGIN && url.pathname !== "/") return url.href;
+      } catch {
+      }
+    }
+    return "";
+  }
+  function requestHtml(url, gmRequest = globalThis.GM_xmlhttpRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest !== "function") {
+        reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
+        return;
+      }
+      gmRequest({
+        method: "GET",
+        url,
+        responseType: "text",
+        timeout: AV_WIKI_TIMEOUT,
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          Referer: `${AV_WIKI_ORIGIN}/`
+        },
+        onload: (response) => {
+          if (response.status < 200 || response.status >= 300) {
+            reject(new Error(`av-wiki \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
+            return;
+          }
+          resolve(String(response.responseText || response.response || ""));
+        },
+        onerror: () => reject(new Error("av-wiki \u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25\u3002")),
+        ontimeout: () => reject(new Error(`av-wiki \u8BF7\u6C42\u8D85\u65F6\uFF08${AV_WIKI_TIMEOUT / 1e3} \u79D2\uFF09\u3002`))
+      });
+    });
+  }
+  function parseHtml2(html, document2 = globalThis.document) {
+    const Parser = document2?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (typeof Parser !== "function") return null;
+    return new Parser().parseFromString(String(html || ""), "text/html");
+  }
+  async function fetchRealActressFromAvWiki(code, gmRequest = globalThis.GM_xmlhttpRequest, document2 = globalThis.document) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return "";
+    const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
+    const searchDocument = parseHtml2(await requestHtml(searchUrl, gmRequest), document2);
+    if (!searchDocument) return "";
+    const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
+    if (fromSearch) return fromSearch;
+    const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
+    const detailDocument = parseHtml2(await requestHtml(detailUrl, gmRequest), document2);
+    return parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
+  }
+  function appendActressToTitleText(titleText, actress) {
+    const cleanTitle = normalizeText5(titleText);
+    const cleanActress = normalizeText5(actress);
+    if (!cleanActress || cleanTitle.includes(cleanActress)) return cleanTitle;
+    return `${cleanTitle} ${cleanActress}`;
+  }
+  function threadTitleElement(document2) {
+    return document2.querySelector("#thread_subject") || document2.querySelector("h1.ts, .vwthd h1, h1");
+  }
+  function threadCode2(document2) {
+    return parseThreadTitle(threadTitleElement(document2)?.textContent || document2.title).code;
+  }
+  function bindRealActressDownload(document2, gmRequest) {
+    const button = document2.getElementById(DOWNLOAD_BUTTON_ID2);
+    if (!button || button.getAttribute(REAL_ACTRESS_BOUND_ATTR) === "1") return;
+    button.setAttribute(REAL_ACTRESS_BOUND_ATTR, "1");
+    button.addEventListener("click", async (event) => {
+      if (button.getAttribute(REAL_ACTRESS_BYPASS_ATTR) === "1") {
+        button.removeAttribute(REAL_ACTRESS_BYPASS_ATTR);
+        return;
+      }
+      const performer = extractThreadPerformerField(document2);
+      if (!performer.found || performer.value) return;
+      const code = threadCode2(document2);
+      if (!code) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const idleText = button.textContent;
+      button.disabled = true;
+      button.textContent = "\u67E5\u6F14\u5458\u2026";
+      let actress = "";
+      try {
+        actress = await fetchRealActressFromAvWiki(code, gmRequest, document2);
+      } catch (error) {
+        console.warn("[x1080x-ex] av-wiki actress lookup failed", {
+          code,
+          error: error?.message || String(error)
+        });
+      }
+      button.disabled = false;
+      button.textContent = idleText;
+      const title = threadTitleElement(document2);
+      const originalTitle = title?.textContent || "";
+      if (actress && title) {
+        title.textContent = appendActressToTitleText(originalTitle, actress);
+        console.info("[x1080x-ex] real actress resolved", { code, actress });
+      }
+      button.setAttribute(REAL_ACTRESS_BYPASS_ATTR, "1");
+      button.click();
+      if (title && actress) title.textContent = originalTitle;
+    }, true);
+  }
+  function closeX1080xSettingsPanel(document2) {
+    document2?.getElementById(SETTINGS_PANEL_ID)?.remove();
+  }
+  function openX1080xSettingsPanel(document2 = globalThis.document) {
+    if (!document2?.body) return null;
+    closeX1080xSettingsPanel(document2);
+    const overlay = document2.createElement("div");
+    overlay.id = SETTINGS_PANEL_ID;
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483646",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "20px",
+      background: "rgba(0,0,0,.42)",
+      boxSizing: "border-box"
+    });
+    const panel = document2.createElement("form");
+    Object.assign(panel.style, {
+      width: "min(520px, 100%)",
+      maxHeight: "calc(100vh - 40px)",
+      overflow: "auto",
+      padding: "22px",
+      borderRadius: "10px",
+      background: "#fff",
+      color: "#222",
+      boxShadow: "0 18px 60px rgba(0,0,0,.28)",
+      boxSizing: "border-box",
+      font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    });
+    panel.innerHTML = `
+    <h2 style="margin:0 0 18px;font-size:20px">x1080x \u8BBE\u7F6E</h2>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:11px">agaghhh.cc \u589E\u5F3A\u529F\u80FD</div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="batch-open" type="checkbox" style="margin-top:3px">
+        <span><strong>\u6279\u91CF\u6253\u5F00\u5E16\u5B50\u529F\u80FD</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5217\u8868\u9875\u663E\u793A\u201C\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\u201D\u6309\u94AE\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="download" type="checkbox" style="margin-top:3px">
+        <span><strong>\u4E0B\u8F7D\u589E\u5F3A</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u9875\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u5E76\u4F7F\u7528\u73B0\u6709\u9644\u4EF6\u3001\u56FE\u7247\u3001\u79CD\u5B50\u4E0B\u8F7D\u4E0E\u81EA\u52A8\u547D\u540D\u903B\u8F91\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
+        <span><strong>\u663E\u793A hdblog \u5927\u9884\u89C8\u56FE</strong><small style="display:block;margin-top:2px;color:#666">\u6309\u5E16\u5B50\u756A\u53F7\u641C\u7D22 hdblog\uFF0C\u6CBF\u7528 hdblog \u7684\u201C\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD\u201D\uFF0C\u5E76\u628A\u5339\u914D\u6587\u7AE0\u7684 Preview \u5927\u56FE\u663E\u793A\u5230\u4E3B\u697C\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px">
+        <input data-setting="real-actress" type="checkbox" style="margin-top:3px">
+        <span><strong>\u67E5\u771F\u5B9E\u6F14\u5458\u4FE1\u606F</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u5F53\u5E16\u5B50\u201C\u51FA\u6F14\u8005\u201D\u4E3A\u7A7A\u4E14\u542F\u7528\u4E86\u4E0B\u8F7D\u589E\u5F3A\u65F6\uFF0C\u901A\u8FC7 av-wiki \u67E5\u8BE2\u6F14\u5458\u5E76\u8FFD\u52A0\u5230\u9644\u4EF6\u6587\u4EF6\u540D\u3002</small></span>
+      </label>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
+      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
+    </div>`;
+    const batchInput = panel.querySelector('[data-setting="batch-open"]');
+    const downloadInput = panel.querySelector('[data-setting="download"]');
+    const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
+    const actressInput = panel.querySelector('[data-setting="real-actress"]');
+    batchInput.checked = isAgaghhhBatchOpenEnabled();
+    downloadInput.checked = isAgaghhhDownloadEnabled();
+    previewInput.checked = isAgaghhhHdblogPreviewEnabled();
+    actressInput.checked = isAgaghhhRealActressEnabled();
+    panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeX1080xSettingsPanel(document2));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeX1080xSettingsPanel(document2);
+    });
+    panel.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (typeof GM_setValue === "function") {
+        GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
+        GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+        GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
+        GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
+      }
+      closeX1080xSettingsPanel(document2);
+      const view = document2.defaultView;
+      if (view?.location?.reload) view.location.reload();
+    });
+    overlay.append(panel);
+    document2.body.append(overlay);
+    return overlay;
+  }
+  function installX1080xSettingsMenu(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2 || !isAgaghhhHost(locationObject)) return;
+    if (typeof GM_registerMenuCommand !== "function") return;
+    GM_registerMenuCommand("\u2699\uFE0F x1080x \u8BBE\u7F6E", () => openX1080xSettingsPanel(document2));
+  }
+  function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isAgaghhhHost(locationObject)) return;
+    if (!isAgaghhhBatchOpenEnabled()) {
+      document2.getElementById(BATCH_BUTTON_ID2)?.remove();
+      document2.getElementById(BATCH_TOOLBAR_ID2)?.remove();
+    }
+    if (isAgaghhhHdblogPreviewEnabled()) {
+      void installAgaghhhHdblogPreview(document2, locationObject, gmRequest);
+    }
+    if (!isAgaghhhDownloadEnabled()) {
+      document2.getElementById(DOWNLOAD_BUTTON_ID2)?.remove();
+      return;
+    }
+    if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest);
   }
 
   // src/index.js
