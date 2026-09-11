@@ -21,7 +21,9 @@ const dom = new JSDOM(`
 const calls = [];
 const saved = [];
 const revoked = [];
-dom.window.GM_getValue = (_key, fallback) => fallback;
+dom.window.GM_getValue = (key, fallback) => (
+  key === 'x1080x-ex:agaghhh-hdblog-preview-enabled' ? false : fallback
+);
 dom.window.GM_setValue = () => {};
 dom.window.GM_registerMenuCommand = () => {};
 dom.window.GM_info = {
