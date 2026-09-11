@@ -1,0 +1,64 @@
+name: Apply single Preview B naming
+
+on:
+  push:
+    branches:
+      - test/agaghhh-hdblog-preview
+    paths:
+      - .github/workflows/apply-preview-single-b.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/agaghhh-hdblog-preview
+      - name: Apply naming rule
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          core = Path('src/core.js')
+          text = core.read_text(encoding='utf-8')
+          old = "name: resources.title.code.startsWith('FC2-') ? `${safeCode} -${index + 1}.jpg` : `${safeCode} B${index + 1}.jpg`,"
+          new = "name: resources.title.code.startsWith('FC2-')\n          ? `${safeCode} -${index + 1}.jpg`\n          : (resources.hdblogPreviews.length === 1 ? `${safeCode} B.jpg` : `${safeCode} B${index + 1}.jpg`),"
+          if old not in text:
+              raise SystemExit('core naming line not found')
+          core.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          test_file = Path('test/agaghhh-hdblog-preview.test.js')
+          text = test_file.read_text(encoding='utf-8')
+          # Multi-preview test remains B1/B2. Only the single-preview regression test changes B1 -> B.
+          marker = "test('injected Preview images never replace the original-cover candidate'"
+          pos = text.find(marker)
+          if pos < 0:
+              raise SystemExit('single-preview regression test not found')
+          head, tail = text[:pos], text[pos:]
+          old_test = "    'SVMGM-050 A.jpg',\n    'SVMGM-050 B1.jpg',"
+          new_test = "    'SVMGM-050 A.jpg',\n    'SVMGM-050 B.jpg',"
+          if old_test not in tail:
+              raise SystemExit('single-preview expected names not found')
+          test_file.write_text(head + tail.replace(old_test, new_test, 1), encoding='utf-8')
+
+          smoke = Path('scripts/smoke.mjs')
+          text = smoke.read_text(encoding='utf-8')
+          old_smoke = "  { url: 'blob:smoke-3', name: 'ABCD-123 B1.jpg' },"
+          new_smoke = "  { url: 'blob:smoke-3', name: 'ABCD-123 B.jpg' },"
+          if old_smoke not in text:
+              raise SystemExit('smoke B1 expectation not found')
+          smoke.write_text(text.replace(old_smoke, new_smoke, 1), encoding='utf-8')
+          PY
+      - name: Commit changes
+        shell: bash
+        run: |
+          git config user.name 'xshare.cc'
+          git config user.email 'nicbest@163.com'
+          git add src/core.js test/agaghhh-hdblog-preview.test.js scripts/smoke.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: use B for a single Preview image'
+          git push origin HEAD:test/agaghhh-hdblog-preview
