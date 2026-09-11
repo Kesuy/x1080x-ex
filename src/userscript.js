@@ -13,6 +13,8 @@ const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
 const REQUEST_TIMEOUT = 60000;
+const PREVIEW_IMAGE_URL_ATTR = 'data-x1080x-hdblog-preview-url';
+const PREVIEW_REFERER_ATTR = 'data-x1080x-preview-referer';
 const DEFAULT_OPEN_TIMING = Object.freeze({
   initialMin: 300,
   initialMax: 800,
@@ -483,20 +485,41 @@ async function requestBlobWithPageFetch(job) {
   }
 }
 
-function requestBlobWithGmXhr(job) {
+function previewRefererForJob(job) {
+  if (job.kind !== 'image') return '';
+  let target = '';
+  try {
+    target = new URL(job.url, location.href).href;
+  } catch {
+    return '';
+  }
+  const image = [...document.querySelectorAll(`img[${PREVIEW_IMAGE_URL_ATTR}]`)]
+    .find((candidate) => {
+      try {
+        return new URL(candidate.getAttribute(PREVIEW_IMAGE_URL_ATTR), location.href).href === target;
+      } catch {
+        return false;
+      }
+    });
+  if (!image) return '';
+  return image.getAttribute(PREVIEW_REFERER_ATTR)
+    || image.closest('section')?.querySelector('a[href]')?.href
+    || '';
+}
+
+function requestBlobWithGmXhrOnce(job, referer) {
   return new Promise((resolve, reject) => {
     GM_xmlhttpRequest({
       method: 'GET',
       url: job.url,
       responseType: 'blob',
       timeout: REQUEST_TIMEOUT,
-      headers: { Referer: location.href },
+      ...(referer ? { headers: { Referer: referer } } : {}),
       onload: (response) => {
         validateResponse(response).then(resolve, reject);
       },
       onerror: (error) => {
         const details = safeErrorDetails(error);
-        console.error('[x1080x-ex] GM_xmlhttpRequest failed', details);
         reject(new Error(
           `网络请求失败：error=${details.error || 'unknown_error'}；`
           + `details=${details.details || details.message || '无详细信息'}`
@@ -505,6 +528,23 @@ function requestBlobWithGmXhr(job) {
       ontimeout: () => reject(new Error(`网络请求超时（${REQUEST_TIMEOUT / 1000} 秒）`)),
     });
   });
+}
+
+async function requestBlobWithGmXhr(job) {
+  const sourceReferer = previewRefererForJob(job);
+  const referers = sourceReferer
+    ? [sourceReferer, '', location.href]
+    : [location.href, ''];
+  let lastError = null;
+  for (const referer of [...new Set(referers)]) {
+    try {
+      return await requestBlobWithGmXhrOnce(job, referer);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  console.error('[x1080x-ex] GM_xmlhttpRequest failed after referer retries', safeErrorDetails(lastError));
+  throw lastError || new Error('网络请求失败');
 }
 
 function requestBlob(job) {

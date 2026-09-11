@@ -10,6 +10,13 @@ import {
   isPixhostShowUrl,
   parsePixhostImagePage,
 } from './pixhost.js';
+import {
+  fetchOfficialPreviewFallbackForCode,
+  installOfficialPreviewFallbackSetting,
+  isOfficialPreviewFallbackEnabled,
+} from './agaghhh-preview-official.js';
+
+installOfficialPreviewFallbackSetting();
 
 const HDBLOG_ORIGIN = 'https://hdblog.me';
 const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
@@ -384,14 +391,15 @@ export function renderAgaghhhHdblogPreview(document, result) {
   const heading = document.createElement('div');
   heading.style.cssText = 'margin:0 0 12px;font-size:15px;font-weight:700;color:#444';
   const source = document.createElement('a');
-  source.href = result.articleUrl;
+  source.href = result.sourceUrl || result.articleUrl || '#';
   source.target = '_blank';
   source.rel = 'noopener noreferrer';
-  source.textContent = `HDblog Preview · ${result.code}`;
+  source.textContent = `${result.sourceName || 'HDblog'} Preview · ${result.code}`;
   source.style.cssText = 'color:inherit;text-decoration:none';
   heading.append(source);
   section.append(heading);
 
+  const previewReferer = result.referer || result.articleUrl || result.sourceUrl || '';
   result.imageUrls.forEach((url, index) => {
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -405,6 +413,7 @@ export function renderAgaghhhHdblogPreview(document, result) {
     image.loading = index === 0 ? 'eager' : 'lazy';
     image.decoding = 'async';
     image.setAttribute(PREVIEW_IMAGE_ATTR, url);
+    if (previewReferer) image.setAttribute('data-x1080x-preview-referer', previewReferer);
     image.style.cssText = 'display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain';
     anchor.append(image);
     section.append(anchor);
@@ -422,14 +431,25 @@ export async function installAgaghhhHdblogPreview(
   if (!document || !isThreadPage(locationObject) || document.getElementById(CONTAINER_ID)) return null;
   const code = threadCode(document);
   if (!code) return null;
+  let result = null;
   try {
-    const result = await fetchHdblogPreviewForCode(code, gmRequest, document);
-    return renderAgaghhhHdblogPreview(document, result);
+    result = await fetchHdblogPreviewForCode(code, gmRequest, document);
   } catch (error) {
     console.warn('[x1080x-ex] hdblog preview lookup failed', {
       code,
       error: error?.message || String(error),
     });
-    return null;
   }
+
+  if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
+    try {
+      result = await fetchOfficialPreviewFallbackForCode(code, gmRequest, document);
+    } catch (error) {
+      console.warn('[x1080x-ex] official preview fallback failed', {
+        code,
+        error: error?.message || String(error),
+      });
+    }
+  }
+  return renderAgaghhhHdblogPreview(document, result);
 }

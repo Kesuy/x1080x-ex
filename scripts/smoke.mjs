@@ -10,6 +10,7 @@ const dom = new JSDOM(`
   <div id="postlist"><div id="post_1">
     <div id="postmessage_1">
       <img id="aimg_1" src="/data/attachment/forum/cover.jpg" width="1920" height="1080">
+      <section><a href="https://hdblog.me/123/abcd-123/"><img src="https://img1.pixhost.to/images/preview.jpg" data-x1080x-hdblog-preview-url="https://img1.pixhost.to/images/preview.jpg" data-x1080x-preview-referer="https://hdblog.me/123/abcd-123/"></a></section>
     </div>
     <div class="pattl"><a href="attachment.php?aid=encoded-x15-id">abcd00123.rar</a></div>
   </div></div>
@@ -62,6 +63,7 @@ dom.window.GM_xmlhttpRequest = (details) => {
     url: details.url,
     responseType: details.responseType,
     anonymous: details.anonymous,
+    referer: details.headers?.Referer,
   });
   queueMicrotask(() => details.onload?.({
     status: 200,
@@ -95,15 +97,16 @@ assert.deepEqual(calls, [
   {
     transport: 'gm',
     method: 'GET',
-    url: 'https://agaghhh.cc/data/attachment/forum/cover.jpg',
+    url: 'https://img1.pixhost.to/images/preview.jpg',
     responseType: 'blob',
     anonymous: undefined,
+    referer: 'https://hdblog.me/123/abcd-123/',
     blobSize: 3,
   },
 ]);
 assert.deepEqual(saved, [
   { url: 'blob:smoke-1', name: 'ABCD-123 本文タイトル.rar' },
-  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },
+  { url: 'blob:smoke-2', name: 'ABCD-123 -1.jpg' },
 ]);
 assert.deepEqual(revoked, ['blob:smoke-1', 'blob:smoke-2']);
 assert.equal(dom.window.location.href, 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806');
