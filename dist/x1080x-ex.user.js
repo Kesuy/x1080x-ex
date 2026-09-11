@@ -2179,14 +2179,308 @@ ${failures.join("\n")}`);
     else document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
   }
 
+  // src/agaghhh-enhancement.js
+  var AGAGHHH_ENHANCEMENT_ENABLED_KEY = "x1080x-ex:agaghhh-enhancement-enabled";
+  var DOWNLOAD_BUTTON_ID2 = "x1080x-ex-download";
+  var BATCH_BUTTON_ID2 = "x1080x-ex-open-page";
+  var BATCH_TOOLBAR_ID2 = "x1080x-ex-open-page-toolbar";
+  var AV_WIKI_ORIGIN = "https://av-wiki.net";
+  var AV_WIKI_TIMEOUT = 2e4;
+  var REAL_ACTRESS_BOUND_ATTR = "data-x1080x-real-actress-bound";
+  var REAL_ACTRESS_BYPASS_ATTR = "data-x1080x-real-actress-bypass";
+  var AGAGHHH_SETTINGS_FIELD_ATTR = "data-x1080x-agaghhh-settings-field";
+  var LEGACY_HDBLOG_MENU_TITLE = "\u2699\uFE0F hdblog \u8BBE\u7F6E";
+  var restoreMenuRegistration = null;
+  function normalizeText2(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function isAgaghhhHost(locationObject = globalThis.location) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
+  }
+  function isHdblogHost3(locationObject = globalThis.location) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
+  }
+  function isAgaghhhEnhancementEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(AGAGHHH_ENHANCEMENT_ENABLED_KEY, true) !== false;
+  }
+  function firstPostContent(document2) {
+    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
+    return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
+  }
+  function extractThreadPerformerField(document2) {
+    const content = firstPostContent(document2);
+    if (!content) return { found: false, value: "" };
+    const raw = String(content.innerText || content.textContent || "").replace(/\r/g, "");
+    const lines = raw.split("\n").map((line) => line.trim());
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const match = line.match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
+      if (!match) continue;
+      const inlineValue = normalizeText2(match[1]);
+      if (inlineValue) return { found: true, value: inlineValue };
+      const nextLine = normalizeText2(lines[index + 1] || "");
+      if (nextLine && !/^[^:：]{1,12}\s*[:：]/u.test(nextLine)) {
+        return { found: true, value: nextLine };
+      }
+      return { found: true, value: "" };
+    }
+    const flattened = normalizeText2(raw);
+    const inline = flattened.match(/(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*([^:：]{1,80}?)(?=\s+[\p{L}\p{N}_-]{1,16}\s*[:：]|$)/iu);
+    if (inline) return { found: true, value: normalizeText2(inline[1]) };
+    return { found: false, value: "" };
+  }
+  function nodeActressText(node) {
+    if (!node) return "";
+    const anchors = [...node.querySelectorAll?.("a") || []].map((anchor) => normalizeText2(anchor.textContent)).filter(Boolean).filter((text) => !/^(?:FANZA|ソクミル|DUGA|続きを読む)$/i.test(text));
+    if (anchors.length) return [...new Set(anchors)].join(" ");
+    return normalizeText2(node.textContent).replace(/^AV女優名\s*[:：]?\s*/i, "").replace(/\s+(?:メーカー品番|FANZA品番|SOKMIL品番|DUGA品番|配信開始日)\b.*$/i, "").trim();
+  }
+  function scopeForCode(document2, code) {
+    const upperCode = String(code || "").toUpperCase();
+    const articles = [...document2.querySelectorAll("article")];
+    return articles.find((article) => normalizeText2(article.textContent).toUpperCase().includes(upperCode)) || document2.body || document2.documentElement;
+  }
+  function parseAvWikiActressesFromDocument(document2, code = "") {
+    if (!document2) return "";
+    const scope = scopeForCode(document2, code);
+    if (!scope) return "";
+    for (const row of scope.querySelectorAll("tr")) {
+      const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
+      if (cells.length < 2) continue;
+      if (/^AV女優名\s*[:：]?$/i.test(normalizeText2(cells[0].textContent))) {
+        return nodeActressText(cells[1]);
+      }
+    }
+    for (const term of scope.querySelectorAll("dt")) {
+      if (!/^AV女優名\s*[:：]?$/i.test(normalizeText2(term.textContent))) continue;
+      const value = term.nextElementSibling;
+      const text2 = nodeActressText(value);
+      if (text2) return text2;
+    }
+    const labels = [...scope.querySelectorAll("strong, b, span, div, p, li")].filter((element) => /^AV女優名\s*[:：]?$/i.test(normalizeText2(element.textContent)));
+    for (const label of labels) {
+      const candidates = [
+        label.nextElementSibling,
+        label.parentElement?.nextElementSibling,
+        label.parentElement?.querySelector(":scope > *:not(strong):not(b):not(span)")
+      ];
+      for (const candidate of candidates) {
+        const text2 = nodeActressText(candidate);
+        if (text2) return text2;
+      }
+    }
+    const text = String(scope.innerText || scope.textContent || "").replace(/\r/g, "");
+    const lines = text.split("\n").map((line) => normalizeText2(line)).filter(Boolean);
+    const labelIndex = lines.findIndex((line) => /^AV女優名\s*[:：]?$/i.test(line));
+    if (labelIndex >= 0) return normalizeText2(lines[labelIndex + 1] || "");
+    const inline = lines.find((line) => /^AV女優名\s*[:：]/i.test(line));
+    return inline ? normalizeText2(inline.replace(/^AV女優名\s*[:：]\s*/i, "")) : "";
+  }
+  function findAvWikiResultUrl(document2, code) {
+    if (!document2 || !code) return "";
+    const targetCode = String(code).toUpperCase();
+    const targetPath = `/${String(code).toLowerCase()}/`;
+    const anchors = [...document2.querySelectorAll("a[href]")];
+    for (const anchor of anchors) {
+      try {
+        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+        if (url.origin !== AV_WIKI_ORIGIN) continue;
+        if (url.pathname.toLowerCase() === targetPath) return url.href;
+      } catch {
+      }
+    }
+    for (const anchor of anchors) {
+      const article = anchor.closest("article");
+      const text = normalizeText2(article?.textContent || anchor.textContent).toUpperCase();
+      if (!text.includes(targetCode)) continue;
+      try {
+        const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+        if (url.origin === AV_WIKI_ORIGIN && url.pathname !== "/") return url.href;
+      } catch {
+      }
+    }
+    return "";
+  }
+  function requestHtml(url, gmRequest = globalThis.GM_xmlhttpRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest !== "function") {
+        reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
+        return;
+      }
+      gmRequest({
+        method: "GET",
+        url,
+        responseType: "text",
+        timeout: AV_WIKI_TIMEOUT,
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          Referer: `${AV_WIKI_ORIGIN}/`
+        },
+        onload: (response) => {
+          if (response.status < 200 || response.status >= 300) {
+            reject(new Error(`av-wiki \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
+            return;
+          }
+          resolve(String(response.responseText || response.response || ""));
+        },
+        onerror: () => reject(new Error("av-wiki \u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25\u3002")),
+        ontimeout: () => reject(new Error(`av-wiki \u8BF7\u6C42\u8D85\u65F6\uFF08${AV_WIKI_TIMEOUT / 1e3} \u79D2\uFF09\u3002`))
+      });
+    });
+  }
+  function parseHtml(html, document2 = globalThis.document) {
+    const Parser = document2?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (typeof Parser !== "function") return null;
+    return new Parser().parseFromString(String(html || ""), "text/html");
+  }
+  async function fetchRealActressFromAvWiki(code, gmRequest = globalThis.GM_xmlhttpRequest, document2 = globalThis.document) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return "";
+    const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
+    const searchDocument = parseHtml(await requestHtml(searchUrl, gmRequest), document2);
+    if (!searchDocument) return "";
+    const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
+    if (fromSearch) return fromSearch;
+    const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
+    const detailDocument = parseHtml(await requestHtml(detailUrl, gmRequest), document2);
+    return parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
+  }
+  function appendActressToTitleText(titleText, actress) {
+    const cleanTitle = normalizeText2(titleText);
+    const cleanActress = normalizeText2(actress);
+    if (!cleanActress || cleanTitle.includes(cleanActress)) return cleanTitle;
+    return `${cleanTitle} ${cleanActress}`;
+  }
+  function threadTitleElement(document2) {
+    return document2.querySelector("#thread_subject") || document2.querySelector("h1.ts, .vwthd h1, h1");
+  }
+  function threadCode(document2) {
+    return parseThreadTitle(threadTitleElement(document2)?.textContent || document2.title).code;
+  }
+  function bindRealActressDownload(document2, gmRequest) {
+    const button = document2.getElementById(DOWNLOAD_BUTTON_ID2);
+    if (!button || button.getAttribute(REAL_ACTRESS_BOUND_ATTR) === "1") return;
+    button.setAttribute(REAL_ACTRESS_BOUND_ATTR, "1");
+    button.addEventListener("click", async (event) => {
+      if (button.getAttribute(REAL_ACTRESS_BYPASS_ATTR) === "1") {
+        button.removeAttribute(REAL_ACTRESS_BYPASS_ATTR);
+        return;
+      }
+      const performer = extractThreadPerformerField(document2);
+      if (!performer.found || performer.value) return;
+      const code = threadCode(document2);
+      if (!code) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const idleText = button.textContent;
+      button.disabled = true;
+      button.textContent = "\u67E5\u6F14\u5458\u2026";
+      let actress = "";
+      try {
+        actress = await fetchRealActressFromAvWiki(code, gmRequest, document2);
+      } catch (error) {
+        console.warn("[x1080x-ex] av-wiki actress lookup failed", {
+          code,
+          error: error?.message || String(error)
+        });
+      }
+      button.disabled = false;
+      button.textContent = idleText;
+      const title = threadTitleElement(document2);
+      const originalTitle = title?.textContent || "";
+      if (actress && title) {
+        title.textContent = appendActressToTitleText(originalTitle, actress);
+        console.info("[x1080x-ex] real actress resolved", { code, actress });
+      }
+      button.setAttribute(REAL_ACTRESS_BYPASS_ATTR, "1");
+      button.click();
+      if (title && actress) title.textContent = originalTitle;
+    }, true);
+  }
+  function disableAgaghhhEnhancements(document2) {
+    document2.getElementById(DOWNLOAD_BUTTON_ID2)?.remove();
+    document2.getElementById(BATCH_BUTTON_ID2)?.remove();
+    document2.getElementById(BATCH_TOOLBAR_ID2)?.remove();
+  }
+  function injectAgaghhhSettings(document2, overlay) {
+    const panel = overlay?.querySelector("form");
+    if (!panel) return overlay;
+    const heading = panel.querySelector("h2");
+    if (heading) heading.textContent = "x1080x \u8BBE\u7F6E";
+    if (panel.querySelector(`[${AGAGHHH_SETTINGS_FIELD_ATTR}]`)) return overlay;
+    const section = document2.createElement("div");
+    section.setAttribute(AGAGHHH_SETTINGS_FIELD_ATTR, "1");
+    section.style.cssText = "margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa";
+    section.innerHTML = `
+    <div style="font-weight:700;margin-bottom:10px">agaghhh.cc</div>
+    <label style="display:flex;align-items:center;gap:9px">
+      <input data-setting="agaghhh-enabled" type="checkbox">
+      \u542F\u7528 agaghhh.cc \u589E\u5F3A\u529F\u80FD
+    </label>
+    <small style="display:block;margin-top:9px;color:#666">\u5305\u62EC\u5E16\u5B50\u4E0B\u8F7D\u3001\u5217\u8868\u9875\u540E\u53F0\u987A\u5E8F\u6253\u5F00\uFF0C\u4EE5\u53CA\u51FA\u6F14\u8005\u4E3A\u7A7A\u65F6\u4ECE av-wiki \u83B7\u53D6\u771F\u5B9E\u6F14\u5458\u5E76\u7528\u4E8E\u9644\u4EF6\u547D\u540D\u3002</small>`;
+    const checkbox = section.querySelector('[data-setting="agaghhh-enabled"]');
+    checkbox.checked = isAgaghhhEnhancementEnabled();
+    panel.insertBefore(section, heading?.nextElementSibling || panel.firstElementChild);
+    panel.addEventListener("submit", () => {
+      if (typeof GM_setValue === "function") {
+        GM_setValue(AGAGHHH_ENHANCEMENT_ENABLED_KEY, checkbox.checked);
+      }
+    }, true);
+    return overlay;
+  }
+  function openX1080xSettingsPanel(document2 = globalThis.document) {
+    const overlay = openHdblogSettingsPanel(document2);
+    return injectAgaghhhSettings(document2, overlay);
+  }
+  function trySuppressLegacyHdblogMenu() {
+    if (restoreMenuRegistration || typeof globalThis.GM_registerMenuCommand !== "function") return;
+    const original = globalThis.GM_registerMenuCommand;
+    const wrapped = function wrappedRegisterMenuCommand(title, callback, ...rest) {
+      if (title === LEGACY_HDBLOG_MENU_TITLE) return void 0;
+      return original.call(this, title, callback, ...rest);
+    };
+    try {
+      globalThis.GM_registerMenuCommand = wrapped;
+      restoreMenuRegistration = () => {
+        try {
+          globalThis.GM_registerMenuCommand = original;
+        } catch {
+        }
+        restoreMenuRegistration = null;
+      };
+    } catch {
+      restoreMenuRegistration = null;
+    }
+  }
+  function finishUnifiedSettingsMenuInstall() {
+    restoreMenuRegistration?.();
+  }
+  function installUnifiedSettingsMenu(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2 || !isAgaghhhHost(locationObject) && !isHdblogHost3(locationObject)) return;
+    if (typeof GM_registerMenuCommand !== "function") return;
+    trySuppressLegacyHdblogMenu();
+    GM_registerMenuCommand("\u2699\uFE0F x1080x \u8BBE\u7F6E", () => openX1080xSettingsPanel(document2));
+  }
+  function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isAgaghhhHost(locationObject)) return;
+    if (!isAgaghhhEnhancementEnabled()) {
+      disableAgaghhhEnhancements(document2);
+      return;
+    }
+    bindRealActressDownload(document2, gmRequest);
+  }
+
   // src/hdblog-preview.js
   var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
   var PREVIEW_BOUNDARY_PATTERN2 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
   var PREVIEW_VIEWPORT_WIDTH = "min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))";
-  function normalizeText2(value) {
+  function normalizeText3(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function isHdblogHost3(locationObject) {
+  function isHdblogHost4(locationObject) {
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
   }
@@ -2303,7 +2597,7 @@ ${failures.join("\n")}`);
     return nodes;
   }
   function findPreviewMarker(root) {
-    return textNodesUnder2(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue))) || null;
+    return textNodesUnder2(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue))) || null;
   }
   function isAfter2(reference, node) {
     return Boolean(reference.compareDocumentPosition(node) & 4);
@@ -2311,7 +2605,7 @@ ${failures.join("\n")}`);
   function findBoundary(root, marker) {
     return textNodesUnder2(root).find((node) => {
       if (!isAfter2(marker, node)) return false;
-      const text = normalizeText2(node.nodeValue);
+      const text = normalizeText3(node.nodeValue);
       return text && PREVIEW_BOUNDARY_PATTERN2.test(text);
     }) || null;
   }
@@ -2406,7 +2700,7 @@ ${failures.join("\n")}`);
     return true;
   }
   function previewRange2(document2, locationObject) {
-    if (!document2 || !isHdblogHost3(locationObject)) return null;
+    if (!document2 || !isHdblogHost4(locationObject)) return null;
     const content = findArticleContent(document2);
     if (!content) return null;
     const marker = findPreviewMarker(content);
@@ -2426,7 +2720,7 @@ ${failures.join("\n")}`);
       let image = anchor.querySelector("img");
       if (!image) {
         image = document2.createElement("img");
-        image.alt = normalizeText2(anchor.textContent) || "Preview";
+        image.alt = normalizeText3(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
       if (styleExpandedImage(image, wordpressOriginalUrl(document2, fullUrl) || fullUrl)) {
@@ -2451,7 +2745,7 @@ ${failures.join("\n")}`);
       if (!fullUrl) return false;
       if (!image) {
         image = document2.createElement("img");
-        image.alt = normalizeText2(anchor.textContent) || "Preview";
+        image.alt = normalizeText3(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
       return styleExpandedImage(image, fullUrl);
@@ -2459,7 +2753,7 @@ ${failures.join("\n")}`);
     return results.filter(Boolean).length;
   }
   function installHdblogPreviewImages(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isHdblogHost3(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
+    if (!document2 || !isHdblogHost4(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
     const run = () => {
       if (!isHdblogPreviewExpansionEnabled()) return;
       expandHdblogPreviewImages2(document2, locationObject);
@@ -2476,7 +2770,7 @@ ${failures.join("\n")}`);
   var REQUEST_TIMEOUT4 = 3e4;
   var PREVIEW_BOUNDARY_PATTERN3 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
   var resolutionCache2 = /* @__PURE__ */ new Map();
-  function normalizeText3(value) {
+  function normalizeText4(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
   function isHdblogHostname(hostname) {
@@ -2622,9 +2916,9 @@ ${failures.join("\n")}`);
     const content = findArticleContent2(document2);
     if (!content) return null;
     const nodes = textNodesUnder3(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue)));
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText4(node.nodeValue)));
     if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter3(marker, node) && PREVIEW_BOUNDARY_PATTERN3.test(normalizeText3(node.nodeValue))) || null;
+    const boundary = nodes.find((node) => isAfter3(marker, node) && PREVIEW_BOUNDARY_PATTERN3.test(normalizeText4(node.nodeValue))) || null;
     return { content, marker, boundary };
   }
   function inPreviewRange3(range, node) {
@@ -2759,9 +3053,12 @@ ${failures.join("\n")}`);
   }
 
   // src/index.js
+  installUnifiedSettingsMenu();
+  installAgaghhhEnhancement();
   installHdblogImageHostSettings();
   installHdblogReferResolver();
   installHdblogArticleEnhancement();
+  finishUnifiedSettingsMenuInstall();
   installHdblogPreviewImages();
   installHdblogSearchEnhancement();
 })();
