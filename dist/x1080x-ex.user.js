@@ -317,7 +317,7 @@
       jobs.push({
         kind: "image",
         url: preferredUrl,
-        name: resources.imageFilename
+        name: resources.hdblogPreviews.length ? `${sanitizeFilename(resources.title.code || "thread-image")} A.jpg` : resources.imageFilename
       });
     }
     if (resources.hdblogPreviews.length) {
@@ -326,7 +326,7 @@
         jobs.push({
           kind: "image",
           url: image.url,
-          name: `${safeCode} -${index + 1}.jpg`
+          name: resources.title.code.startsWith("FC2-") ? `${safeCode} -${index + 1}.jpg` : `${safeCode} B${index + 1}.jpg`
         });
       });
     }
