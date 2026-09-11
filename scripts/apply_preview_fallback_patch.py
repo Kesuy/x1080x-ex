@@ -1,0 +1,186 @@
+from pathlib import Path
+import re
+
+
+def replace_literal(path, old, new, label):
+    p = Path(path)
+    text = p.read_text(encoding='utf-8')
+    if old not in text:
+        raise SystemExit(f'{label}: expected text not found in {path}')
+    p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+
+def replace_regex(path, pattern, new, label):
+    p = Path(path)
+    text = p.read_text(encoding='utf-8')
+    updated, count = re.subn(pattern, lambda _match: new, text, count=1, flags=re.S)
+    if count != 1:
+        raise SystemExit(f'{label}: expected one match in {path}, got {count}')
+    p.write_text(updated, encoding='utf-8')
+
+
+preview = 'src/agaghhh-hdblog-preview.js'
+replace_literal(
+    preview,
+    "} from './pixhost.js';\n\nconst HDBLOG_ORIGIN",
+    "} from './pixhost.js';\nimport {\n  fetchOfficialPreviewFallbackForCode,\n  installOfficialPreviewFallbackSetting,\n  isOfficialPreviewFallbackEnabled,\n} from './agaghhh-preview-official.js';\n\ninstallOfficialPreviewFallbackSetting();\n\nconst HDBLOG_ORIGIN",
+    'official preview import',
+)
+replace_literal(
+    preview,
+    'source.href = result.articleUrl;',
+    "source.href = result.sourceUrl || result.articleUrl || '#';",
+    'source link',
+)
+replace_literal(
+    preview,
+    'source.textContent = `HDblog Preview · ${result.code}`;',
+    "source.textContent = `${result.sourceName || 'HDblog'} Preview · ${result.code}`;",
+    'source label',
+)
+replace_literal(
+    preview,
+    '  result.imageUrls.forEach((url, index) => {',
+    "  const previewReferer = result.referer || result.articleUrl || result.sourceUrl || '';\n  result.imageUrls.forEach((url, index) => {",
+    'preview referer variable',
+)
+replace_literal(
+    preview,
+    '    image.setAttribute(PREVIEW_IMAGE_ATTR, url);',
+    "    image.setAttribute(PREVIEW_IMAGE_ATTR, url);\n    if (previewReferer) image.setAttribute('data-x1080x-preview-referer', previewReferer);",
+    'preview referer attribute',
+)
+replace_regex(
+    preview,
+    r"  try \{\n    const result = await fetchHdblogPreviewForCode\(code, gmRequest, document\);\n    return renderAgaghhhHdblogPreview\(document, result\);\n  \} catch \(error\) \{\n    console\.warn\('\[x1080x-ex\] hdblog preview lookup failed', \{\n      code,\n      error: error\?\.message \|\| String\(error\),\n    \}\);\n    return null;\n  \}\n\}",
+    """  let result = null;
+  try {
+    result = await fetchHdblogPreviewForCode(code, gmRequest, document);
+  } catch (error) {
+    console.warn('[x1080x-ex] hdblog preview lookup failed', {
+      code,
+      error: error?.message || String(error),
+    });
+  }
+
+  if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
+    try {
+      result = await fetchOfficialPreviewFallbackForCode(code, gmRequest, document);
+    } catch (error) {
+      console.warn('[x1080x-ex] official preview fallback failed', {
+        code,
+        error: error?.message || String(error),
+      });
+    }
+  }
+  return renderAgaghhhHdblogPreview(document, result);
+}""",
+    'fallback flow',
+)
+
+userscript = 'src/userscript.js'
+replace_literal(
+    userscript,
+    'const REQUEST_TIMEOUT = 60000;\nconst DEFAULT_OPEN_TIMING',
+    "const REQUEST_TIMEOUT = 60000;\nconst PREVIEW_IMAGE_URL_ATTR = 'data-x1080x-hdblog-preview-url';\nconst PREVIEW_REFERER_ATTR = 'data-x1080x-preview-referer';\nconst DEFAULT_OPEN_TIMING",
+    'download attributes',
+)
+replace_regex(
+    userscript,
+    r"function requestBlobWithGmXhr\(job\) \{.*?\n\}\n\nfunction requestBlob\(job\) \{",
+    """function previewRefererForJob(job) {
+  if (job.kind !== 'image') return '';
+  let target = '';
+  try {
+    target = new URL(job.url, location.href).href;
+  } catch {
+    return '';
+  }
+  const image = [...document.querySelectorAll(`img[${PREVIEW_IMAGE_URL_ATTR}]`)]
+    .find((candidate) => {
+      try {
+        return new URL(candidate.getAttribute(PREVIEW_IMAGE_URL_ATTR), location.href).href === target;
+      } catch {
+        return false;
+      }
+    });
+  if (!image) return '';
+  return image.getAttribute(PREVIEW_REFERER_ATTR)
+    || image.closest('section')?.querySelector('a[href]')?.href
+    || '';
+}
+
+function requestBlobWithGmXhrOnce(job, referer) {
+  return new Promise((resolve, reject) => {
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: job.url,
+      responseType: 'blob',
+      timeout: REQUEST_TIMEOUT,
+      ...(referer ? { headers: { Referer: referer } } : {}),
+      onload: (response) => {
+        validateResponse(response).then(resolve, reject);
+      },
+      onerror: (error) => {
+        const details = safeErrorDetails(error);
+        reject(new Error(
+          `网络请求失败：error=${details.error || 'unknown_error'}；`
+          + `details=${details.details || details.message || '无详细信息'}`
+        ));
+      },
+      ontimeout: () => reject(new Error(`网络请求超时（${REQUEST_TIMEOUT / 1000} 秒）`)),
+    });
+  });
+}
+
+async function requestBlobWithGmXhr(job) {
+  const sourceReferer = previewRefererForJob(job);
+  const referers = sourceReferer
+    ? [sourceReferer, '', location.href]
+    : [location.href, ''];
+  let lastError = null;
+  for (const referer of [...new Set(referers)]) {
+    try {
+      return await requestBlobWithGmXhrOnce(job, referer);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  console.error('[x1080x-ex] GM_xmlhttpRequest failed after referer retries', safeErrorDetails(lastError));
+  throw lastError || new Error('网络请求失败');
+}
+
+function requestBlob(job) {""",
+    'preview image downloader',
+)
+
+smoke = Path('scripts/smoke.mjs')
+text = smoke.read_text(encoding='utf-8')
+cover = '      <img id="aimg_1" src="/data/attachment/forum/cover.jpg" width="1920" height="1080">'
+injected = cover + '\n      <section><a href="https://hdblog.me/123/abcd-123/"><img src="https://img1.pixhost.to/images/preview.jpg" data-x1080x-hdblog-preview-url="https://img1.pixhost.to/images/preview.jpg" data-x1080x-preview-referer="https://hdblog.me/123/abcd-123/"></a></section>'
+if cover not in text:
+    raise SystemExit('smoke preview fixture: cover not found')
+text = text.replace(cover, injected, 1)
+capture = "    anonymous: details.anonymous,\n  });"
+if capture not in text:
+    raise SystemExit('smoke request capture block not found')
+text = text.replace(capture, "    anonymous: details.anonymous,\n    referer: details.headers?.Referer,\n  });", 1)
+old_expected = """    url: 'https://agaghhh.cc/data/attachment/forum/cover.jpg',
+    responseType: 'blob',
+    anonymous: undefined,
+    blobSize: 3,"""
+new_expected = """    url: 'https://img1.pixhost.to/images/preview.jpg',
+    responseType: 'blob',
+    anonymous: undefined,
+    referer: 'https://hdblog.me/123/abcd-123/',
+    blobSize: 3,"""
+if old_expected not in text:
+    raise SystemExit('smoke expected image request not found')
+text = text.replace(old_expected, new_expected, 1)
+old_saved = "  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },"
+if old_saved not in text:
+    raise SystemExit('smoke expected saved image not found')
+text = text.replace(old_saved, "  { url: 'blob:smoke-2', name: 'ABCD-123 -1.jpg' },", 1)
+smoke.write_text(text, encoding='utf-8')
+
+print('preview fallback patch applied')
