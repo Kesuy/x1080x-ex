@@ -96,7 +96,7 @@ test('appends the actress once without disturbing the existing title', () => {
   assert.equal(appendActressToTitleText(expected, '桜野桃'), expected);
 });
 
-test('x1080x settings panel is independent from hdblog and exposes three granular switches', () => {
+test('x1080x settings panel is independent from hdblog and exposes four granular switches', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   withGmValues(new Map(), () => {
     const overlay = openX1080xSettingsPanel(dom.window.document);
@@ -104,9 +104,9 @@ test('x1080x settings panel is independent from hdblog and exposes three granula
     assert.equal(overlay.querySelector('h2')?.textContent, 'x1080x 设置');
     assert.ok(overlay.querySelector('[data-setting="batch-open"]'));
     assert.ok(overlay.querySelector('[data-setting="download"]'));
+    assert.ok(overlay.querySelector('[data-setting="hdblog-preview"]'));
     assert.ok(overlay.querySelector('[data-setting="real-actress"]'));
     assert.equal(overlay.textContent.includes('文章主内容区宽度'), false);
-    assert.equal(overlay.textContent.includes('Preview 大图'), false);
   });
 });
 
