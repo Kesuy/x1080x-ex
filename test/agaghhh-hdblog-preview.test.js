@@ -107,7 +107,7 @@ test('fetches hdblog Preview images including refer -> Pixhost resolution', asyn
   ]);
 });
 
-test('download jobs prefer injected hdblog previews and use code -N.jpg names', () => {
+test('download jobs keep the agaghhh cover and append injected Preview images', () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
     <h1 id="thread_subject">SVMGM-050 Sample</h1>
     <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
@@ -130,12 +130,35 @@ test('download jobs prefer injected hdblog previews and use code -N.jpg names', 
   const images = jobs.filter((job) => job.kind === 'image');
   assert.equal(attachment?.name, 'SVMGM-050 Sample.rar');
   assert.deepEqual(images.map((job) => job.name), [
+    'SVMGM-050.jpg',
     'SVMGM-050 -1.jpg',
     'SVMGM-050 -2.jpg',
   ]);
   assert.deepEqual(images.map((job) => job.url), [
+    'https://agaghhh.cc/original.jpg',
     'https://img.example.com/p1.jpg',
     'https://img.example.com/p2.jpg',
+  ]);
+});
+
+test('injected Preview images never replace the original-cover candidate', () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
+    <h1 id="thread_subject">SVMGM-050 Sample</h1>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
+      <img src="https://agaghhh.cc/original.jpg" width="800" height="1200">
+      <img src="https://img.example.com/huge-preview.jpg" width="4000" height="3000"
+        data-x1080x-hdblog-preview-url="https://img.example.com/huge-preview.jpg">
+    </div></div></div>
+  </body></html>`, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1054823' });
+
+  const images = buildDownloadJobs(dom.window.document).filter((job) => job.kind === 'image');
+  assert.deepEqual(images.map((job) => job.name), [
+    'SVMGM-050.jpg',
+    'SVMGM-050 -1.jpg',
+  ]);
+  assert.deepEqual(images.map((job) => job.url), [
+    'https://agaghhh.cc/original.jpg',
+    'https://img.example.com/huge-preview.jpg',
   ]);
 });
 
