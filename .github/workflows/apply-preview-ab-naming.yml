@@ -23,76 +23,56 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(path, old, new):
-              p = Path(path)
-              text = p.read_text(encoding='utf-8')
+          def replace_once(text, old, new, label):
               if old not in text:
-                  raise SystemExit(f'expected block not found in {path}')
-              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+                  raise SystemExit(f'expected token not found: {label}')
+              return text.replace(old, new, 1)
 
-          core = 'src/core.js'
-          replace_once(core,
-          """  } else if (resources.imageUrl) {
-            const preferredUrl = resources.imageCacheUrl || resources.imageUrl;
-            jobs.push({
-              kind: 'image',
-              url: preferredUrl,
-              name: resources.imageFilename,
-            });
-          }
-
-          if (resources.hdblogPreviews.length) {
-            const safeCode = sanitizeFilename(resources.title.code || 'preview');
-            resources.hdblogPreviews.forEach((image, index) => {
-              jobs.push({
-                kind: 'image',
-                url: image.url,
-                name: `${safeCode} -${index + 1}.jpg`,
-              });
-            });
-          }""",
-          """  } else if (resources.imageUrl) {
-            const preferredUrl = resources.imageCacheUrl || resources.imageUrl;
-            const safeCode = sanitizeFilename(resources.title.code || 'thread-image');
-            jobs.push({
-              kind: 'image',
-              url: preferredUrl,
-              name: resources.hdblogPreviews.length ? `${safeCode} A.jpg` : resources.imageFilename,
-            });
-          }
-
-          if (resources.hdblogPreviews.length) {
-            const safeCode = sanitizeFilename(resources.title.code || 'preview');
-            const isFc2 = resources.title.code.startsWith('FC2-');
-            resources.hdblogPreviews.forEach((image, index) => {
-              jobs.push({
-                kind: 'image',
-                url: image.url,
-                name: isFc2 ? `${safeCode} -${index + 1}.jpg` : `${safeCode} B${index + 1}.jpg`,
-              });
-            });
-          }""")
-
-          test_file = 'test/agaghhh-hdblog-preview.test.js'
-          p = Path(test_file)
+          p = Path('src/core.js')
           text = p.read_text(encoding='utf-8')
-          text = text.replace("test('download jobs keep the agaghhh cover and append injected Preview images', () => {",
-                              "test('download jobs name the agaghhh cover A and injected Preview images B1/B2', () => {", 1)
-          text = text.replace("    'SVMGM-050.jpg',\n    'SVMGM-050 -1.jpg',\n    'SVMGM-050 -2.jpg',",
-                              "    'SVMGM-050 A.jpg',\n    'SVMGM-050 B1.jpg',\n    'SVMGM-050 B2.jpg',", 1)
-          text = text.replace("    'SVMGM-050.jpg',\n    'SVMGM-050 -1.jpg',",
-                              "    'SVMGM-050 A.jpg',\n    'SVMGM-050 B1.jpg',", 1)
+          text = replace_once(
+              text,
+              "name: resources.imageFilename,",
+              "name: resources.hdblogPreviews.length ? `${sanitizeFilename(resources.title.code || 'thread-image')} A.jpg` : resources.imageFilename,",
+              'cover filename',
+          )
+          text = replace_once(
+              text,
+              "name: `${safeCode} -${index + 1}.jpg`,",
+              "name: resources.title.code.startsWith('FC2-') ? `${safeCode} -${index + 1}.jpg` : `${safeCode} B${index + 1}.jpg`,",
+              'preview filename',
+          )
+          p.write_text(text, encoding='utf-8')
+
+          p = Path('test/agaghhh-hdblog-preview.test.js')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace(
+              "test('download jobs keep the agaghhh cover and append injected Preview images', () => {",
+              "test('download jobs name the agaghhh cover A and injected Preview images B1/B2', () => {",
+              1,
+          )
+          text = text.replace(
+              "    'SVMGM-050.jpg',\n    'SVMGM-050 -1.jpg',\n    'SVMGM-050 -2.jpg',",
+              "    'SVMGM-050 A.jpg',\n    'SVMGM-050 B1.jpg',\n    'SVMGM-050 B2.jpg',",
+              1,
+          )
+          text = text.replace(
+              "    'SVMGM-050.jpg',\n    'SVMGM-050 -1.jpg',",
+              "    'SVMGM-050 A.jpg',\n    'SVMGM-050 B1.jpg',",
+              1,
+          )
           if "SVMGM-050 A.jpg" not in text or "SVMGM-050 B2.jpg" not in text:
               raise SystemExit('test naming patch did not apply')
           p.write_text(text, encoding='utf-8')
 
-          smoke = 'scripts/smoke.mjs'
-          p = Path(smoke)
+          p = Path('scripts/smoke.mjs')
           text = p.read_text(encoding='utf-8')
-          text = text.replace("  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },\n  { url: 'blob:smoke-3', name: 'ABCD-123 -1.jpg' },",
-                              "  { url: 'blob:smoke-2', name: 'ABCD-123 A.jpg' },\n  { url: 'blob:smoke-3', name: 'ABCD-123 B1.jpg' },", 1)
-          if "ABCD-123 A.jpg" not in text or "ABCD-123 B1.jpg" not in text:
-              raise SystemExit('smoke naming patch did not apply')
+          text = replace_once(
+              text,
+              "  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },\n  { url: 'blob:smoke-3', name: 'ABCD-123 -1.jpg' },",
+              "  { url: 'blob:smoke-2', name: 'ABCD-123 A.jpg' },\n  { url: 'blob:smoke-3', name: 'ABCD-123 B1.jpg' },",
+              'smoke filenames',
+          )
           p.write_text(text, encoding='utf-8')
           PY
       - name: Commit changes
