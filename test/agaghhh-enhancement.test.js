@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
+  AGAGHHH_BATCH_OPEN_ENABLED_KEY,
+  AGAGHHH_DOWNLOAD_ENABLED_KEY,
+  AGAGHHH_REAL_ACTRESS_ENABLED_KEY,
   appendActressToTitleText,
   extractThreadPerformerField,
   fetchRealActressFromAvWiki,
   findAvWikiResultUrl,
+  installAgaghhhEnhancement,
+  openX1080xSettingsPanel,
   parseAvWikiActressesFromDocument,
 } from '../src/agaghhh-enhancement.js';
 
@@ -17,6 +22,17 @@ function threadDom(performer = '') {
       </div>
     </div>
   </body></html>`, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1062893' });
+}
+
+function withGmValues(values, callback) {
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  try {
+    return callback();
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+  }
 }
 
 test('detects an empty 出演者 field and leaves a populated field alone', () => {
@@ -78,4 +94,62 @@ test('appends the actress once without disturbing the existing title', () => {
   const expected = `${title} 桜野桃`;
   assert.equal(appendActressToTitleText(title, '桜野桃'), expected);
   assert.equal(appendActressToTitleText(expected, '桜野桃'), expected);
+});
+
+test('x1080x settings panel is independent from hdblog and exposes three granular switches', () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
+  withGmValues(new Map(), () => {
+    const overlay = openX1080xSettingsPanel(dom.window.document);
+    assert.ok(overlay);
+    assert.equal(overlay.querySelector('h2')?.textContent, 'x1080x 设置');
+    assert.ok(overlay.querySelector('[data-setting="batch-open"]'));
+    assert.ok(overlay.querySelector('[data-setting="download"]'));
+    assert.ok(overlay.querySelector('[data-setting="real-actress"]'));
+    assert.equal(overlay.textContent.includes('文章主内容区宽度'), false);
+    assert.equal(overlay.textContent.includes('Preview 大图'), false);
+  });
+});
+
+test('batch-open, download and real-actress switches do not disable each other', () => {
+  const dom = new JSDOM(`<!doctype html><body>
+    <button id="x1080x-ex-download">download</button>
+    <button id="x1080x-ex-open-page">batch</button>
+    <div id="x1080x-ex-open-page-toolbar"></div>
+  </body>`, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=1' });
+
+  const values = new Map([
+    [AGAGHHH_BATCH_OPEN_ENABLED_KEY, false],
+    [AGAGHHH_DOWNLOAD_ENABLED_KEY, true],
+    [AGAGHHH_REAL_ACTRESS_ENABLED_KEY, false],
+  ]);
+  withGmValues(values, () => {
+    installAgaghhhEnhancement(dom.window.document, dom.window.location, () => {});
+  });
+
+  assert.equal(dom.window.document.getElementById('x1080x-ex-open-page'), null);
+  assert.equal(dom.window.document.getElementById('x1080x-ex-open-page-toolbar'), null);
+  assert.ok(dom.window.document.getElementById('x1080x-ex-download'));
+  assert.equal(
+    dom.window.document.getElementById('x1080x-ex-download')?.hasAttribute('data-x1080x-real-actress-bound'),
+    false
+  );
+});
+
+test('turning off download enhancement does not remove the batch-open feature', () => {
+  const dom = new JSDOM(`<!doctype html><body>
+    <button id="x1080x-ex-download">download</button>
+    <button id="x1080x-ex-open-page">batch</button>
+  </body>`, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1062893' });
+
+  const values = new Map([
+    [AGAGHHH_BATCH_OPEN_ENABLED_KEY, true],
+    [AGAGHHH_DOWNLOAD_ENABLED_KEY, false],
+    [AGAGHHH_REAL_ACTRESS_ENABLED_KEY, true],
+  ]);
+  withGmValues(values, () => {
+    installAgaghhhEnhancement(dom.window.document, dom.window.location, () => {});
+  });
+
+  assert.equal(dom.window.document.getElementById('x1080x-ex-download'), null);
+  assert.ok(dom.window.document.getElementById('x1080x-ex-open-page'));
 });
