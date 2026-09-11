@@ -1,8 +1,10 @@
 import { parseThreadTitle } from './core.js';
+import { installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
 
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
 export const AGAGHHH_REAL_ACTRESS_ENABLED_KEY = 'x1080x-ex:agaghhh-real-actress-enabled';
+export const AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = 'x1080x-ex:agaghhh-hdblog-preview-enabled';
 const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-enabled';
 
 const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
@@ -45,6 +47,10 @@ export function isAgaghhhDownloadEnabled() {
 
 export function isAgaghhhRealActressEnabled() {
   return readBooleanSetting(AGAGHHH_REAL_ACTRESS_ENABLED_KEY);
+}
+
+export function isAgaghhhHdblogPreviewEnabled() {
+  return readBooleanSetting(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY);
 }
 
 function firstPostContent(document) {
@@ -323,6 +329,10 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         <input data-setting="download" type="checkbox" style="margin-top:3px">
         <span><strong>下载增强</strong><small style="display:block;margin-top:2px;color:#666">在帖子页显示下载按钮，并使用现有附件、图片、种子下载与自动命名逻辑。</small></span>
       </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
+        <span><strong>显示 hdblog 大预览图</strong><small style="display:block;margin-top:2px;color:#666">按帖子番号搜索 hdblog，沿用 hdblog 的“搜索结果屏蔽关键词”，并把匹配文章的 Preview 大图显示到主楼。</small></span>
+      </label>
       <label style="display:flex;align-items:flex-start;gap:9px">
         <input data-setting="real-actress" type="checkbox" style="margin-top:3px">
         <span><strong>查真实演员信息</strong><small style="display:block;margin-top:2px;color:#666">仅当帖子“出演者”为空且启用了下载增强时，通过 av-wiki 查询演员并追加到附件文件名。</small></span>
@@ -335,9 +345,11 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
 
   const batchInput = panel.querySelector('[data-setting="batch-open"]');
   const downloadInput = panel.querySelector('[data-setting="download"]');
+  const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
   const actressInput = panel.querySelector('[data-setting="real-actress"]');
   batchInput.checked = isAgaghhhBatchOpenEnabled();
   downloadInput.checked = isAgaghhhDownloadEnabled();
+  previewInput.checked = isAgaghhhHdblogPreviewEnabled();
   actressInput.checked = isAgaghhhRealActressEnabled();
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeX1080xSettingsPanel(document));
@@ -349,6 +361,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     if (typeof GM_setValue === 'function') {
       GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+      GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
       GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
     }
     closeX1080xSettingsPanel(document);
@@ -380,6 +393,10 @@ export function installAgaghhhEnhancement(
   if (!isAgaghhhBatchOpenEnabled()) {
     document.getElementById(BATCH_BUTTON_ID)?.remove();
     document.getElementById(BATCH_TOOLBAR_ID)?.remove();
+  }
+
+  if (isAgaghhhHdblogPreviewEnabled()) {
+    void installAgaghhhHdblogPreview(document, locationObject, gmRequest);
   }
 
   if (!isAgaghhhDownloadEnabled()) {
