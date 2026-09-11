@@ -79,11 +79,11 @@ dom.window.eval(artifact);
 const button = dom.window.document.querySelector('#x1080x-ex-download');
 assert.ok(button, '构建产物应在 Discuz 帖子页插入下载按钮');
 button.click();
-for (let attempt = 0; attempt < 100 && (saved.length < 2 || revoked.length < 2); attempt += 1) {
+for (let attempt = 0; attempt < 100 && (saved.length < 3 || revoked.length < 3); attempt += 1) {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
-assert.equal(saved.length, 2, 'both Blob downloads should be saved');
-assert.equal(revoked.length, 2, 'both Object URLs should be revoked');
+assert.equal(saved.length, 3, 'attachment, original cover and Preview should all be saved');
+assert.equal(revoked.length, 3, 'all Object URLs should be revoked');
 
 assert.deepEqual(calls, [
   {
@@ -97,6 +97,15 @@ assert.deepEqual(calls, [
   {
     transport: 'gm',
     method: 'GET',
+    url: 'https://agaghhh.cc/data/attachment/forum/cover.jpg',
+    responseType: 'blob',
+    anonymous: undefined,
+    referer: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806',
+    blobSize: 3,
+  },
+  {
+    transport: 'gm',
+    method: 'GET',
     url: 'https://img1.pixhost.to/images/preview.jpg',
     responseType: 'blob',
     anonymous: undefined,
@@ -106,11 +115,12 @@ assert.deepEqual(calls, [
 ]);
 assert.deepEqual(saved, [
   { url: 'blob:smoke-1', name: 'ABCD-123 本文タイトル.rar' },
-  { url: 'blob:smoke-2', name: 'ABCD-123 -1.jpg' },
+  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },
+  { url: 'blob:smoke-3', name: 'ABCD-123 -1.jpg' },
 ]);
-assert.deepEqual(revoked, ['blob:smoke-1', 'blob:smoke-2']);
+assert.deepEqual(revoked, ['blob:smoke-1', 'blob:smoke-2', 'blob:smoke-3']);
 assert.equal(dom.window.location.href, 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806');
 assert.equal(dom.window.document.querySelector('a[download]'), null);
 
 dom.window.close();
-console.log('Built userscript smoke test passed: attachment and image use validated Blob downloads.');
+console.log('Built userscript smoke test passed: attachment, original cover and Preview all use validated Blob downloads.');
