@@ -332,3 +332,20 @@ test('AVSA-428 种子名去掉发布组尖括号并清理末尾句点', () => {
   );
 });
 
+test('AVSA-428 种子名同时去掉半角和全角发布组尖括号', () => {
+  for (const group of ['&lt;AVS collector’s&gt;', '＜AVS collector’s＞']) {
+    const dom = new JSDOM(`
+      <span id="thread_subject">AVSA-428 [BT](${group})(avsa00428) 追放失敗 居候無職元カノに射精管理される 逆転同棲性活 月野かすみ.</span>
+      <div id="postlist"><div id="post_1"><div id="postmessage_1">
+        magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567
+      </div></div></div>
+    `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1024015' });
+
+    const torrent = buildDownloadJobs(dom.window.document).find((job) => job.kind === 'torrent');
+    assert.equal(
+      torrent?.name,
+      'AVSA-428 [BT](AVS collector’s)(avsa00428) 追放失敗 居候無職元カノに射精管理される 逆転同棲性活 月野かすみ.torrent'
+    );
+  }
+});
+

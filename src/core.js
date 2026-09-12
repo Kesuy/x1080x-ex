@@ -332,7 +332,7 @@ export function extractThreadResources(document) {
 }
 
 export function buildTorrentFilename(value) {
-  const normalized = String(value ?? '').replace(/\(<([^<>]+)>\)/g, '($1)');
+  const normalized = String(value ?? '').replace(/\([<＜]([^<>＜＞]+)[>＞]\)/g, '($1)');
   return `${sanitizeFilename(normalized)}.torrent`;
 }
 
