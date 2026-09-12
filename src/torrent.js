@@ -1,11 +1,29 @@
 const TORRENT_SOURCES = Object.freeze([
   (hash) => `https://itorrents.net/torrent/${hash}.torrent`,
-  (hash) => `https://torrage.info/torrent/${hash}.torrent`,
+  (hash) => `https://torrage.info/torrent.php?h=${hash}`,
   (hash) => `https://itorrents.org/torrent/${hash}.torrent`,
+  (hash) => `https://btcache.me/torrent/${hash}`,
 ]);
 
+const CACHE_REQUEST_TIMEOUT_MS = 8000;
 const BTIH_PATTERN = /urn:btih:([a-f\d]{40}|[a-z2-7]{32})/i;
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+const QB_CONFIG = Object.freeze({
+  defaultUrl: 'http://127.0.0.1:8080',
+  defaultUsername: 'admin',
+  requestTimeoutMs: 10000,
+  metadataTimeoutMs: 60000,
+  pollIntervalMs: 2000,
+  enabledStorageKey: 'x1080x-ex:qb-enabled',
+  urlStorageKey: 'x1080x-ex:qb-url',
+  usernameStorageKey: 'x1080x-ex:qb-username',
+  passwordStorageKey: 'x1080x-ex:qb-password',
+  metadataTimeoutStorageKey: 'x1080x-ex:qb-metadata-timeout-ms',
+});
+
+let qbSessionFingerprint = '';
+let qbLoginPromise = null;
 
 function decodeSafely(value) {
   try {
@@ -37,6 +55,223 @@ export function normalizeBtih(rawHash) {
 export function extractBtih(value) {
   const match = decodeSafely(String(value ?? '')).match(BTIH_PATTERN);
   return match ? normalizeBtih(match[1]) : '';
+}
+
+export function normalizeQbUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) throw new Error('请输入 qBittorrent WebUI 地址');
+
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('qBittorrent WebUI 地址格式无效');
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('qBittorrent WebUI 地址仅支持 http 或 https');
+  }
+  if (url.username || url.password) {
+    throw new Error('请不要把用户名或密码写入 WebUI 地址');
+  }
+  if (!url.hostname) throw new Error('qBittorrent WebUI 地址缺少主机名');
+  url.search = '';
+  url.hash = '';
+  url.pathname = url.pathname.replace(/\/+$/, '');
+  return url.toString().replace(/\/$/, '');
+}
+
+function readStoredValue(getValue, key, fallback) {
+  if (typeof getValue !== 'function') return fallback;
+  return getValue(key, fallback);
+}
+
+export function getQbSettings(getValue = globalThis.GM_getValue) {
+  const rawTimeout = Number(readStoredValue(
+    getValue,
+    QB_CONFIG.metadataTimeoutStorageKey,
+    QB_CONFIG.metadataTimeoutMs
+  ));
+  return {
+    enabled: readStoredValue(getValue, QB_CONFIG.enabledStorageKey, false) === true,
+    url: String(readStoredValue(getValue, QB_CONFIG.urlStorageKey, QB_CONFIG.defaultUrl)
+      || QB_CONFIG.defaultUrl),
+    username: String(readStoredValue(getValue, QB_CONFIG.usernameStorageKey, QB_CONFIG.defaultUsername)
+      || QB_CONFIG.defaultUsername),
+    password: String(readStoredValue(getValue, QB_CONFIG.passwordStorageKey, '') || ''),
+    metadataTimeoutMs: Number.isFinite(rawTimeout)
+      ? Math.min(300000, Math.max(10000, Math.round(rawTimeout)))
+      : QB_CONFIG.metadataTimeoutMs,
+  };
+}
+
+function normalizeQbSettings(settings) {
+  const timeout = Number(settings?.metadataTimeoutMs ?? QB_CONFIG.metadataTimeoutMs);
+  if (!Number.isFinite(timeout) || timeout < 10000 || timeout > 300000) {
+    throw new Error('元数据等待时间需在 10～300 秒之间');
+  }
+  const username = String(settings?.username || '').trim();
+  if (!username) throw new Error('请输入 qBittorrent WebUI 用户名');
+
+  return {
+    enabled: Boolean(settings?.enabled),
+    url: normalizeQbUrl(settings?.url ?? QB_CONFIG.defaultUrl),
+    username,
+    password: String(settings?.password || ''),
+    metadataTimeoutMs: Math.round(timeout),
+  };
+}
+
+export function saveQbSettings(settings, setValue = globalThis.GM_setValue) {
+  if (typeof setValue !== 'function') {
+    throw new Error('当前 userscript 管理器不支持保存 qBittorrent 设置');
+  }
+  const normalized = normalizeQbSettings(settings);
+  setValue(QB_CONFIG.enabledStorageKey, normalized.enabled);
+  setValue(QB_CONFIG.urlStorageKey, normalized.url);
+  setValue(QB_CONFIG.usernameStorageKey, normalized.username);
+  setValue(QB_CONFIG.passwordStorageKey, normalized.password);
+  setValue(QB_CONFIG.metadataTimeoutStorageKey, normalized.metadataTimeoutMs);
+  qbSessionFingerprint = '';
+  return normalized;
+}
+
+function qbEndpoint(path, settings) {
+  const base = normalizeQbUrl(settings.url);
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function qbRequestHeaders(settings, headers = {}) {
+  const base = normalizeQbUrl(settings.url);
+  const url = new URL(base);
+  return {
+    Origin: url.origin,
+    Referer: `${base}/`,
+    ...headers,
+  };
+}
+
+function qbErrorMessage(response, path) {
+  const body = String(response?.responseText || '').trim();
+  if (path === '/api/v2/auth/login' && (response?.status === 401 || response?.status === 403)) {
+    return 'qBittorrent 登录失败；请检查 WebUI 用户名和密码';
+  }
+  if (response?.status === 401 || response?.status === 403) {
+    return 'qBittorrent 会话无效或访问被拒绝';
+  }
+  if (response?.status === 404 && path.includes('/torrents/')) {
+    return 'qBittorrent 未提供元数据 API；请使用 qBittorrent 5.2.0+ / WebAPI 2.11.9+';
+  }
+  return `qBittorrent 请求失败（HTTP ${response?.status ?? '未知'}）${body ? `：${body}` : ''}`;
+}
+
+function requestQbRaw(path, {
+  method = 'GET',
+  responseType = 'text',
+  timeout = QB_CONFIG.requestTimeoutMs,
+  allowedStatuses = [200],
+  settings,
+  headers = {},
+  data,
+} = {}, gmRequest = globalThis.GM_xmlhttpRequest) {
+  return new Promise((resolve, reject) => {
+    if (typeof gmRequest !== 'function') {
+      reject(new Error('当前 userscript 管理器不支持 GM_xmlhttpRequest'));
+      return;
+    }
+
+    let url;
+    try {
+      url = qbEndpoint(path, settings);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    gmRequest({
+      method,
+      url,
+      headers: qbRequestHeaders(settings, headers),
+      data,
+      responseType,
+      timeout,
+      anonymous: false,
+      onload(response) {
+        if (!allowedStatuses.includes(response.status)) {
+          const error = new Error(qbErrorMessage(response, path));
+          error.status = response.status;
+          reject(error);
+          return;
+        }
+        resolve(response);
+      },
+      onerror: () => reject(new Error('无法连接 qBittorrent，请检查 WebUI 地址、服务状态和 userscript 跨域权限')),
+      ontimeout: () => reject(new Error('连接 qBittorrent 超时')),
+    });
+  });
+}
+
+function qbSettingsFingerprint(settings) {
+  return `${normalizeQbUrl(settings.url)}\n${settings.username}\n${settings.password}`;
+}
+
+async function loginQb(settings, gmRequest = globalThis.GM_xmlhttpRequest, force = false) {
+  const normalized = normalizeQbSettings(settings);
+  const fingerprint = qbSettingsFingerprint(normalized);
+  if (!force && qbSessionFingerprint === fingerprint) return true;
+  if (!force && qbLoginPromise) return qbLoginPromise;
+
+  const task = (async () => {
+    const response = await requestQbRaw('/api/v2/auth/login', {
+      method: 'POST',
+      responseType: 'text',
+      settings: normalized,
+      allowedStatuses: [200, 204],
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      data: new URLSearchParams({
+        username: normalized.username,
+        password: normalized.password,
+      }).toString(),
+    }, gmRequest);
+    const text = String(response.responseText || response.response || '').trim().toLowerCase();
+    if (text === 'fails.') throw new Error('qBittorrent 登录失败；请检查 WebUI 用户名和密码');
+    qbSessionFingerprint = fingerprint;
+    return true;
+  })();
+
+  qbLoginPromise = task;
+  try {
+    return await task;
+  } finally {
+    if (qbLoginPromise === task) qbLoginPromise = null;
+  }
+}
+
+async function requestQb(path, options = {}, gmRequest = globalThis.GM_xmlhttpRequest) {
+  const settings = normalizeQbSettings(options.settings || getQbSettings());
+  await loginQb(settings, gmRequest);
+  try {
+    return await requestQbRaw(path, { ...options, settings }, gmRequest);
+  } catch (error) {
+    if (error?.status !== 401 && error?.status !== 403) throw error;
+    qbSessionFingerprint = '';
+    await loginQb(settings, gmRequest, true);
+    return requestQbRaw(path, { ...options, settings }, gmRequest);
+  }
+}
+
+export async function testQbConnection(
+  settings = getQbSettings(),
+  gmRequest = globalThis.GM_xmlhttpRequest
+) {
+  const normalized = normalizeQbSettings(settings);
+  await loginQb(normalized, gmRequest, true);
+  const response = await requestQb('/api/v2/app/version', {
+    settings: normalized,
+    responseType: 'text',
+  }, gmRequest);
+  const version = String(response.responseText || response.response || '').trim();
+  if (!version) throw new Error('qBittorrent 已响应，但未返回版本号');
+  return { version };
 }
 
 function parseBencode(input) {
@@ -246,7 +481,7 @@ function requestTorrentUrl(url, gmRequest) {
       method: 'GET',
       url,
       responseType: 'arraybuffer',
-      timeout: 30000,
+      timeout: CACHE_REQUEST_TIMEOUT_MS,
       anonymous: true,
       onload(response) {
         if (response.status < 200 || response.status >= 300 || !response.response) {
@@ -261,10 +496,7 @@ function requestTorrentUrl(url, gmRequest) {
   });
 }
 
-export async function requestTorrentBytes(magnet, gmRequest = globalThis.GM_xmlhttpRequest) {
-  const hash = extractBtih(magnet);
-  if (!hash) throw new Error('磁力链中没有有效的 BTIH');
-
+async function requestTorrentFromCaches(hash, gmRequest) {
   const errors = [];
   for (const buildUrl of TORRENT_SOURCES) {
     const url = buildUrl(hash);
@@ -277,5 +509,121 @@ export async function requestTorrentBytes(magnet, gmRequest = globalThis.GM_xmlh
       errors.push(`${new URL(url).hostname}: ${error?.message || error}`);
     }
   }
-  throw new Error(`所有 torrent 缓存源均不可用：${errors.join('；')}`);
+  const error = new Error(`所有 torrent 缓存源均不可用：${errors.join('；')}`);
+  error.cacheErrors = errors;
+  throw error;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function tryExportQbTorrent(
+  hash,
+  settings,
+  gmRequest = globalThis.GM_xmlhttpRequest,
+  timeout = QB_CONFIG.requestTimeoutMs
+) {
+  const response = await requestQb(`/api/v2/torrents/export?hash=${encodeURIComponent(hash)}`, {
+    settings,
+    responseType: 'arraybuffer',
+    timeout,
+    allowedStatuses: [200, 404, 409],
+  }, gmRequest);
+  if (response.status !== 200 || !response.response) return null;
+
+  const bytes = new Uint8Array(response.response);
+  const torrentName = parseTorrentName(bytes);
+  verifyTorrentHash(bytes, hash);
+  return { bytes, torrentName };
+}
+
+async function requestTorrentViaQbittorrent(hash, magnet, settings, gmRequest) {
+  if (!settings.enabled) throw new Error('qBittorrent 回退未启用');
+
+  const normalized = normalizeQbSettings(settings);
+  const source = magnet && extractBtih(magnet) === hash.toUpperCase()
+    ? magnet
+    : `magnet:?xt=urn:btih:${hash}`;
+  const query = `source=${encodeURIComponent(source)}`;
+  const deadline = Date.now() + normalized.metadataTimeoutMs;
+  const fetchPath = '/api/v2/torrents/fetchMetadata';
+  const savePath = `/api/v2/torrents/saveMetadata?${query}`;
+  const sourceUrl = qbEndpoint(fetchPath, normalized);
+
+  const existing = await tryExportQbTorrent(
+    hash,
+    normalized,
+    gmRequest,
+    Math.min(QB_CONFIG.requestTimeoutMs, normalized.metadataTimeoutMs)
+  );
+  if (existing) return { ...existing, hash, sourceUrl };
+
+  while (Date.now() < deadline) {
+    const remaining = Math.max(1000, deadline - Date.now());
+    const response = await requestQb(fetchPath, {
+      method: 'POST',
+      settings: normalized,
+      responseType: 'text',
+      timeout: Math.min(QB_CONFIG.requestTimeoutMs, remaining),
+      allowedStatuses: [200, 202],
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      data: new URLSearchParams({ source }).toString(),
+    }, gmRequest);
+
+    if (response.status === 200) {
+      const exported = await tryExportQbTorrent(
+        hash,
+        normalized,
+        gmRequest,
+        Math.min(QB_CONFIG.requestTimeoutMs, remaining)
+      );
+      if (exported) return { ...exported, hash, sourceUrl };
+
+      const saved = await requestQb(savePath, {
+        settings: normalized,
+        responseType: 'arraybuffer',
+        timeout: Math.min(QB_CONFIG.requestTimeoutMs, remaining),
+        allowedStatuses: [200, 409],
+      }, gmRequest);
+      if (saved.status === 200 && saved.response) {
+        const bytes = new Uint8Array(saved.response);
+        const torrentName = parseTorrentName(bytes);
+        verifyTorrentHash(bytes, hash);
+        return { bytes, hash, torrentName, sourceUrl };
+      }
+    }
+
+    const delay = Math.min(QB_CONFIG.pollIntervalMs, Math.max(0, deadline - Date.now()));
+    if (delay > 0) await sleep(delay);
+  }
+
+  throw new Error(
+    `qBittorrent 在 ${Math.round(normalized.metadataTimeoutMs / 1000)} 秒内未获取到可导出的元数据（可能没有可用的 DHT/Peer）`
+  );
+}
+
+export async function requestTorrentBytes(
+  magnet,
+  gmRequest = globalThis.GM_xmlhttpRequest,
+  qbSettings = getQbSettings()
+) {
+  const hash = extractBtih(magnet);
+  if (!hash) throw new Error('磁力链中没有有效的 BTIH');
+
+  let cacheError;
+  try {
+    return await requestTorrentFromCaches(hash, gmRequest);
+  } catch (error) {
+    cacheError = error;
+  }
+
+  const settings = normalizeQbSettings(qbSettings);
+  if (!settings.enabled) throw cacheError;
+
+  try {
+    return await requestTorrentViaQbittorrent(hash, magnet, settings, gmRequest);
+  } catch (qbError) {
+    throw new Error(`${cacheError.message}；qBittorrent：${qbError?.message || qbError}`);
+  }
 }
