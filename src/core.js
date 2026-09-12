@@ -331,12 +331,17 @@ export function extractThreadResources(document) {
   };
 }
 
+export function buildTorrentFilename(value) {
+  const normalized = String(value ?? '').replace(/\(<([^<>]+)>\)/g, '($1)');
+  return `${sanitizeFilename(normalized)}.torrent`;
+}
+
 export function buildDownloadJobs(document) {
   const resources = extractThreadResources(document);
   const jobs = resources.magnets.map((magnet) => ({
     kind: 'torrent',
     url: magnet,
-    name: `${sanitizeFilename(resources.title.cleanTitle || resources.title.code || 'download')}.torrent`,
+    name: buildTorrentFilename(resources.title.cleanTitle || resources.title.code || 'download'),
   }));
   jobs.push(...resources.attachments.map((attachment) => ({
     kind: 'attachment',

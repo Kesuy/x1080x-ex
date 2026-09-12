@@ -286,12 +286,16 @@
       imageFilename: title.code ? `${sanitizeFilename(title.code)}.jpg` : "thread-image.jpg"
     };
   }
+  function buildTorrentFilename(value) {
+    const normalized = String(value ?? "").replace(/\(<([^<>]+)>\)/g, "($1)");
+    return `${sanitizeFilename(normalized)}.torrent`;
+  }
   function buildDownloadJobs(document2) {
     const resources = extractThreadResources(document2);
     const jobs = resources.magnets.map((magnet) => ({
       kind: "torrent",
       url: magnet,
-      name: `${sanitizeFilename(resources.title.cleanTitle || resources.title.code || "download")}.torrent`
+      name: buildTorrentFilename(resources.title.cleanTitle || resources.title.code || "download")
     }));
     jobs.push(...resources.attachments.map((attachment) => ({
       kind: "attachment",
