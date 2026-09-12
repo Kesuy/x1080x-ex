@@ -6,6 +6,7 @@ on:
       - test/torrent-title-cleanup
     paths:
       - .github/workflows/test-torrent-title-cleanup.yml
+      - scripts/apply-torrent-title-cleanup.py
 
 permissions:
   contents: write
