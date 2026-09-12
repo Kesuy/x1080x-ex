@@ -1,0 +1,80 @@
+name: Test torrent title cleanup
+
+on:
+  push:
+    branches:
+      - test/torrent-title-cleanup
+    paths:
+      - .github/workflows/test-torrent-title-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/torrent-title-cleanup
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply torrent naming fix and regression test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          core = Path('src/core.js')
+          text = core.read_text(encoding='utf-8')
+          marker = "export function buildDownloadJobs(document) {"
+          helper = """export function buildTorrentFilename(value) {\n  const normalized = String(value ?? '').replace(/\\(<([^<>]+)>\\)/g, '($1)');\n  return `${sanitizeFilename(normalized)}.torrent`;\n}\n\n"""
+          if helper not in text:
+              if marker not in text:
+                  raise SystemExit('buildDownloadJobs marker not found')
+              text = text.replace(marker, helper + marker, 1)
+
+          old = "name: `${sanitizeFilename(resources.title.cleanTitle || resources.title.code || 'download')}.torrent`,"
+          new = "name: buildTorrentFilename(resources.title.cleanTitle || resources.title.code || 'download'),"
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('torrent naming line not found')
+          core.write_text(text, encoding='utf-8')
+
+          test_file = Path('test/core.test.js')
+          tests = test_file.read_text(encoding='utf-8')
+          block = r'''
+
+test('AVSA-428 种子名去掉发布组尖括号并清理末尾句点', () => {
+  const dom = new JSDOM(`
+    <span id="thread_subject">AVSA-428 [BT](&lt;AVS collector’s&gt;)(avsa00428) 追放失敗 居候無職元カノに射精管理される 逆転同棲性活 月野かすみ.</span>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">
+      magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567
+    </div></div></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1024015' });
+
+  const torrent = buildDownloadJobs(dom.window.document).find((job) => job.kind === 'torrent');
+  assert.equal(
+    torrent?.name,
+    'AVSA-428 [BT](AVS collector’s)(avsa00428) 追放失敗 居候無職元カノに射精管理される 逆転同棲性活 月野かすみ.torrent'
+  );
+});
+'''
+          if "AVSA-428 种子名去掉发布组尖括号" not in tests:
+              test_file.write_text(tests.rstrip() + block + '\n', encoding='utf-8')
+          PY
+
+      - run: npm ci
+      - run: npm run check
+      - name: Commit tested source and build
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/core.js test/core.test.js dist/x1080x-ex.user.js
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: normalize torrent title groups"
+          git push origin HEAD:test/torrent-title-cleanup
