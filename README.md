@@ -49,7 +49,7 @@ RAR/附件仍使用清理后的帖子标题命名，不受 A/B 图片命名影�
 ## 安装
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)。
-2. 点击：**[安装 x1080x-ex](https://raw.githubusercontent.com/Kesuy/x1080x-ex/main/dist/x1080x-ex.user.js?v=1.9.0)**
+2. 点击：**[安装 x1080x-ex](https://raw.githubusercontent.com/Kesuy/x1080x-ex/main/dist/x1080x-ex.user.js?v=1.9.1)**
 3. 打开支持的网站并刷新页面。
 
 首次批量下载时，浏览器可能会询问多文件下载权限，请选择允许。
