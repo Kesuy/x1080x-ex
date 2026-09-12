@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.9.1
+// @version      1.9.2
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -344,11 +344,27 @@
   // src/torrent.js
   var TORRENT_SOURCES = Object.freeze([
     (hash) => `https://itorrents.net/torrent/${hash}.torrent`,
-    (hash) => `https://torrage.info/torrent/${hash}.torrent`,
-    (hash) => `https://itorrents.org/torrent/${hash}.torrent`
+    (hash) => `https://torrage.info/torrent.php?h=${hash}`,
+    (hash) => `https://itorrents.org/torrent/${hash}.torrent`,
+    (hash) => `https://btcache.me/torrent/${hash}`
   ]);
+  var CACHE_REQUEST_TIMEOUT_MS = 8e3;
   var BTIH_PATTERN = /urn:btih:([a-f\d]{40}|[a-z2-7]{32})/i;
   var BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  var QB_CONFIG = Object.freeze({
+    defaultUrl: "http://127.0.0.1:8080",
+    defaultUsername: "admin",
+    requestTimeoutMs: 1e4,
+    metadataTimeoutMs: 6e4,
+    pollIntervalMs: 2e3,
+    enabledStorageKey: "x1080x-ex:qb-enabled",
+    urlStorageKey: "x1080x-ex:qb-url",
+    usernameStorageKey: "x1080x-ex:qb-username",
+    passwordStorageKey: "x1080x-ex:qb-password",
+    metadataTimeoutStorageKey: "x1080x-ex:qb-metadata-timeout-ms"
+  });
+  var qbSessionFingerprint = "";
+  var qbLoginPromise = null;
   function decodeSafely(value) {
     try {
       return decodeURIComponent(value);
@@ -373,6 +389,199 @@
   function extractBtih(value) {
     const match = decodeSafely(String(value ?? "")).match(BTIH_PATTERN);
     return match ? normalizeBtih(match[1]) : "";
+  }
+  function normalizeQbUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) throw new Error("\u8BF7\u8F93\u5165 qBittorrent WebUI \u5730\u5740");
+    let url;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error("qBittorrent WebUI \u5730\u5740\u683C\u5F0F\u65E0\u6548");
+    }
+    if (!["http:", "https:"].includes(url.protocol)) {
+      throw new Error("qBittorrent WebUI \u5730\u5740\u4EC5\u652F\u6301 http \u6216 https");
+    }
+    if (url.username || url.password) {
+      throw new Error("\u8BF7\u4E0D\u8981\u628A\u7528\u6237\u540D\u6216\u5BC6\u7801\u5199\u5165 WebUI \u5730\u5740");
+    }
+    if (!url.hostname) throw new Error("qBittorrent WebUI \u5730\u5740\u7F3A\u5C11\u4E3B\u673A\u540D");
+    url.search = "";
+    url.hash = "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.toString().replace(/\/$/, "");
+  }
+  function readStoredValue(getValue, key, fallback) {
+    if (typeof getValue !== "function") return fallback;
+    return getValue(key, fallback);
+  }
+  function getQbSettings(getValue = globalThis.GM_getValue) {
+    const rawTimeout = Number(readStoredValue(
+      getValue,
+      QB_CONFIG.metadataTimeoutStorageKey,
+      QB_CONFIG.metadataTimeoutMs
+    ));
+    return {
+      enabled: readStoredValue(getValue, QB_CONFIG.enabledStorageKey, false) === true,
+      url: String(readStoredValue(getValue, QB_CONFIG.urlStorageKey, QB_CONFIG.defaultUrl) || QB_CONFIG.defaultUrl),
+      username: String(readStoredValue(getValue, QB_CONFIG.usernameStorageKey, QB_CONFIG.defaultUsername) || QB_CONFIG.defaultUsername),
+      password: String(readStoredValue(getValue, QB_CONFIG.passwordStorageKey, "") || ""),
+      metadataTimeoutMs: Number.isFinite(rawTimeout) ? Math.min(3e5, Math.max(1e4, Math.round(rawTimeout))) : QB_CONFIG.metadataTimeoutMs
+    };
+  }
+  function normalizeQbSettings(settings) {
+    const timeout = Number(settings?.metadataTimeoutMs ?? QB_CONFIG.metadataTimeoutMs);
+    if (!Number.isFinite(timeout) || timeout < 1e4 || timeout > 3e5) {
+      throw new Error("\u5143\u6570\u636E\u7B49\u5F85\u65F6\u95F4\u9700\u5728 10\uFF5E300 \u79D2\u4E4B\u95F4");
+    }
+    const username = String(settings?.username || "").trim();
+    if (!username) throw new Error("\u8BF7\u8F93\u5165 qBittorrent WebUI \u7528\u6237\u540D");
+    return {
+      enabled: Boolean(settings?.enabled),
+      url: normalizeQbUrl(settings?.url ?? QB_CONFIG.defaultUrl),
+      username,
+      password: String(settings?.password || ""),
+      metadataTimeoutMs: Math.round(timeout)
+    };
+  }
+  function saveQbSettings(settings, setValue = globalThis.GM_setValue) {
+    if (typeof setValue !== "function") {
+      throw new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301\u4FDD\u5B58 qBittorrent \u8BBE\u7F6E");
+    }
+    const normalized = normalizeQbSettings(settings);
+    setValue(QB_CONFIG.enabledStorageKey, normalized.enabled);
+    setValue(QB_CONFIG.urlStorageKey, normalized.url);
+    setValue(QB_CONFIG.usernameStorageKey, normalized.username);
+    setValue(QB_CONFIG.passwordStorageKey, normalized.password);
+    setValue(QB_CONFIG.metadataTimeoutStorageKey, normalized.metadataTimeoutMs);
+    qbSessionFingerprint = "";
+    return normalized;
+  }
+  function qbEndpoint(path, settings) {
+    const base = normalizeQbUrl(settings.url);
+    return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+  function qbRequestHeaders(settings, headers = {}) {
+    const base = normalizeQbUrl(settings.url);
+    const url = new URL(base);
+    return {
+      Origin: url.origin,
+      Referer: `${base}/`,
+      ...headers
+    };
+  }
+  function qbErrorMessage(response, path) {
+    const body = String(response?.responseText || "").trim();
+    if (path === "/api/v2/auth/login" && (response?.status === 401 || response?.status === 403)) {
+      return "qBittorrent \u767B\u5F55\u5931\u8D25\uFF1B\u8BF7\u68C0\u67E5 WebUI \u7528\u6237\u540D\u548C\u5BC6\u7801";
+    }
+    if (response?.status === 401 || response?.status === 403) {
+      return "qBittorrent \u4F1A\u8BDD\u65E0\u6548\u6216\u8BBF\u95EE\u88AB\u62D2\u7EDD";
+    }
+    if (response?.status === 404 && path.includes("/torrents/")) {
+      return "qBittorrent \u672A\u63D0\u4F9B\u5143\u6570\u636E API\uFF1B\u8BF7\u4F7F\u7528 qBittorrent 5.2.0+ / WebAPI 2.11.9+";
+    }
+    return `qBittorrent \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response?.status ?? "\u672A\u77E5"}\uFF09${body ? `\uFF1A${body}` : ""}`;
+  }
+  function requestQbRaw(path, {
+    method = "GET",
+    responseType = "text",
+    timeout = QB_CONFIG.requestTimeoutMs,
+    allowedStatuses = [200],
+    settings,
+    headers = {},
+    data
+  } = {}, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest2 !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      let url;
+      try {
+        url = qbEndpoint(path, settings);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      gmRequest2({
+        method,
+        url,
+        headers: qbRequestHeaders(settings, headers),
+        data,
+        responseType,
+        timeout,
+        anonymous: false,
+        onload(response) {
+          if (!allowedStatuses.includes(response.status)) {
+            const error = new Error(qbErrorMessage(response, path));
+            error.status = response.status;
+            reject(error);
+            return;
+          }
+          resolve(response);
+        },
+        onerror: () => reject(new Error("\u65E0\u6CD5\u8FDE\u63A5 qBittorrent\uFF0C\u8BF7\u68C0\u67E5 WebUI \u5730\u5740\u3001\u670D\u52A1\u72B6\u6001\u548C userscript \u8DE8\u57DF\u6743\u9650")),
+        ontimeout: () => reject(new Error("\u8FDE\u63A5 qBittorrent \u8D85\u65F6"))
+      });
+    });
+  }
+  function qbSettingsFingerprint(settings) {
+    return `${normalizeQbUrl(settings.url)}
+${settings.username}
+${settings.password}`;
+  }
+  async function loginQb(settings, gmRequest2 = globalThis.GM_xmlhttpRequest, force = false) {
+    const normalized = normalizeQbSettings(settings);
+    const fingerprint = qbSettingsFingerprint(normalized);
+    if (!force && qbSessionFingerprint === fingerprint) return true;
+    if (!force && qbLoginPromise) return qbLoginPromise;
+    const task = (async () => {
+      const response = await requestQbRaw("/api/v2/auth/login", {
+        method: "POST",
+        responseType: "text",
+        settings: normalized,
+        allowedStatuses: [200, 204],
+        headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+        data: new URLSearchParams({
+          username: normalized.username,
+          password: normalized.password
+        }).toString()
+      }, gmRequest2);
+      const text = String(response.responseText || response.response || "").trim().toLowerCase();
+      if (text === "fails.") throw new Error("qBittorrent \u767B\u5F55\u5931\u8D25\uFF1B\u8BF7\u68C0\u67E5 WebUI \u7528\u6237\u540D\u548C\u5BC6\u7801");
+      qbSessionFingerprint = fingerprint;
+      return true;
+    })();
+    qbLoginPromise = task;
+    try {
+      return await task;
+    } finally {
+      if (qbLoginPromise === task) qbLoginPromise = null;
+    }
+  }
+  async function requestQb(path, options = {}, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    const settings = normalizeQbSettings(options.settings || getQbSettings());
+    await loginQb(settings, gmRequest2);
+    try {
+      return await requestQbRaw(path, { ...options, settings }, gmRequest2);
+    } catch (error) {
+      if (error?.status !== 401 && error?.status !== 403) throw error;
+      qbSessionFingerprint = "";
+      await loginQb(settings, gmRequest2, true);
+      return requestQbRaw(path, { ...options, settings }, gmRequest2);
+    }
+  }
+  async function testQbConnection(settings = getQbSettings(), gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    const normalized = normalizeQbSettings(settings);
+    await loginQb(normalized, gmRequest2, true);
+    const response = await requestQb("/api/v2/app/version", {
+      settings: normalized,
+      responseType: "text"
+    }, gmRequest2);
+    const version = String(response.responseText || response.response || "").trim();
+    if (!version) throw new Error("qBittorrent \u5DF2\u54CD\u5E94\uFF0C\u4F46\u672A\u8FD4\u56DE\u7248\u672C\u53F7");
+    return { version };
   }
   function parseBencode(input) {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
@@ -565,7 +774,7 @@
         method: "GET",
         url,
         responseType: "arraybuffer",
-        timeout: 3e4,
+        timeout: CACHE_REQUEST_TIMEOUT_MS,
         anonymous: true,
         onload(response) {
           if (response.status < 200 || response.status >= 300 || !response.response) {
@@ -579,9 +788,7 @@
       });
     });
   }
-  async function requestTorrentBytes(magnet, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    const hash = extractBtih(magnet);
-    if (!hash) throw new Error("\u78C1\u529B\u94FE\u4E2D\u6CA1\u6709\u6709\u6548\u7684 BTIH");
+  async function requestTorrentFromCaches(hash, gmRequest2) {
     const errors = [];
     for (const buildUrl of TORRENT_SOURCES) {
       const url = buildUrl(hash);
@@ -590,11 +797,101 @@
         const torrentName = parseTorrentName(bytes);
         verifyTorrentHash(bytes, hash);
         return { bytes, hash, torrentName, sourceUrl: url };
-      } catch (error) {
-        errors.push(`${new URL(url).hostname}: ${error?.message || error}`);
+      } catch (error2) {
+        errors.push(`${new URL(url).hostname}: ${error2?.message || error2}`);
       }
     }
-    throw new Error(`\u6240\u6709 torrent \u7F13\u5B58\u6E90\u5747\u4E0D\u53EF\u7528\uFF1A${errors.join("\uFF1B")}`);
+    const error = new Error(`\u6240\u6709 torrent \u7F13\u5B58\u6E90\u5747\u4E0D\u53EF\u7528\uFF1A${errors.join("\uFF1B")}`);
+    error.cacheErrors = errors;
+    throw error;
+  }
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  async function tryExportQbTorrent(hash, settings, gmRequest2 = globalThis.GM_xmlhttpRequest, timeout = QB_CONFIG.requestTimeoutMs) {
+    const response = await requestQb(`/api/v2/torrents/export?hash=${encodeURIComponent(hash)}`, {
+      settings,
+      responseType: "arraybuffer",
+      timeout,
+      allowedStatuses: [200, 404, 409]
+    }, gmRequest2);
+    if (response.status !== 200 || !response.response) return null;
+    const bytes = new Uint8Array(response.response);
+    const torrentName = parseTorrentName(bytes);
+    verifyTorrentHash(bytes, hash);
+    return { bytes, torrentName };
+  }
+  async function requestTorrentViaQbittorrent(hash, magnet, settings, gmRequest2) {
+    if (!settings.enabled) throw new Error("qBittorrent \u56DE\u9000\u672A\u542F\u7528");
+    const normalized = normalizeQbSettings(settings);
+    const source = magnet && extractBtih(magnet) === hash.toUpperCase() ? magnet : `magnet:?xt=urn:btih:${hash}`;
+    const query = `source=${encodeURIComponent(source)}`;
+    const deadline = Date.now() + normalized.metadataTimeoutMs;
+    const fetchPath = "/api/v2/torrents/fetchMetadata";
+    const savePath = `/api/v2/torrents/saveMetadata?${query}`;
+    const sourceUrl = qbEndpoint(fetchPath, normalized);
+    const existing = await tryExportQbTorrent(
+      hash,
+      normalized,
+      gmRequest2,
+      Math.min(QB_CONFIG.requestTimeoutMs, normalized.metadataTimeoutMs)
+    );
+    if (existing) return { ...existing, hash, sourceUrl };
+    while (Date.now() < deadline) {
+      const remaining = Math.max(1e3, deadline - Date.now());
+      const response = await requestQb(fetchPath, {
+        method: "POST",
+        settings: normalized,
+        responseType: "text",
+        timeout: Math.min(QB_CONFIG.requestTimeoutMs, remaining),
+        allowedStatuses: [200, 202],
+        headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+        data: new URLSearchParams({ source }).toString()
+      }, gmRequest2);
+      if (response.status === 200) {
+        const exported = await tryExportQbTorrent(
+          hash,
+          normalized,
+          gmRequest2,
+          Math.min(QB_CONFIG.requestTimeoutMs, remaining)
+        );
+        if (exported) return { ...exported, hash, sourceUrl };
+        const saved = await requestQb(savePath, {
+          settings: normalized,
+          responseType: "arraybuffer",
+          timeout: Math.min(QB_CONFIG.requestTimeoutMs, remaining),
+          allowedStatuses: [200, 409]
+        }, gmRequest2);
+        if (saved.status === 200 && saved.response) {
+          const bytes = new Uint8Array(saved.response);
+          const torrentName = parseTorrentName(bytes);
+          verifyTorrentHash(bytes, hash);
+          return { bytes, hash, torrentName, sourceUrl };
+        }
+      }
+      const delay = Math.min(QB_CONFIG.pollIntervalMs, Math.max(0, deadline - Date.now()));
+      if (delay > 0) await sleep(delay);
+    }
+    throw new Error(
+      `qBittorrent \u5728 ${Math.round(normalized.metadataTimeoutMs / 1e3)} \u79D2\u5185\u672A\u83B7\u53D6\u5230\u53EF\u5BFC\u51FA\u7684\u5143\u6570\u636E\uFF08\u53EF\u80FD\u6CA1\u6709\u53EF\u7528\u7684 DHT/Peer\uFF09`
+    );
+  }
+  async function requestTorrentBytes(magnet, gmRequest2 = globalThis.GM_xmlhttpRequest, qbSettings = getQbSettings()) {
+    const hash = extractBtih(magnet);
+    if (!hash) throw new Error("\u78C1\u529B\u94FE\u4E2D\u6CA1\u6709\u6709\u6548\u7684 BTIH");
+    let cacheError;
+    try {
+      return await requestTorrentFromCaches(hash, gmRequest2);
+    } catch (error) {
+      cacheError = error;
+    }
+    const settings = normalizeQbSettings(qbSettings);
+    if (!settings.enabled) throw cacheError;
+    try {
+      return await requestTorrentViaQbittorrent(hash, magnet, settings, gmRequest2);
+    } catch (qbError) {
+      throw new Error(`${cacheError.message}\uFF1BqBittorrent\uFF1A${qbError?.message || qbError}`);
+    }
   }
 
   // src/userscript.js
@@ -3836,9 +4133,118 @@ ${failures.join("\n")}`);
     if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
   }
 
+  // src/qbittorrent-settings.js
+  var SETTINGS_PANEL_ID2 = "x1080x-ex-settings-panel";
+  var QB_SECTION_ATTR = "data-x1080x-qb-settings";
+  var QB_BOUND_ATTR = "data-x1080x-qb-settings-bound";
+  function isAgaghhhHost3(locationObject = globalThis.location) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
+  }
+  function setStatus(element, message, kind = "") {
+    if (!element) return;
+    element.textContent = message;
+    element.style.color = kind === "error" ? "#c5221f" : kind === "success" ? "#16803c" : "#666";
+  }
+  function enhanceQbittorrentSettingsPanel(document2 = globalThis.document, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    const overlay = document2?.getElementById(SETTINGS_PANEL_ID2);
+    const form = overlay?.querySelector("form");
+    if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
+    const current = getQbSettings();
+    form.style.width = "min(640px, 100%)";
+    const section = document2.createElement("div");
+    section.setAttribute(QB_SECTION_ATTR, "1");
+    section.style.cssText = "margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa";
+    section.innerHTML = `
+    <div style="font-weight:700;margin-bottom:11px">qBittorrent \u79CD\u5B50\u56DE\u9000</div>
+    <label style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+      <input data-setting="qb-enabled" type="checkbox">
+      <span><strong>\u542F\u7528 qBittorrent \u5143\u6570\u636E\u56DE\u9000</strong><small style="display:block;margin-top:2px;color:#666">\u516C\u5171\u79CD\u5B50\u7F13\u5B58\u5747\u5931\u8D25\u540E\uFF0C\u901A\u8FC7 qBittorrent 5.2+ \u4ECE DHT / Tracker / Peer \u83B7\u53D6 metadata\uFF1B\u4E0D\u4F1A\u628A\u78C1\u529B\u52A0\u5165\u4E0B\u8F7D\u5217\u8868\u3002</small></span>
+    </label>
+    <label style="display:block;margin-bottom:10px">
+      <span style="display:block;font-weight:600;margin-bottom:5px">WebUI \u5730\u5740</span>
+      <input data-setting="qb-url" type="url" required placeholder="http://127.0.0.1:8080" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+    </label>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-bottom:10px">
+      <label style="display:block">
+        <span style="display:block;font-weight:600;margin-bottom:5px">\u7528\u6237\u540D</span>
+        <input data-setting="qb-username" type="text" required autocomplete="username" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+      </label>
+      <label style="display:block">
+        <span style="display:block;font-weight:600;margin-bottom:5px">\u5BC6\u7801</span>
+        <input data-setting="qb-password" type="password" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+      </label>
+    </div>
+    <label style="display:block;margin-bottom:10px">
+      <span style="display:block;font-weight:600;margin-bottom:5px">\u7B49\u5F85\u5143\u6570\u636E\uFF08\u79D2\uFF09</span>
+      <input data-setting="qb-timeout" type="number" min="10" max="300" step="1" required style="width:140px;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+    </label>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button data-action="qb-test" type="button" style="padding:6px 12px">\u6D4B\u8BD5 qBittorrent \u767B\u5F55</button>
+      <span data-qb-status style="color:#666;overflow-wrap:anywhere"></span>
+    </div>
+    <small style="display:block;margin-top:9px;color:#666">\u7528\u6237\u540D\u548C\u5BC6\u7801\u4FDD\u5B58\u5728 Tampermonkey / Violentmonkey \u7684\u811A\u672C\u4E13\u5C5E\u5B58\u50A8\u4E2D\u3002\u5EFA\u8BAE WebUI \u4EC5\u5728\u53EF\u4FE1\u5C40\u57DF\u7F51\u4F7F\u7528\uFF0C\u6216\u4F7F\u7528 HTTPS\u3002</small>`;
+    const actions = form.lastElementChild;
+    form.insertBefore(section, actions || null);
+    const enabledInput = section.querySelector('[data-setting="qb-enabled"]');
+    const urlInput = section.querySelector('[data-setting="qb-url"]');
+    const usernameInput = section.querySelector('[data-setting="qb-username"]');
+    const passwordInput = section.querySelector('[data-setting="qb-password"]');
+    const timeoutInput = section.querySelector('[data-setting="qb-timeout"]');
+    const testButton = section.querySelector('[data-action="qb-test"]');
+    const status = section.querySelector("[data-qb-status]");
+    enabledInput.checked = current.enabled;
+    urlInput.value = current.url;
+    usernameInput.value = current.username;
+    passwordInput.value = current.password;
+    timeoutInput.value = String(Math.round(current.metadataTimeoutMs / 1e3));
+    const formSettings = () => ({
+      enabled: enabledInput.checked,
+      url: urlInput.value,
+      username: usernameInput.value,
+      password: passwordInput.value,
+      metadataTimeoutMs: Number(timeoutInput.value) * 1e3
+    });
+    testButton.addEventListener("click", async () => {
+      testButton.disabled = true;
+      setStatus(status, "\u6B63\u5728\u767B\u5F55 qBittorrent\u2026");
+      try {
+        const result = await testQbConnection(formSettings(), gmRequest2);
+        setStatus(status, `\u767B\u5F55\u6210\u529F\uFF0CqBittorrent ${result.version}`, "success");
+      } catch (error) {
+        setStatus(status, error?.message || String(error), "error");
+      } finally {
+        testButton.disabled = false;
+      }
+    });
+    if (form.getAttribute(QB_BOUND_ATTR) !== "1") {
+      form.setAttribute(QB_BOUND_ATTR, "1");
+      form.addEventListener("submit", (event) => {
+        try {
+          saveQbSettings(formSettings());
+        } catch (error) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          setStatus(status, error?.message || String(error), "error");
+        }
+      }, true);
+    }
+    return true;
+  }
+  function installQbittorrentSettings(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    if (!document2?.body || !isAgaghhhHost3(locationObject)) return null;
+    if (enhanceQbittorrentSettingsPanel(document2, gmRequest2)) return null;
+    const Observer = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
+    if (typeof Observer !== "function") return null;
+    const observer = new Observer(() => enhanceQbittorrentSettingsPanel(document2, gmRequest2));
+    observer.observe(document2.body, { childList: true, subtree: true });
+    return observer;
+  }
+
   // src/index.js
   installX1080xSettingsMenu();
   installAgaghhhEnhancement();
+  installQbittorrentSettings();
   installHdblogImageHostSettings();
   installHdblogReferResolver();
   installHdblogArticleEnhancement();
