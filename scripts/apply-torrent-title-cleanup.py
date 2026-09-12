@@ -17,7 +17,7 @@ new_expected = "'AVSA-428 追放失敗 居候無職元カノに射精管理さ�
 tests = tests.replace(old_expected, new_expected)
 block = r'''
 
-test('AVSA-428 种子名移除 BT 发布参数但保留正文标题', () => {
+test('AVSA-428 种子名移除 BT 发布参数并只保留番号与正文标题', () => {
   const variants = [
     '&lt;AVS collector’s&gt;',
     '＜AVS collector’s＞',
@@ -38,19 +38,7 @@ test('AVSA-428 种子名移除 BT 发布参数但保留正文标题', () => {
     );
   }
 });
-
-test('torrent 命名不会误删没有 BT 标记的正文括号', () => {
-  const dom = new JSDOM(`
-    <span id="thread_subject">DLDSS-504 (完全版) 正文タイトル.</span>
-    <div id="postlist"><div id="post_1"><div id="postmessage_1">
-      magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98
-    </div></div></div>
-  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1' });
-
-  const torrent = buildDownloadJobs(dom.window.document).find((job) => job.kind === 'torrent');
-  assert.equal(torrent?.name, 'DLDSS-504 (完全版) 正文タイトル.torrent');
-});
 '''
-if 'AVSA-428 种子名移除 BT 发布参数但保留正文标题' not in tests:
+if 'AVSA-428 种子名移除 BT 发布参数并只保留番号与正文标题' not in tests:
     tests = tests.rstrip() + block + '\n'
 test_file.write_text(tests, encoding='utf-8')
