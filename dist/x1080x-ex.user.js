@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.0
+// @version      1.10.1
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -3996,6 +3996,7 @@ ${failures.join("\n")}`);
   var AGAGHHH_BATCH_OPEN_ENABLED_KEY2 = "x1080x-ex:agaghhh-batch-open-enabled";
   var AGAGHHH_DOWNLOAD_ENABLED_KEY = "x1080x-ex:agaghhh-download-enabled";
   var AGAGHHH_CROSS_SEARCH_ENABLED_KEY = "x1080x-ex:agaghhh-cross-search-enabled";
+  var AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:agaghhh-search-auto-redirect-enabled";
   var AGAGHHH_REAL_ACTRESS_ENABLED_KEY = "x1080x-ex:agaghhh-real-actress-enabled";
   var AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = "x1080x-ex:agaghhh-hdblog-preview-enabled";
   var LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = "x1080x-ex:agaghhh-enhancement-enabled";
@@ -4034,11 +4035,64 @@ ${failures.join("\n")}`);
   function isAgaghhhCrossSearchEnabled() {
     return readBooleanSetting(AGAGHHH_CROSS_SEARCH_ENABLED_KEY);
   }
+  function isAgaghhhSearchAutoRedirectEnabled() {
+    return readBooleanSetting(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY);
+  }
   function isAgaghhhRealActressEnabled() {
     return readBooleanSetting(AGAGHHH_REAL_ACTRESS_ENABLED_KEY);
   }
   function isAgaghhhHdblogPreviewEnabled() {
     return readBooleanSetting(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY);
+  }
+  function isAgaghhhForumSearchPage(locationObject = globalThis.location) {
+    if (!isAgaghhhHost2(locationObject)) return false;
+    let url;
+    try {
+      url = new URL(locationObject?.href || "");
+    } catch {
+      return false;
+    }
+    if (!/\/search\.php$/i.test(url.pathname) || url.searchParams.get("mod") !== "forum") return false;
+    const hasSearch = normalizeText6(url.searchParams.get("srchtxt")) || url.searchParams.has("searchid");
+    if (!hasSearch) return false;
+    const page = Number.parseInt(url.searchParams.get("page") || "1", 10);
+    return !Number.isFinite(page) || page <= 1;
+  }
+  function isAgaghhhThreadResultUrl(value, baseUrl) {
+    try {
+      const url = new URL(value, baseUrl);
+      if (!isAgaghhhHost2({ hostname: url.hostname })) return false;
+      return url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid") || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function collectAgaghhhSearchResultUrls(document2) {
+    if (!document2) return [];
+    const seen = /* @__PURE__ */ new Set();
+    const anchors = document2.querySelectorAll(
+      '#ct .slst a[href], #threadlist a.xst[href], #threadlist a[href*="mod=viewthread"][href*="tid="]'
+    );
+    return [...anchors].map((anchor) => {
+      try {
+        return new URL(anchor.getAttribute("href"), document2.baseURI).href;
+      } catch {
+        return "";
+      }
+    }).filter((url) => url && isAgaghhhThreadResultUrl(url, document2.baseURI)).filter((url) => !seen.has(url) && seen.add(url));
+  }
+  function findAgaghhhSingleSearchResultUrl(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2 || !isAgaghhhForumSearchPage(locationObject)) return "";
+    const results = collectAgaghhhSearchResultUrls(document2);
+    return results.length === 1 ? results[0] : "";
+  }
+  function installAgaghhhSearchAutoRedirect(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!isAgaghhhSearchAutoRedirectEnabled()) return "";
+    const target = findAgaghhhSingleSearchResultUrl(document2, locationObject);
+    if (!target) return "";
+    if (typeof locationObject?.assign === "function") locationObject.assign(target);
+    else if (locationObject && "href" in locationObject) locationObject.href = target;
+    return target;
   }
   function firstPostContent2(document2) {
     const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
@@ -4341,6 +4395,10 @@ ${failures.join("\n")}`);
         <span><strong>\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u6807\u9898\u65C1\u663E\u793A\u641C\u7D22\u6309\u94AE\uFF0C\u8BC6\u522B\u756A\u53F7\u540E\u76F4\u63A5\u6253\u5F00 hdblog \u641C\u7D22\uFF1B\u53EF\u72EC\u7ACB\u4E8E\u4E0B\u8F7D\u589E\u5F3A\u4F7F\u7528\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
+        <span><strong>\u641C\u7D22\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">agaghhh \u8BBA\u575B\u641C\u7D22\u7B2C\u4E00\u9875\u53EA\u6709 1 \u4E2A\u552F\u4E00\u4E3B\u9898\u65F6\uFF0C\u81EA\u52A8\u8FDB\u5165\u8BE5\u4E3B\u9898\uFF1B0 \u4E2A\u6216\u591A\u4E2A\u7ED3\u679C\u4E0D\u8DF3\u8F6C\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
         <span><strong>\u663E\u793A hdblog \u5927\u9884\u89C8\u56FE</strong><small style="display:block;margin-top:2px;color:#666">\u6309\u5E16\u5B50\u756A\u53F7\u641C\u7D22 hdblog\uFF0C\u6CBF\u7528 hdblog \u7684\u201C\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD\u201D\uFF0C\u5E76\u628A\u5339\u914D\u6587\u7AE0\u7684 Preview \u5927\u56FE\u663E\u793A\u5230\u4E3B\u697C\u3002</small></span>
       </label>
@@ -4356,11 +4414,13 @@ ${failures.join("\n")}`);
     const batchInput = panel.querySelector('[data-setting="batch-open"]');
     const downloadInput = panel.querySelector('[data-setting="download"]');
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
+    const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
     const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
     const actressInput = panel.querySelector('[data-setting="real-actress"]');
     batchInput.checked = isAgaghhhBatchOpenEnabled();
     downloadInput.checked = isAgaghhhDownloadEnabled();
     crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
+    searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
     previewInput.checked = isAgaghhhHdblogPreviewEnabled();
     actressInput.checked = isAgaghhhRealActressEnabled();
     panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeX1080xSettingsPanel(document2));
@@ -4373,6 +4433,7 @@ ${failures.join("\n")}`);
         GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY2, batchInput.checked);
         GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
         GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
+        GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
         GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
         GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
       }
@@ -4391,6 +4452,7 @@ ${failures.join("\n")}`);
   }
   function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2 || !isAgaghhhHost2(locationObject)) return;
+    if (installAgaghhhSearchAutoRedirect(document2, locationObject)) return;
     if (!isAgaghhhBatchOpenEnabled()) {
       document2.getElementById(BATCH_BUTTON_ID2)?.remove();
       document2.getElementById(BATCH_TOOLBAR_ID2)?.remove();

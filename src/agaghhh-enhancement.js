@@ -4,6 +4,7 @@ import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './ag
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
 export const AGAGHHH_CROSS_SEARCH_ENABLED_KEY = 'x1080x-ex:agaghhh-cross-search-enabled';
+export const AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = 'x1080x-ex:agaghhh-search-auto-redirect-enabled';
 export const AGAGHHH_REAL_ACTRESS_ENABLED_KEY = 'x1080x-ex:agaghhh-real-actress-enabled';
 export const AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = 'x1080x-ex:agaghhh-hdblog-preview-enabled';
 const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-enabled';
@@ -51,12 +52,81 @@ export function isAgaghhhCrossSearchEnabled() {
   return readBooleanSetting(AGAGHHH_CROSS_SEARCH_ENABLED_KEY);
 }
 
+export function isAgaghhhSearchAutoRedirectEnabled() {
+  return readBooleanSetting(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY);
+}
+
 export function isAgaghhhRealActressEnabled() {
   return readBooleanSetting(AGAGHHH_REAL_ACTRESS_ENABLED_KEY);
 }
 
 export function isAgaghhhHdblogPreviewEnabled() {
   return readBooleanSetting(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY);
+}
+
+export function isAgaghhhForumSearchPage(locationObject = globalThis.location) {
+  if (!isAgaghhhHost(locationObject)) return false;
+  let url;
+  try {
+    url = new URL(locationObject?.href || '');
+  } catch {
+    return false;
+  }
+  if (!/\/search\.php$/i.test(url.pathname) || url.searchParams.get('mod') !== 'forum') return false;
+  const hasSearch = normalizeText(url.searchParams.get('srchtxt')) || url.searchParams.has('searchid');
+  if (!hasSearch) return false;
+  const page = Number.parseInt(url.searchParams.get('page') || '1', 10);
+  return !Number.isFinite(page) || page <= 1;
+}
+
+function isAgaghhhThreadResultUrl(value, baseUrl) {
+  try {
+    const url = new URL(value, baseUrl);
+    if (!isAgaghhhHost({ hostname: url.hostname })) return false;
+    return (url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid'))
+      || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function collectAgaghhhSearchResultUrls(document) {
+  if (!document) return [];
+  const seen = new Set();
+  const anchors = document.querySelectorAll(
+    '#ct .slst a[href], #threadlist a.xst[href], #threadlist a[href*="mod=viewthread"][href*="tid="]'
+  );
+  return [...anchors]
+    .map((anchor) => {
+      try {
+        return new URL(anchor.getAttribute('href'), document.baseURI).href;
+      } catch {
+        return '';
+      }
+    })
+    .filter((url) => url && isAgaghhhThreadResultUrl(url, document.baseURI))
+    .filter((url) => !seen.has(url) && seen.add(url));
+}
+
+export function findAgaghhhSingleSearchResultUrl(
+  document = globalThis.document,
+  locationObject = globalThis.location
+) {
+  if (!document || !isAgaghhhForumSearchPage(locationObject)) return '';
+  const results = collectAgaghhhSearchResultUrls(document);
+  return results.length === 1 ? results[0] : '';
+}
+
+export function installAgaghhhSearchAutoRedirect(
+  document = globalThis.document,
+  locationObject = globalThis.location
+) {
+  if (!isAgaghhhSearchAutoRedirectEnabled()) return '';
+  const target = findAgaghhhSingleSearchResultUrl(document, locationObject);
+  if (!target) return '';
+  if (typeof locationObject?.assign === 'function') locationObject.assign(target);
+  else if (locationObject && 'href' in locationObject) locationObject.href = target;
+  return target;
 }
 
 function firstPostContent(document) {
@@ -391,6 +461,10 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         <span><strong>跨站搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">在帖子标题旁显示搜索按钮，识别番号后直接打开 hdblog 搜索；可独立于下载增强使用。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
+        <span><strong>搜索单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">agaghhh 论坛搜索第一页只有 1 个唯一主题时，自动进入该主题；0 个或多个结果不跳转。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
         <span><strong>显示 hdblog 大预览图</strong><small style="display:block;margin-top:2px;color:#666">按帖子番号搜索 hdblog，沿用 hdblog 的“搜索结果屏蔽关键词”，并把匹配文章的 Preview 大图显示到主楼。</small></span>
       </label>
@@ -407,11 +481,13 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const batchInput = panel.querySelector('[data-setting="batch-open"]');
   const downloadInput = panel.querySelector('[data-setting="download"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
+  const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
   const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
   const actressInput = panel.querySelector('[data-setting="real-actress"]');
   batchInput.checked = isAgaghhhBatchOpenEnabled();
   downloadInput.checked = isAgaghhhDownloadEnabled();
   crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
+  searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
   previewInput.checked = isAgaghhhHdblogPreviewEnabled();
   actressInput.checked = isAgaghhhRealActressEnabled();
 
@@ -425,6 +501,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
+      GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
       GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
       GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
     }
@@ -453,6 +530,8 @@ export function installAgaghhhEnhancement(
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
   if (!document || !isAgaghhhHost(locationObject)) return;
+
+  if (installAgaghhhSearchAutoRedirect(document, locationObject)) return;
 
   if (!isAgaghhhBatchOpenEnabled()) {
     document.getElementById(BATCH_BUTTON_ID)?.remove();
