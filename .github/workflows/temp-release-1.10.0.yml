@@ -33,8 +33,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          VERSION=$(node -p "require('./package.json').version")
           git add -A
-          git commit -m "release: v$(node -p \"require('./package.json').version\")"
+          git commit -m "release: v${VERSION}"
           git push
       - name: Prepare release files
         id: version
