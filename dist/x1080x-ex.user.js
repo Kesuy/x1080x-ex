@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.9.2
+// @version      1.9.3
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -2098,8 +2098,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return true;
   }
   function extractHdblogVideoCode(value) {
-    const text = normalizeText(value).toUpperCase();
-    if (!text) return "";
+    const source = normalizeText(value);
+    if (!source) return "";
+    const uncensored = source.match(/^([A-Z0-9][A-Z0-9.+-]{1,31})\s+(\d{6}[-_]\d{2,4})\b/i);
+    if (uncensored) return `${uncensored[1]} ${uncensored[2]}`;
+    const text = source.toUpperCase();
     const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
     if (fc2) return `FC2${fc2[1] ? "-PPV" : ""}-${fc2[2]}`;
     const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8})\b/i);
