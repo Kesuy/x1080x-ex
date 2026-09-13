@@ -1,0 +1,70 @@
+name: Build and publish 1.10.0
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Bump to next minor version
+        run: npm version minor --no-git-tag-version
+      - name: Apply settings overhaul
+        run: python scripts/temp-release-1.10.0.py
+      - run: npm test
+      - run: npm run build
+      - run: npm run smoke
+      - name: Commit release files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "release: v$(node -p \"require('./package.json').version\")"
+          git push
+      - name: Prepare release files
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          git archive --format=zip --output="x1080x-ex-v${VERSION}-source.zip" HEAD
+          cat > release-notes.md <<'EOF'
+          ## 功能开关与设置整理
+
+          - agaghhh.cc：新增跨站搜索按钮独立开关；下载、Preview、官方后备 Preview、真实演员、批量打开、qBittorrent 回退继续独立控制。
+          - hdblog.me：新增文章宽度增强、跨站搜索、搜索结果过滤/单结果自动跳转、搜索/列表批量打开等显式开关。
+          - hdblog Preview 大图开关现在同时管理 Pixhost / refer 解析，关闭后不再主动解析或放大 Preview。
+          - 双向搜索按钮可独立于图片下载按钮使用，1PON/CARIB 等日期型无码番号继续使用日期关键字搜索。
+          - README 安装地址已改为始终指向 main 的最新 dist/x1080x-ex.user.js，不再保留旧版本查询参数。
+          - 更新 BT 多图命名文档为当前 A/B/C… 规则。
+
+          ## 验证
+
+          npm test、npm run build、npm run smoke 全部通过后才创建本 Release。
+          EOF
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: x1080x-ex v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            dist/x1080x-ex.user.js
+            x1080x-ex-v${{ steps.version.outputs.version }}-source.zip
