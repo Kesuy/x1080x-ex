@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.9.4
+// @version      1.9.5
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -268,6 +268,17 @@
   function isFc2PpvTitle(rawTitle) {
     return FC2_PPV_PATTERN.test(String(rawTitle ?? "").replace(/\s+/g, " ").trim());
   }
+  function isBtForumThread(document2, rawTitle) {
+    if (/\[BT\]/i.test(String(rawTitle ?? ""))) return true;
+    return [...document2.querySelectorAll("a[href]")].some((link) => {
+      try {
+        const url = new URL(link.getAttribute("href"), document2.baseURI);
+        return url.searchParams.get("mod") === "forumdisplay" && url.searchParams.get("fid") === "244";
+      } catch {
+        return false;
+      }
+    });
+  }
   function alphabeticImageLabel(index) {
     let value = index + 1;
     let label = "";
@@ -305,6 +316,7 @@
       images,
       hdblogPreviews,
       magnets,
+      isBtThread: isBtForumThread(document2, rawTitle),
       useFc2AbImageNames: isFc2PpvTitle(rawTitle),
       imageUrl: largestImage?.url || "",
       imageCacheUrl: largestImage?.cacheUrl || "",
@@ -331,18 +343,40 @@
       url: attachment.url,
       name: buildAttachmentFilename(resources.title, attachment.sourceName)
     })));
-    const seenImageUrls = /* @__PURE__ */ new Set();
-    const downloadImages = [
-      ...resources.images.map((image) => ({ url: image.cacheUrl || image.url })),
-      ...resources.hdblogPreviews
-    ].filter((image) => image.url && !seenImageUrls.has(image.url) && seenImageUrls.add(image.url));
-    downloadImages.forEach((image, index) => {
-      jobs.push({
-        kind: "image",
-        url: image.url,
-        name: sequencedImageFilename(resources.title.code, index, downloadImages.length)
+    const sequenceAllImages = resources.isBtThread || resources.title.code.startsWith("FC2-");
+    if (sequenceAllImages) {
+      const seenImageUrls = /* @__PURE__ */ new Set();
+      const downloadImages = [
+        ...resources.images.map((image) => ({ url: image.cacheUrl || image.url })),
+        ...resources.hdblogPreviews
+      ].filter((image) => image.url && !seenImageUrls.has(image.url) && seenImageUrls.add(image.url));
+      downloadImages.forEach((image, index) => {
+        jobs.push({
+          kind: "image",
+          url: image.url,
+          name: sequencedImageFilename(resources.title.code, index, downloadImages.length)
+        });
       });
-    });
+    } else {
+      if (resources.imageUrl) {
+        const preferredUrl = resources.imageCacheUrl || resources.imageUrl;
+        jobs.push({
+          kind: "image",
+          url: preferredUrl,
+          name: resources.hdblogPreviews.length ? `${sanitizeFilename(resources.title.code || "thread-image")} A.jpg` : resources.imageFilename
+        });
+      }
+      if (resources.hdblogPreviews.length) {
+        const safeCode = sanitizeFilename(resources.title.code || "preview");
+        resources.hdblogPreviews.forEach((image, index) => {
+          jobs.push({
+            kind: "image",
+            url: image.url,
+            name: resources.hdblogPreviews.length === 1 ? `${safeCode} B.jpg` : `${safeCode} B${index + 1}.jpg`
+          });
+        });
+      }
+    }
     return jobs;
   }
 

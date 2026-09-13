@@ -109,6 +109,7 @@ test('fetches hdblog Preview images including refer -> Pixhost resolution', asyn
 
 test('download jobs name all main-post and Preview images A/B/C in order', () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
+    <a href="forum.php?mod=forumdisplay&fid=244">BT</a>
     <h1 id="thread_subject">SVMGM-050 Sample</h1>
     <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
       <a href="forum.php?mod=attachment&aid=1">source.rar</a>

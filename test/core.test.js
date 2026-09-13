@@ -187,13 +187,8 @@ test('一次下载任务包含重命名后的附件和主楼最大图片', () =>
     },
     {
       kind: 'image',
-      url: 'https://agaghhh.cc/first-thumb.jpg',
-      name: 'SNOS-325 A.jpg',
-    },
-    {
-      kind: 'image',
       url: 'https://agaghhh.cc/second-thumb.jpg',
-      name: 'SNOS-325 B.jpg',
+      name: 'SNOS-325.jpg',
     },
   ]);
 });
@@ -210,18 +205,11 @@ test('普通帖子下载主楼中尺寸最大的图片而不是固定第二张',
 
   const jobs = buildDownloadJobs(dom.window.document);
 
-  assert.deepEqual(jobs, [
-    {
-      kind: 'image',
-      url: 'https://agaghhh.cc/image-proxy.php?id=cover',
-      name: 'ABCD-123 A.jpg',
-    },
-    {
-      kind: 'image',
-      url: 'https://agaghhh.cc/image-proxy.php?id=preview',
-      name: 'ABCD-123 B.jpg',
-    },
-  ]);
+  assert.deepEqual(jobs, [{
+    kind: 'image',
+    url: 'https://agaghhh.cc/image-proxy.php?id=cover',
+    name: 'ABCD-123.jpg',
+  }]);
 });
 
 test('图片下载使用网页已经加载的 src 地址', () => {

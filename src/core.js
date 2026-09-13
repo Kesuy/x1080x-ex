@@ -304,6 +304,18 @@ function isFc2PpvTitle(rawTitle) {
   return FC2_PPV_PATTERN.test(String(rawTitle ?? '').replace(/\s+/g, ' ').trim());
 }
 
+function isBtForumThread(document, rawTitle) {
+  if (/\[BT\]/i.test(String(rawTitle ?? ''))) return true;
+  return [...document.querySelectorAll('a[href]')].some((link) => {
+    try {
+      const url = new URL(link.getAttribute('href'), document.baseURI);
+      return url.searchParams.get('mod') === 'forumdisplay' && url.searchParams.get('fid') === '244';
+    } catch {
+      return false;
+    }
+  });
+}
+
 function fc2ImageFilename(code, index, total, useAbNames) {
   const safeCode = sanitizeFilename(code);
   if (!useAbNames) return `${safeCode}${total > 1 ? ` (${index + 1})` : ''}.jpg`;
@@ -362,6 +374,7 @@ export function extractThreadResources(document) {
     images,
     hdblogPreviews,
     magnets,
+    isBtThread: isBtForumThread(document, rawTitle),
     useFc2AbImageNames: isFc2PpvTitle(rawTitle),
     imageUrl: largestImage?.url || '',
     imageCacheUrl: largestImage?.cacheUrl || '',
@@ -391,21 +404,48 @@ export function buildDownloadJobs(document) {
     name: buildAttachmentFilename(resources.title, attachment.sourceName),
   })));
 
-  const seenImageUrls = new Set();
-  const downloadImages = [
-    ...resources.images.map((image) => ({ url: image.cacheUrl || image.url })),
-    ...resources.hdblogPreviews,
-  ].filter((image) => (
-    image.url && !seenImageUrls.has(image.url) && seenImageUrls.add(image.url)
-  ));
+  const sequenceAllImages = resources.isBtThread || resources.title.code.startsWith('FC2-');
+  if (sequenceAllImages) {
+    const seenImageUrls = new Set();
+    const downloadImages = [
+      ...resources.images.map((image) => ({ url: image.cacheUrl || image.url })),
+      ...resources.hdblogPreviews,
+    ].filter((image) => (
+      image.url && !seenImageUrls.has(image.url) && seenImageUrls.add(image.url)
+    ));
 
-  downloadImages.forEach((image, index) => {
-    jobs.push({
-      kind: 'image',
-      url: image.url,
-      name: sequencedImageFilename(resources.title.code, index, downloadImages.length),
+    downloadImages.forEach((image, index) => {
+      jobs.push({
+        kind: 'image',
+        url: image.url,
+        name: sequencedImageFilename(resources.title.code, index, downloadImages.length),
+      });
     });
-  });
+  } else {
+    if (resources.imageUrl) {
+      const preferredUrl = resources.imageCacheUrl || resources.imageUrl;
+      jobs.push({
+        kind: 'image',
+        url: preferredUrl,
+        name: resources.hdblogPreviews.length
+          ? `${sanitizeFilename(resources.title.code || 'thread-image')} A.jpg`
+          : resources.imageFilename,
+      });
+    }
+
+    if (resources.hdblogPreviews.length) {
+      const safeCode = sanitizeFilename(resources.title.code || 'preview');
+      resources.hdblogPreviews.forEach((image, index) => {
+        jobs.push({
+          kind: 'image',
+          url: image.url,
+          name: resources.hdblogPreviews.length === 1
+            ? `${safeCode} B.jpg`
+            : `${safeCode} B${index + 1}.jpg`,
+        });
+      });
+    }
+  }
 
   return jobs;
 }
