@@ -1,0 +1,35 @@
+name: Validate cross-search buttons
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm version patch --no-git-tag-version
+      - run: python scripts/temp-cross-search-buttons.py
+      - run: npm test
+      - run: npm run build
+      - run: npm run smoke
+      - name: Commit cross-search update
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/hdblog-article.js src/agaghhh-enhancement.js test/cross-search-buttons.test.js package.json package-lock.json dist/x1080x-ex.user.js
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: add hdblog and agaghhh cross-search buttons"
+          git push
