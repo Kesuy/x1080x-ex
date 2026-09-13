@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.9.5
+// @version      1.9.6
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1894,6 +1894,7 @@ ${failures.join("\n")}
   var MAX_HDBLOG_ARTICLE_WIDTH = 3e3;
   var LAYOUT_STYLE_ID = "x1080x-ex-hdblog-article-layout";
   var DOWNLOAD_BUTTON_ID = "x1080x-ex-hdblog-image-download";
+  var SEARCH_BUTTON_ID = "x1080x-ex-hdblog-agaghhh-search";
   var ARTICLE_BODY_CLASS = "x1080x-hdblog-single";
   var REQUEST_TIMEOUT3 = 6e4;
   var PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
@@ -2159,6 +2160,24 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const text = normalizeText(content.textContent).slice(0, 5e3);
     const labelled = text.match(/(?:品番|品號|品号|番号|番號|code)\s*[:：]?\s*([A-Z0-9 _-]{4,30})/i);
     return extractHdblogVideoCode(labelled?.[1] || text);
+  }
+  function hdblogAgaghhhSearchKeyword(code) {
+    const source = normalizeText(code);
+    const uncensored = source.match(/^[A-Z0-9][A-Z0-9.+-]{1,31}\s+(\d{6}[-_]\d{2,4})$/i);
+    return uncensored?.[1] || source;
+  }
+  function buildAgaghhhSearchUrl(code) {
+    const keyword = hdblogAgaghhhSearchKeyword(code);
+    if (!keyword) return "";
+    return `https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
+  }
+  function openSearchTab(document2, url) {
+    if (!url) return;
+    if (typeof GM_openInTab === "function") {
+      GM_openInTab(url, { active: true, insert: true, setParent: true });
+      return;
+    }
+    document2.defaultView?.open(url, "_blank", "noopener");
   }
   function absoluteHttpUrl(document2, value) {
     if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
@@ -2510,7 +2529,44 @@ ${failures.join("\n")}`);
       gmRequest2,
       initialCandidates
     ));
-    title.append(" ", button);
+    const searchButton = document2.createElement("button");
+    searchButton.id = SEARCH_BUTTON_ID;
+    searchButton.type = "button";
+    searchButton.textContent = "\u{1F50D}";
+    searchButton.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 agaghhh.cc \u641C\u7D22";
+    searchButton.setAttribute("aria-label", "\u5728 agaghhh.cc \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+    Object.assign(searchButton.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      justifyContent: "center",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    searchButton.addEventListener("mouseenter", () => {
+      searchButton.style.background = "#246eaf";
+    });
+    searchButton.addEventListener("mouseleave", () => {
+      searchButton.style.background = "#398bd4";
+    });
+    searchButton.addEventListener("click", () => {
+      const url = buildAgaghhhSearchUrl(extractHdblogArticleCode(document2));
+      if (!url) {
+        document2.defaultView?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
+        return;
+      }
+      openSearchTab(document2, url);
+    });
+    title.append(" ", searchButton, " ", button);
   }
   function rawStoredWidth() {
     if (typeof GM_getValue !== "function") return "";
@@ -3846,6 +3902,7 @@ ${failures.join("\n")}`);
   var LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = "x1080x-ex:agaghhh-enhancement-enabled";
   var SETTINGS_PANEL_ID = "x1080x-ex-settings-panel";
   var DOWNLOAD_BUTTON_ID2 = "x1080x-ex-download";
+  var SEARCH_BUTTON_ID2 = "x1080x-ex-agaghhh-hdblog-search";
   var BATCH_BUTTON_ID2 = "x1080x-ex-open-page";
   var BATCH_TOOLBAR_ID2 = "x1080x-ex-open-page-toolbar";
   var AV_WIKI_ORIGIN2 = "https://av-wiki.net";
@@ -4035,6 +4092,61 @@ ${failures.join("\n")}`);
   function threadCode2(document2) {
     return parseThreadTitle(threadTitleElement(document2)?.textContent || document2.title).code;
   }
+  function buildHdblogSearchUrlForThreadCode(code) {
+    const keyword = hdblogSearchCodeForThreadCode(code);
+    return keyword ? `http://hdblog.me/?s=${encodeURIComponent(keyword)}` : "";
+  }
+  function openSearchTab2(document2, url) {
+    if (!url) return;
+    if (typeof GM_openInTab === "function") {
+      GM_openInTab(url, { active: true, insert: true, setParent: true });
+      return;
+    }
+    document2.defaultView?.open(url, "_blank", "noopener");
+  }
+  function installHdblogSearchButton(document2) {
+    if (document2.getElementById(SEARCH_BUTTON_ID2)) return;
+    const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID2);
+    if (!downloadButton) return;
+    const code = threadCode2(document2);
+    if (!code) return;
+    const button = document2.createElement("button");
+    button.id = SEARCH_BUTTON_ID2;
+    button.type = "button";
+    button.textContent = "\u{1F50D}";
+    button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 hdblog \u641C\u7D22";
+    button.setAttribute("aria-label", "\u5728 hdblog \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+    Object.assign(button.style, {
+      float: "right",
+      position: "relative",
+      zIndex: "20",
+      margin: "0 0 6px 4px",
+      padding: "7px 10px",
+      minWidth: "38px",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "14px",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      button.style.background = "#398bd4";
+    });
+    button.addEventListener("click", () => {
+      const url = buildHdblogSearchUrlForThreadCode(threadCode2(document2));
+      if (!url) {
+        document2.defaultView?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
+        return;
+      }
+      openSearchTab2(document2, url);
+    });
+    downloadButton.insertAdjacentElement("afterend", button);
+  }
   function bindRealActressDownload(document2, gmRequest2) {
     const button = document2.getElementById(DOWNLOAD_BUTTON_ID2);
     if (!button || button.getAttribute(REAL_ACTRESS_BOUND_ATTR) === "1") return;
@@ -4176,8 +4288,10 @@ ${failures.join("\n")}`);
     }
     if (!isAgaghhhDownloadEnabled()) {
       document2.getElementById(DOWNLOAD_BUTTON_ID2)?.remove();
+      document2.getElementById(SEARCH_BUTTON_ID2)?.remove();
       return;
     }
+    installHdblogSearchButton(document2);
     if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
   }
 

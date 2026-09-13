@@ -1,5 +1,5 @@
 import { parseThreadTitle } from './core.js';
-import { installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
+import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
 
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
@@ -9,6 +9,7 @@ const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-en
 
 const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-download';
+const SEARCH_BUTTON_ID = 'x1080x-ex-agaghhh-hdblog-search';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
 const AV_WIKI_ORIGIN = 'https://av-wiki.net';
@@ -244,6 +245,61 @@ function threadCode(document) {
   return parseThreadTitle(threadTitleElement(document)?.textContent || document.title).code;
 }
 
+export function buildHdblogSearchUrlForThreadCode(code) {
+  const keyword = hdblogSearchCodeForThreadCode(code);
+  return keyword ? `http://hdblog.me/?s=${encodeURIComponent(keyword)}` : '';
+}
+
+function openSearchTab(document, url) {
+  if (!url) return;
+  if (typeof GM_openInTab === 'function') {
+    GM_openInTab(url, { active: true, insert: true, setParent: true });
+    return;
+  }
+  document.defaultView?.open(url, '_blank', 'noopener');
+}
+
+function installHdblogSearchButton(document) {
+  if (document.getElementById(SEARCH_BUTTON_ID)) return;
+  const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
+  if (!downloadButton) return;
+  const code = threadCode(document);
+  if (!code) return;
+
+  const button = document.createElement('button');
+  button.id = SEARCH_BUTTON_ID;
+  button.type = 'button';
+  button.textContent = '🔍';
+  button.title = '按当前番号在 hdblog 搜索';
+  button.setAttribute('aria-label', '在 hdblog 搜索当前番号');
+  Object.assign(button.style, {
+    float: 'right',
+    position: 'relative',
+    zIndex: '20',
+    margin: '0 0 6px 4px',
+    padding: '7px 10px',
+    minWidth: '38px',
+    border: '1px solid #2878c8',
+    borderRadius: '5px',
+    color: '#fff',
+    background: '#398bd4',
+    cursor: 'pointer',
+    fontSize: '14px',
+    lineHeight: '20px',
+  });
+  button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
+  button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
+  button.addEventListener('click', () => {
+    const url = buildHdblogSearchUrlForThreadCode(threadCode(document));
+    if (!url) {
+      document.defaultView?.alert('没有识别到影片番号。');
+      return;
+    }
+    openSearchTab(document, url);
+  });
+  downloadButton.insertAdjacentElement('afterend', button);
+}
+
 function bindRealActressDownload(document, gmRequest) {
   const button = document.getElementById(DOWNLOAD_BUTTON_ID);
   if (!button || button.getAttribute(REAL_ACTRESS_BOUND_ATTR) === '1') return;
@@ -401,8 +457,10 @@ export function installAgaghhhEnhancement(
 
   if (!isAgaghhhDownloadEnabled()) {
     document.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
+    document.getElementById(SEARCH_BUTTON_ID)?.remove();
     return;
   }
 
+  installHdblogSearchButton(document);
   if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
 }

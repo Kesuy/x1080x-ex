@@ -16,6 +16,7 @@ const MIN_HDBLOG_ARTICLE_WIDTH = 600;
 const MAX_HDBLOG_ARTICLE_WIDTH = 3000;
 const LAYOUT_STYLE_ID = 'x1080x-ex-hdblog-article-layout';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-hdblog-image-download';
+const SEARCH_BUTTON_ID = 'x1080x-ex-hdblog-agaghhh-search';
 const ARTICLE_BODY_CLASS = 'x1080x-hdblog-single';
 const REQUEST_TIMEOUT = 60000;
 const PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
@@ -307,6 +308,27 @@ export function extractHdblogArticleCode(document) {
   const text = normalizeText(content.textContent).slice(0, 5000);
   const labelled = text.match(/(?:品番|品號|品号|番号|番號|code)\s*[:：]?\s*([A-Z0-9 _-]{4,30})/i);
   return extractHdblogVideoCode(labelled?.[1] || text);
+}
+
+export function hdblogAgaghhhSearchKeyword(code) {
+  const source = normalizeText(code);
+  const uncensored = source.match(/^[A-Z0-9][A-Z0-9.+-]{1,31}\s+(\d{6}[-_]\d{2,4})$/i);
+  return uncensored?.[1] || source;
+}
+
+export function buildAgaghhhSearchUrl(code) {
+  const keyword = hdblogAgaghhhSearchKeyword(code);
+  if (!keyword) return '';
+  return `https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
+}
+
+function openSearchTab(document, url) {
+  if (!url) return;
+  if (typeof GM_openInTab === 'function') {
+    GM_openInTab(url, { active: true, insert: true, setParent: true });
+    return;
+  }
+  document.defaultView?.open(url, '_blank', 'noopener');
 }
 
 function absoluteHttpUrl(document, value) {
@@ -705,7 +727,41 @@ function installDownloadButton(document, locationObject, gmRequest) {
     gmRequest,
     initialCandidates
   ));
-  title.append(' ', button);
+
+  const searchButton = document.createElement('button');
+  searchButton.id = SEARCH_BUTTON_ID;
+  searchButton.type = 'button';
+  searchButton.textContent = '🔍';
+  searchButton.title = '按当前番号在 agaghhh.cc 搜索';
+  searchButton.setAttribute('aria-label', '在 agaghhh.cc 搜索当前番号');
+  Object.assign(searchButton.style, {
+    display: 'inline-flex',
+    alignItems: 'center',
+    verticalAlign: 'middle',
+    margin: '0 0 4px 8px',
+    padding: '5px 8px',
+    minWidth: '34px',
+    justifyContent: 'center',
+    border: '1px solid #2878c8',
+    borderRadius: '5px',
+    color: '#fff',
+    background: '#398bd4',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '600',
+    lineHeight: '20px',
+  });
+  searchButton.addEventListener('mouseenter', () => { searchButton.style.background = '#246eaf'; });
+  searchButton.addEventListener('mouseleave', () => { searchButton.style.background = '#398bd4'; });
+  searchButton.addEventListener('click', () => {
+    const url = buildAgaghhhSearchUrl(extractHdblogArticleCode(document));
+    if (!url) {
+      document.defaultView?.alert('没有识别到影片番号。');
+      return;
+    }
+    openSearchTab(document, url);
+  });
+  title.append(' ', searchButton, ' ', button);
 }
 
 function rawStoredWidth() {
