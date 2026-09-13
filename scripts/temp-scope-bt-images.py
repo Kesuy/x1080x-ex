@@ -148,15 +148,23 @@ replace_once(
 """
 )
 
-replace_once(
-    'test/agaghhh-hdblog-preview.test.js',
-    """  const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
+path = Path('test/agaghhh-hdblog-preview.test.js')
+text = path.read_text(encoding='utf-8')
+marker = "test('download jobs name all main-post and Preview images A/B/C in order'"
+start = text.find(marker)
+if start < 0:
+    raise SystemExit('target Preview naming test not found')
+old = """  const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
     <h1 id="thread_subject">SVMGM-050 Sample</h1>
     <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
-""",
-    """  const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
+"""
+new = """  const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
     <a href="forum.php?mod=forumdisplay&fid=244">BT</a>
     <h1 id="thread_subject">SVMGM-050 Sample</h1>
     <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
 """
-)
+pos = text.find(old, start)
+if pos < 0:
+    raise SystemExit('target Preview naming fixture not found after marker')
+text = text[:pos] + new + text[pos + len(old):]
+path.write_text(text, encoding='utf-8')
