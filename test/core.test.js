@@ -187,8 +187,13 @@ test('一次下载任务包含重命名后的附件和主楼最大图片', () =>
     },
     {
       kind: 'image',
+      url: 'https://agaghhh.cc/first-thumb.jpg',
+      name: 'SNOS-325 A.jpg',
+    },
+    {
+      kind: 'image',
       url: 'https://agaghhh.cc/second-thumb.jpg',
-      name: 'SNOS-325.jpg',
+      name: 'SNOS-325 B.jpg',
     },
   ]);
 });
@@ -205,11 +210,18 @@ test('普通帖子下载主楼中尺寸最大的图片而不是固定第二张',
 
   const jobs = buildDownloadJobs(dom.window.document);
 
-  assert.deepEqual(jobs, [{
-    kind: 'image',
-    url: 'https://agaghhh.cc/image-proxy.php?id=cover',
-    name: 'ABCD-123.jpg',
-  }]);
+  assert.deepEqual(jobs, [
+    {
+      kind: 'image',
+      url: 'https://agaghhh.cc/image-proxy.php?id=cover',
+      name: 'ABCD-123 A.jpg',
+    },
+    {
+      kind: 'image',
+      url: 'https://agaghhh.cc/image-proxy.php?id=preview',
+      name: 'ABCD-123 B.jpg',
+    },
+  ]);
 });
 
 test('图片下载使用网页已经加载的 src 地址', () => {
@@ -288,8 +300,8 @@ test('FC2-PPV 三张及以上图片从第二张开始使用 B1、B2 编号', () 
 
   assert.deepEqual(buildDownloadJobs(dom.window.document).map((job) => job.name), [
     'FC2-4960963 A.jpg',
-    'FC2-4960963 B1.jpg',
-    'FC2-4960963 B2.jpg',
+    'FC2-4960963 B.jpg',
+    'FC2-4960963 C.jpg',
   ]);
 });
 
@@ -311,9 +323,9 @@ test('FC2 帖子下载主楼全部大图并按顺序编号', () => {
       url: 'https://agaghhh.cc/forum.php?mod=attachment&aid=fc2',
       name: 'FC2-4917072 ハメ️羞恥と興奮でピンクのオマンコは大洪水️最後は初體験の顔射＆口內射精で恍惚の表情️ - FC2電子市場.rar',
     },
-    { kind: 'image', url: 'https://agaghhh.cc/cached/fc2-a.jpg', name: 'FC2-4917072 (1).jpg' },
-    { kind: 'image', url: 'https://agaghhh.cc/cached/fc2-b.jpg', name: 'FC2-4917072 (2).jpg' },
-    { kind: 'image', url: 'https://agaghhh.cc/cached/fc2-c.jpg', name: 'FC2-4917072 (3).jpg' },
+    { kind: 'image', url: 'https://agaghhh.cc/cached/fc2-a.jpg', name: 'FC2-4917072 A.jpg' },
+    { kind: 'image', url: 'https://agaghhh.cc/cached/fc2-b.jpg', name: 'FC2-4917072 B.jpg' },
+    { kind: 'image', url: 'https://agaghhh.cc/cached/fc2-c.jpg', name: 'FC2-4917072 C.jpg' },
   ]);
 });
 

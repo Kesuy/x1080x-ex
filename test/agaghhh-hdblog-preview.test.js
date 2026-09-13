@@ -107,7 +107,7 @@ test('fetches hdblog Preview images including refer -> Pixhost resolution', asyn
   ]);
 });
 
-test('download jobs name the agaghhh cover A and injected Preview images B1/B2', () => {
+test('download jobs name all main-post and Preview images A/B/C in order', () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
     <h1 id="thread_subject">SVMGM-050 Sample</h1>
     <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
@@ -131,8 +131,8 @@ test('download jobs name the agaghhh cover A and injected Preview images B1/B2',
   assert.equal(attachment?.name, 'SVMGM-050 Sample.rar');
   assert.deepEqual(images.map((job) => job.name), [
     'SVMGM-050 A.jpg',
-    'SVMGM-050 B1.jpg',
-    'SVMGM-050 B2.jpg',
+    'SVMGM-050 B.jpg',
+    'SVMGM-050 C.jpg',
   ]);
   assert.deepEqual(images.map((job) => job.url), [
     'https://agaghhh.cc/original.jpg',

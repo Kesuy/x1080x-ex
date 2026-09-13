@@ -39,8 +39,13 @@ test('MGS BT 页面生成清理后的 torrent 文件名', () => {
     },
     {
       kind: 'image',
+      url: 'https://example.com/cover.jpg',
+      name: '300MIUM-1407 A.jpg',
+    },
+    {
+      kind: 'image',
       url: 'https://example.com/preview.jpg',
-      name: '300MIUM-1407.jpg',
+      name: '300MIUM-1407 B.jpg',
     },
   ]);
   dom.window.close();

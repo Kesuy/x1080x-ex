@@ -328,6 +328,12 @@ export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequ
   return urls;
 }
 
+export function hdblogSearchCodeForThreadCode(code) {
+  const normalized = String(code || '').trim().toUpperCase();
+  const uncensored = normalized.match(/^[A-Z0-9]{2,12}-(\d{6}[-_]\d{3,4})$/i);
+  return uncensored?.[1] || normalized;
+}
+
 export async function fetchHdblogPreviewForCode(
   code,
   gmRequest = globalThis.GM_xmlhttpRequest,
@@ -335,14 +341,15 @@ export async function fetchHdblogPreviewForCode(
 ) {
   const normalizedCode = String(code || '').trim().toUpperCase();
   if (!normalizedCode) return { code: '', articleUrl: '', imageUrls: [], blocked: [], remaining: [] };
+  const searchCode = hdblogSearchCodeForThreadCode(normalizedCode);
 
-  const searchUrl = `${HDBLOG_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
+  const searchUrl = `${HDBLOG_ORIGIN}/?s=${encodeURIComponent(searchCode)}`;
   const searchResponse = await requestText(searchUrl, gmRequest, `${HDBLOG_ORIGIN}/`);
   const searchDocument = parseHtml(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
   if (!searchDocument) return { code: normalizedCode, articleUrl: '', imageUrls: [], blocked: [], remaining: [] };
 
   const candidates = collectHdblogSearchResults(searchDocument);
-  const selection = chooseHdblogSearchResult(candidates, normalizedCode, getHdblogBlockedKeywords());
+  const selection = chooseHdblogSearchResult(candidates, searchCode, getHdblogBlockedKeywords());
   if (!selection.selected) {
     return { code: normalizedCode, articleUrl: '', imageUrls: [], ...selection };
   }

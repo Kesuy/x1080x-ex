@@ -7,6 +7,9 @@ const LEADING_GROUP_PATTERN = /^(\[([^\]]*)\]|\(([^)]*)\))\s*/u;
 const MGS_RELEASE_PREFIX_PATTERN = /^\[BT\]\s*\(MGS\)\s*\(([^)]+)\)\s*/i;
 const MAGNET_PATTERN = /magnet:\?xt=urn:btih:[a-z0-9]+(?:&[^\s<>"']+)*/gi;
 const HDBLOG_PREVIEW_URL_ATTR = 'data-x1080x-hdblog-preview-url';
+const UNCENSORED_SUFFIX_PATTERN = /^(\d{6}[-_]\d{3,4})-([A-Z0-9]{2,12})\b\s*/i;
+const UNCENSORED_CANONICAL_PATTERN = /^([A-Z0-9]{2,12})-(\d{6}[-_]\d{3,4})\b\s*/i;
+const UNCENSORED_RELEASE_TAG_PATTERN = /^(?:\[BT\]|\((?:無碼|无码|UNCENSORED)\))\s*/iu;
 
 export function parseDomainList(value) {
   const domains = String(value ?? '')
@@ -80,6 +83,25 @@ export function collectForumThreadLinks(document) {
 
 export function parseThreadTitle(rawTitle) {
   const normalized = String(rawTitle ?? '').replace(/\s+/g, ' ').trim();
+
+  const uncensoredSuffixMatch = normalized.match(UNCENSORED_SUFFIX_PATTERN);
+  const uncensoredCanonicalMatch = uncensoredSuffixMatch ? null : normalized.match(UNCENSORED_CANONICAL_PATTERN);
+  const uncensoredMatch = uncensoredSuffixMatch || uncensoredCanonicalMatch;
+  if (uncensoredMatch) {
+    const code = uncensoredSuffixMatch
+      ? `${uncensoredMatch[2].toUpperCase()}-${uncensoredMatch[1]}`
+      : `${uncensoredMatch[1].toUpperCase()}-${uncensoredMatch[2]}`;
+    let remainder = normalized.slice(uncensoredMatch[0].length).trimStart();
+    while (UNCENSORED_RELEASE_TAG_PATTERN.test(remainder)) {
+      remainder = remainder.replace(UNCENSORED_RELEASE_TAG_PATTERN, '');
+    }
+    return {
+      code,
+      cleanTitle: `${code}${remainder ? ` ${remainder.trim()}` : ''}`,
+      hasExternalSubtitle: false,
+    };
+  }
+
   const directFc2Match = normalized.match(DIRECT_FC2_PATTERN);
   if (directFc2Match) {
     const code = `FC2-${directFc2Match[1]}`;
@@ -290,6 +312,22 @@ function fc2ImageFilename(code, index, total, useAbNames) {
   return `${safeCode} B${index}.jpg`;
 }
 
+function alphabeticImageLabel(index) {
+  let value = index + 1;
+  let label = '';
+  while (value > 0) {
+    value -= 1;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+  return label;
+}
+
+function sequencedImageFilename(code, index, total) {
+  const safeCode = sanitizeFilename(code || 'thread-image');
+  return total === 1 ? `${safeCode}.jpg` : `${safeCode} ${alphabeticImageLabel(index)}.jpg`;
+}
+
 export function extractThreadResources(document) {
   const rawTitle = document.querySelector('#thread_subject')?.textContent
     || document.querySelector('h1.ts, .vwthd h1, h1')?.textContent
@@ -353,41 +391,21 @@ export function buildDownloadJobs(document) {
     name: buildAttachmentFilename(resources.title, attachment.sourceName),
   })));
 
-  if (resources.title.code.startsWith('FC2-')) {
-    resources.images.forEach((image, index) => {
-      const preferredUrl = image.cacheUrl || image.url;
-      jobs.push({
-        kind: 'image',
-        url: preferredUrl,
-        name: fc2ImageFilename(
-          resources.title.code,
-          index,
-          resources.images.length,
-          resources.useFc2AbImageNames
-        ),
-      });
-    });
-  } else if (resources.imageUrl) {
-    const preferredUrl = resources.imageCacheUrl || resources.imageUrl;
+  const seenImageUrls = new Set();
+  const downloadImages = [
+    ...resources.images.map((image) => ({ url: image.cacheUrl || image.url })),
+    ...resources.hdblogPreviews,
+  ].filter((image) => (
+    image.url && !seenImageUrls.has(image.url) && seenImageUrls.add(image.url)
+  ));
+
+  downloadImages.forEach((image, index) => {
     jobs.push({
       kind: 'image',
-      url: preferredUrl,
-      name: resources.hdblogPreviews.length ? `${sanitizeFilename(resources.title.code || 'thread-image')} A.jpg` : resources.imageFilename,
+      url: image.url,
+      name: sequencedImageFilename(resources.title.code, index, downloadImages.length),
     });
-  }
-
-  if (resources.hdblogPreviews.length) {
-    const safeCode = sanitizeFilename(resources.title.code || 'preview');
-    resources.hdblogPreviews.forEach((image, index) => {
-      jobs.push({
-        kind: 'image',
-        url: image.url,
-        name: resources.title.code.startsWith('FC2-')
-          ? `${safeCode} -${index + 1}.jpg`
-          : (resources.hdblogPreviews.length === 1 ? `${safeCode} B.jpg` : `${safeCode} B${index + 1}.jpg`),
-      });
-    });
-  }
+  });
 
   return jobs;
 }
