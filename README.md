@@ -115,6 +115,8 @@ Tampermonkey 菜单提供：
 
 ## 本地开发
 
+开发或让 Codex / ChatGPT 修改本项目之前，请先阅读 **[AGENTS.md](AGENTS.md)**。其中约定：以后新增的用户可感知、可独立控制功能，原则上都必须提供对应开关，并放入正确的设置面板。
+
 ```bash
 npm install
 npm run check
