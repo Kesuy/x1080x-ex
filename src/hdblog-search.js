@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'x1080x-ex:hdblog-blocked-keywords';
+export const HDBLOG_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-search-filter-enabled';
 const DEFAULT_BLOCKED_KEYWORDS = 'モザイク破壊';
 
 function normalizeKeyword(value) {
@@ -90,15 +91,20 @@ export function filterHdblogSearchResults(document, keywords) {
 }
 
 function getBlockedKeywords() {
-  const stored = GM_getValue(STORAGE_KEY, null);
+  const stored = typeof GM_getValue === 'function' ? GM_getValue(STORAGE_KEY, null) : null;
   if (stored === null || stored === undefined) {
     return parseBlockedKeywords(DEFAULT_BLOCKED_KEYWORDS);
   }
   return parseBlockedKeywords(stored);
 }
 
+export function isHdblogSearchEnhancementEnabled() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, true) !== false;
+}
+
 export function applyHdblogSearchEnhancement(windowObject = window) {
-  if (!isHdblogSearchUrl(windowObject.location.href)) {
+  if (!isHdblogSearchEnhancementEnabled() || !isHdblogSearchUrl(windowObject.location.href)) {
     return { blocked: [], remaining: [], redirectTarget: '' };
   }
   const keywords = getBlockedKeywords();

@@ -1,10 +1,14 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 
 export const HDBLOG_ARTICLE_WIDTH_KEY = 'x1080x-ex:hdblog-article-width';
+export const HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY = 'x1080x-ex:hdblog-article-layout-enabled';
 export const HDBLOG_SHOW_DOWNLOAD_AREA_KEY = 'x1080x-ex:hdblog-show-download-area';
 export const HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY = 'x1080x-ex:hdblog-show-image-download-button';
+export const HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY = 'x1080x-ex:hdblog-show-cross-search-button';
 export const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
 export const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
+export const HDBLOG_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-search-filter-enabled';
+export const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
 export const DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
 const DEFAULT_HDBLOG_BLOCKED_KEYWORDS = 'モザイク破壊';
 const HDBLOG_SETTINGS_PANEL_ID = 'x1080x-ex-hdblog-settings-panel';
@@ -728,6 +732,13 @@ function installDownloadButton(document, locationObject, gmRequest) {
     initialCandidates
   ));
 
+  title.append(' ', button);
+}
+
+function installAgaghhhSearchButton(document) {
+  if (document.getElementById(SEARCH_BUTTON_ID)) return;
+  const title = articleTitleElement(document);
+  if (!title) return;
   const searchButton = document.createElement('button');
   searchButton.id = SEARCH_BUTTON_ID;
   searchButton.type = 'button';
@@ -735,21 +746,11 @@ function installDownloadButton(document, locationObject, gmRequest) {
   searchButton.title = '按当前番号在 agaghhh.cc 搜索';
   searchButton.setAttribute('aria-label', '在 agaghhh.cc 搜索当前番号');
   Object.assign(searchButton.style, {
-    display: 'inline-flex',
-    alignItems: 'center',
-    verticalAlign: 'middle',
-    margin: '0 0 4px 8px',
-    padding: '5px 8px',
-    minWidth: '34px',
-    justifyContent: 'center',
-    border: '1px solid #2878c8',
-    borderRadius: '5px',
-    color: '#fff',
-    background: '#398bd4',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: '600',
-    lineHeight: '20px',
+    display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle',
+    margin: '0 0 4px 8px', padding: '5px 8px', minWidth: '34px',
+    justifyContent: 'center', border: '1px solid #2878c8', borderRadius: '5px',
+    color: '#fff', background: '#398bd4', cursor: 'pointer', fontSize: '13px',
+    fontWeight: '600', lineHeight: '20px',
   });
   searchButton.addEventListener('mouseenter', () => { searchButton.style.background = '#246eaf'; });
   searchButton.addEventListener('mouseleave', () => { searchButton.style.background = '#398bd4'; });
@@ -761,7 +762,7 @@ function installDownloadButton(document, locationObject, gmRequest) {
     }
     openSearchTab(document, url);
   });
-  title.append(' ', searchButton, ' ', button);
+  title.append(' ', searchButton);
 }
 
 function rawStoredWidth() {
@@ -775,6 +776,13 @@ function readStoredWidth() {
   return stored ? normalizeHdblogArticleWidth(stored, DEFAULT_HDBLOG_ARTICLE_WIDTH) : null;
 }
 
+export function isHdblogArticleLayoutEnabled() {
+  if (typeof GM_getValue !== 'function') return Boolean(rawStoredWidth());
+  const stored = GM_getValue(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY, null);
+  if (stored === null || stored === undefined) return Boolean(rawStoredWidth());
+  return stored !== false;
+}
+
 function readDownloadAreaVisible() {
   if (typeof GM_getValue !== 'function') return true;
   return GM_getValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, true) !== false;
@@ -783,6 +791,21 @@ function readDownloadAreaVisible() {
 function readImageDownloadButtonVisible() {
   if (typeof GM_getValue !== 'function') return true;
   return GM_getValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, true) !== false;
+}
+
+export function isHdblogCrossSearchEnabled() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, true) !== false;
+}
+
+export function isHdblogSearchFilterEnabled() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, true) !== false;
+}
+
+export function isHdblogBatchOpenEnabled() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
 }
 
 export function isHdblogPreviewExpansionEnabled() {
@@ -838,15 +861,22 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   });
   panel.innerHTML = `
     <h2 style="margin:0 0 18px;font-size:20px">x1080x-ex · hdblog 设置</h2>
-    <label style="display:block;margin-bottom:16px">
-      <span style="display:block;font-weight:600;margin-bottom:6px">文章主内容区宽度（px）</span>
-      <input data-setting="width" type="number" min="${MIN_HDBLOG_ARTICLE_WIDTH}" max="${MAX_HDBLOG_ARTICLE_WIDTH}" step="1"
-        placeholder="留空 = 网站默认宽度"
-        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
-      <small style="display:block;margin-top:5px;color:#666">只扩展白色主内容区域；原正文宽度保持不变并居中。</small>
-    </label>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
-      <div style="font-weight:700;margin-bottom:10px">文章页显示</div>
+      <div style="font-weight:700;margin-bottom:10px">文章布局</div>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="layout-enabled" type="checkbox">
+        启用文章宽度增强
+      </label>
+      <label data-width-row style="display:block;margin-left:24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">文章主内容区宽度（px）</span>
+        <input data-setting="width" type="number" min="${MIN_HDBLOG_ARTICLE_WIDTH}" max="${MAX_HDBLOG_ARTICLE_WIDTH}" step="1"
+          placeholder="${DEFAULT_HDBLOG_ARTICLE_WIDTH}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+        <small style="display:block;margin-top:5px;color:#666">关闭开关时完全使用网站原始布局；开启后只扩展白色主内容区域。</small>
+      </label>
+    </div>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:10px">文章页功能</div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="show-downloads" type="checkbox">
         显示 Btfile / katfile / Freedl / Rapidgator 网盘下载区域
@@ -855,33 +885,64 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <input data-setting="show-image-download" type="checkbox">
         显示标题旁的图片下载按钮（⬇）
       </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="cross-search" type="checkbox">
+        显示跨站搜索按钮（🔍，搜索 agaghhh.cc）
+      </label>
       <label style="display:flex;align-items:center;gap:9px">
         <input data-setting="expand-preview" type="checkbox">
-        自动展开 Preview 大图
+        自动展开 Preview 大图（含 Pixhost / refer 解析）
       </label>
-      <small style="display:block;margin-top:9px;color:#666">关闭 Preview 大图后保留网站原始缩略图；保存设置后页面会自动刷新。</small>
     </div>
-    <label style="display:block;margin-bottom:18px">
-      <span style="display:block;font-weight:600;margin-bottom:6px">搜索结果屏蔽关键词</span>
-      <textarea data-setting="keywords" rows="5" placeholder="留空 = 不屏蔽"
-        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-      <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索页刷新后生效。</small>
-    </label>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:10px">搜索 / 列表页功能</div>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="batch-open" type="checkbox">
+        显示“后台顺序打开本页主题”按钮
+      </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="search-filter" type="checkbox">
+        启用搜索结果屏蔽与单结果自动跳转
+      </label>
+      <label data-keywords-row style="display:block;margin-left:24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">搜索结果屏蔽关键词</span>
+        <textarea data-setting="keywords" rows="5" placeholder="留空 = 不屏蔽"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
+        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；该规则也供 agaghhh 的 hdblog Preview 搜索复用。</small>
+      </label>
+    </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
       <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
     </div>`;
 
+  const layoutInput = panel.querySelector('[data-setting="layout-enabled"]');
   const widthInput = panel.querySelector('[data-setting="width"]');
   const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
   const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
+  const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const previewInput = panel.querySelector('[data-setting="expand-preview"]');
+  const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
+  const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
   const keywordsInput = panel.querySelector('[data-setting="keywords"]');
-  widthInput.value = rawStoredWidth();
+
+  layoutInput.checked = isHdblogArticleLayoutEnabled();
+  widthInput.value = rawStoredWidth() || String(DEFAULT_HDBLOG_ARTICLE_WIDTH);
   downloadsInput.checked = readDownloadAreaVisible();
   imageDownloadInput.checked = readImageDownloadButtonVisible();
+  crossSearchInput.checked = isHdblogCrossSearchEnabled();
   previewInput.checked = isHdblogPreviewExpansionEnabled();
+  batchOpenInput.checked = isHdblogBatchOpenEnabled();
+  searchFilterInput.checked = isHdblogSearchFilterEnabled();
   keywordsInput.value = readBlockedKeywordsText();
+
+  const syncDependentFields = () => {
+    widthInput.disabled = !layoutInput.checked;
+    keywordsInput.disabled = !searchFilterInput.checked;
+  };
+  syncDependentFields();
+  layoutInput.addEventListener('change', syncDependentFields);
+  searchFilterInput.addEventListener('change', syncDependentFields);
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeHdblogSettingsPanel(document));
   overlay.addEventListener('click', (event) => {
@@ -890,21 +951,25 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   panel.addEventListener('submit', (event) => {
     event.preventDefault();
     const widthText = widthInput.value.trim();
-    let numeric = null;
+    let numeric = DEFAULT_HDBLOG_ARTICLE_WIDTH;
     if (widthText) {
       numeric = Number.parseInt(widthText, 10);
       if (!Number.isFinite(numeric) || numeric < MIN_HDBLOG_ARTICLE_WIDTH || numeric > MAX_HDBLOG_ARTICLE_WIDTH) {
-        document.defaultView?.alert(`请输入 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} 之间的整数，或留空使用网站默认宽度。`);
+        document.defaultView?.alert(`请输入 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} 之间的整数。`);
         widthInput.focus();
         return;
       }
     }
 
     if (typeof GM_setValue === 'function') {
-      GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, widthText ? numeric : '');
+      GM_setValue(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY, layoutInput.checked);
+      GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
       GM_setValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, downloadsInput.checked);
       GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
+      GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
       GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, previewInput.checked);
+      GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
+      GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, searchFilterInput.checked);
       GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
     }
 
@@ -932,9 +997,14 @@ export function installHdblogArticleEnhancement(
   registerHdblogSettingsMenu(document, locationObject);
   if (!isHdblogArticlePage(document, locationObject)) return;
   const storedWidth = readStoredWidth();
-  if (storedWidth === null) clearHdblogArticleLayout(document);
-  else applyHdblogArticleLayout(document, storedWidth);
+  if (isHdblogArticleLayoutEnabled()) {
+    applyHdblogArticleLayout(document, storedWidth || DEFAULT_HDBLOG_ARTICLE_WIDTH);
+  } else {
+    clearHdblogArticleLayout(document);
+  }
   applyHdblogDownloadAreaVisibility(document, readDownloadAreaVisible());
   if (readImageDownloadButtonVisible()) installDownloadButton(document, locationObject, gmRequest);
   else document.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
+  if (isHdblogCrossSearchEnabled()) installAgaghhhSearchButton(document);
+  else document.getElementById(SEARCH_BUTTON_ID)?.remove();
 }

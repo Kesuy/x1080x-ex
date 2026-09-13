@@ -8,6 +8,8 @@ import { requestTorrentBytes } from './torrent.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
+const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
+const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
 const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
@@ -77,6 +79,22 @@ function registerSettingsMenu() {
     saveDomains(parseDomainList(DEFAULT_DOMAINS));
     window.alert(`已恢复默认域名：${DEFAULT_DOMAINS}`);
   });
+}
+
+function currentHost() {
+  return String(location.hostname || '').toLowerCase().replace(/\.$/, '');
+}
+
+function isBatchOpenEnabledForCurrentHost() {
+  if (typeof GM_getValue !== 'function') return true;
+  const host = currentHost();
+  if (host === 'agaghhh.cc' || host.endsWith('.agaghhh.cc')) {
+    return GM_getValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, true) !== false;
+  }
+  if (host === 'hdblog.me' || host.endsWith('.hdblog.me')) {
+    return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
+  }
+  return true;
 }
 
 function isThreadPage() {
@@ -726,5 +744,5 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
   if (expandHdblogPreview) expandHdblogPreviewImages();
   if (isThreadPage()) addDownloadButton();
-  if (isBatchOpenPage()) addBatchOpenButton();
+  if (isBatchOpenPage() && isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
 }

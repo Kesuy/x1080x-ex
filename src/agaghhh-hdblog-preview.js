@@ -84,6 +84,7 @@ function parseHtml(html, baseUrl, hostDocument = globalThis.document) {
 }
 
 function getHdblogBlockedKeywords() {
+  if (typeof GM_getValue === 'function' && GM_getValue('x1080x-ex:hdblog-search-filter-enabled', true) === false) return [];
   const stored = typeof GM_getValue === 'function'
     ? GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY, null)
     : null;

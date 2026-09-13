@@ -2,6 +2,7 @@ import {
   expandHdblogPreviewImages,
   expandHdblogPixhostPreviewImages,
 } from './hdblog-preview.js';
+import { isHdblogPreviewExpansionEnabled } from './hdblog-article.js';
 
 const REQUEST_TIMEOUT = 30000;
 const PREVIEW_BOUNDARY_PATTERN = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
@@ -228,8 +229,11 @@ export function installHdblogReferResolver(
   locationObject = globalThis.location,
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
-  if (!document || !isHdblogHostname(locationObject?.hostname)) return;
-  const run = () => void resolveHdblogPreviewReferLinks(document, locationObject, gmRequest);
+  if (!document || !isHdblogHostname(locationObject?.hostname) || !isHdblogPreviewExpansionEnabled()) return;
+  const run = () => {
+    if (!isHdblogPreviewExpansionEnabled()) return;
+    void resolveHdblogPreviewReferLinks(document, locationObject, gmRequest);
+  };
   run();
   const view = document.defaultView;
   if (!view) return;

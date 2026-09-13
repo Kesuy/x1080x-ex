@@ -3,6 +3,7 @@ import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './ag
 
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
+export const AGAGHHH_CROSS_SEARCH_ENABLED_KEY = 'x1080x-ex:agaghhh-cross-search-enabled';
 export const AGAGHHH_REAL_ACTRESS_ENABLED_KEY = 'x1080x-ex:agaghhh-real-actress-enabled';
 export const AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = 'x1080x-ex:agaghhh-hdblog-preview-enabled';
 const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-enabled';
@@ -44,6 +45,10 @@ export function isAgaghhhBatchOpenEnabled() {
 
 export function isAgaghhhDownloadEnabled() {
   return readBooleanSetting(AGAGHHH_DOWNLOAD_ENABLED_KEY);
+}
+
+export function isAgaghhhCrossSearchEnabled() {
+  return readBooleanSetting(AGAGHHH_CROSS_SEARCH_ENABLED_KEY);
 }
 
 export function isAgaghhhRealActressEnabled() {
@@ -261,10 +266,14 @@ function openSearchTab(document, url) {
 
 function installHdblogSearchButton(document) {
   if (document.getElementById(SEARCH_BUTTON_ID)) return;
-  const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
-  if (!downloadButton) return;
   const code = threadCode(document);
   if (!code) return;
+  const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
+  const title = threadTitleElement(document);
+  const host = downloadButton?.parentElement
+    || title?.closest('.vwthd, .ts')
+    || title?.parentElement;
+  if (!host) return;
 
   const button = document.createElement('button');
   button.id = SEARCH_BUTTON_ID;
@@ -273,19 +282,10 @@ function installHdblogSearchButton(document) {
   button.title = '按当前番号在 hdblog 搜索';
   button.setAttribute('aria-label', '在 hdblog 搜索当前番号');
   Object.assign(button.style, {
-    float: 'right',
-    position: 'relative',
-    zIndex: '20',
-    margin: '0 0 6px 4px',
-    padding: '7px 10px',
-    minWidth: '38px',
-    border: '1px solid #2878c8',
-    borderRadius: '5px',
-    color: '#fff',
-    background: '#398bd4',
-    cursor: 'pointer',
-    fontSize: '14px',
-    lineHeight: '20px',
+    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 4px',
+    padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
+    borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
+    fontSize: '14px', lineHeight: '20px',
   });
   button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
   button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
@@ -297,7 +297,8 @@ function installHdblogSearchButton(document) {
     }
     openSearchTab(document, url);
   });
-  downloadButton.insertAdjacentElement('afterend', button);
+  if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
+  else host.prepend(button);
 }
 
 function bindRealActressDownload(document, gmRequest) {
@@ -386,6 +387,10 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         <span><strong>下载增强</strong><small style="display:block;margin-top:2px;color:#666">在帖子页显示下载按钮，并使用现有附件、图片、种子下载与自动命名逻辑。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="cross-search" type="checkbox" style="margin-top:3px">
+        <span><strong>跨站搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">在帖子标题旁显示搜索按钮，识别番号后直接打开 hdblog 搜索；可独立于下载增强使用。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
         <span><strong>显示 hdblog 大预览图</strong><small style="display:block;margin-top:2px;color:#666">按帖子番号搜索 hdblog，沿用 hdblog 的“搜索结果屏蔽关键词”，并把匹配文章的 Preview 大图显示到主楼。</small></span>
       </label>
@@ -401,10 +406,12 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
 
   const batchInput = panel.querySelector('[data-setting="batch-open"]');
   const downloadInput = panel.querySelector('[data-setting="download"]');
+  const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
   const actressInput = panel.querySelector('[data-setting="real-actress"]');
   batchInput.checked = isAgaghhhBatchOpenEnabled();
   downloadInput.checked = isAgaghhhDownloadEnabled();
+  crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
   previewInput.checked = isAgaghhhHdblogPreviewEnabled();
   actressInput.checked = isAgaghhhRealActressEnabled();
 
@@ -417,6 +424,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     if (typeof GM_setValue === 'function') {
       GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+      GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
       GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
       GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
     }
@@ -455,12 +463,11 @@ export function installAgaghhhEnhancement(
     void installAgaghhhHdblogPreview(document, locationObject, gmRequest);
   }
 
-  if (!isAgaghhhDownloadEnabled()) {
-    document.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
-    document.getElementById(SEARCH_BUTTON_ID)?.remove();
-    return;
-  }
+  const downloadEnabled = isAgaghhhDownloadEnabled();
+  if (!downloadEnabled) document.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
 
-  installHdblogSearchButton(document);
-  if (isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
+  if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document);
+  else document.getElementById(SEARCH_BUTTON_ID)?.remove();
+
+  if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
 }
