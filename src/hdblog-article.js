@@ -277,9 +277,16 @@ export function clearHdblogArticleLayout(document) {
 }
 
 export function extractHdblogVideoCode(value) {
-  const text = normalizeText(value).toUpperCase();
-  if (!text) return '';
+  const source = normalizeText(value);
+  if (!source) return '';
 
+  // hdblog 的无码标题常以“厂牌 + 日期型番号”开头，例如：
+  // 1pondo 112625_001 / Caribbeancom 112525-001。
+  // 这里保留厂牌大小写以及番号中的 _ / -，让 Preview 下载名与页面标题一致。
+  const uncensored = source.match(/^([A-Z0-9][A-Z0-9.+-]{1,31})\s+(\d{6}[-_]\d{2,4})\b/i);
+  if (uncensored) return `${uncensored[1]} ${uncensored[2]}`;
+
+  const text = source.toUpperCase();
   const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
   if (fc2) return `FC2${fc2[1] ? '-PPV' : ''}-${fc2[2]}`;
 
