@@ -210,11 +210,50 @@ function largestSrcsetUrl(document, value) {
     .sort((a, b) => b.score - a.score)[0]?.url || '';
 }
 
+function pixhostAssetIdentity(value, baseUrl) {
+  const href = absoluteHttpUrl(value, baseUrl);
+  if (!href) return '';
+  try {
+    const url = new URL(href);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    const isPixhostHost = /^(?:(?:t|img)\d+\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i.test(hostname);
+    if (!isPixhostHost) return '';
+    const match = url.pathname.match(/^\/(?:show|images|thumbs)\/(\d+)\/([^/?#]+)$/i);
+    if (!match) return '';
+    return `pixhost:${match[1]}/${match[2].toLowerCase()}`;
+  } catch {
+    return '';
+  }
+}
+
+function existingPixhostAssets(content) {
+  const identities = new Set();
+  if (!content) return identities;
+  const add = (value) => {
+    const identity = pixhostAssetIdentity(value, content.ownerDocument?.baseURI);
+    if (identity) identities.add(identity);
+  };
+  for (const anchor of content.querySelectorAll('a[href]')) add(anchor.getAttribute('href'));
+  for (const image of content.querySelectorAll('img')) {
+    add(image.currentSrc);
+    add(image.getAttribute('src'));
+    add(image.getAttribute('data-original'));
+    add(image.getAttribute('data-lazy-src'));
+    add(image.getAttribute('data-src'));
+  }
+  return identities;
+}
+
 function bestImageUrl(document, image) {
   if (!image) return '';
   const anchorHref = absoluteHttpUrl(image.closest('a[href]')?.getAttribute('href'), document.baseURI);
+  const directAnchorHref = anchorHref
+    && !isPixhostShowUrl(anchorHref, document.baseURI)
+    && IMAGE_EXTENSION_PATTERN.test(anchorHref)
+    ? anchorHref
+    : '';
   const candidates = [
-    anchorHref && IMAGE_EXTENSION_PATTERN.test(anchorHref) ? anchorHref : '',
+    directAnchorHref,
     image.getAttribute('data-orig-file'),
     image.getAttribute('data-original'),
     image.getAttribute('data-lazy-src'),
@@ -293,8 +332,10 @@ export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequ
   const handledImages = new Set();
   const add = (value) => {
     const url = absoluteHttpUrl(value, articleUrl);
-    if (!url || seen.has(url)) return;
-    seen.add(url);
+    if (!url) return;
+    const key = pixhostAssetIdentity(url, articleUrl) || url;
+    if (seen.has(key)) return;
+    seen.add(key);
     urls.push(url);
   };
 
@@ -378,103 +419,6 @@ function firstPostContent(document) {
   return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
 }
 
-function escapeRegExp(value) {
-  return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function absoluteAnchorHref(document, anchor) {
-  try {
-    return new URL(anchor?.getAttribute('href') || '', document.baseURI).href;
-  } catch {
-    return '';
-  }
-}
-
-export function removeNumberedForumPreviewArtifacts(document, code) {
-  const content = firstPostContent(document);
-  const normalizedCode = normalizeText(code);
-  if (!content || !normalizedCode) return 0;
-
-  const pattern = new RegExp(
-    `^${escapeRegExp(normalizedCode)}\\s+Preview\\s+(\\d+)\\s*$`,
-    'i'
-  );
-  let removed = 0;
-
-  for (const image of [...content.querySelectorAll('img')]) {
-    const label = normalizeText(image.getAttribute('alt') || image.getAttribute('title'));
-    const match = label.match(pattern);
-    if (!match || Number.parseInt(match[1], 10) < 2) continue;
-    const host = image.closest('a[href]');
-    if (host && normalizeText(host.textContent) === '') host.remove();
-    else image.remove();
-  }
-
-  for (const anchor of [...content.querySelectorAll('a[href]')]) {
-    const label = normalizeText(anchor.textContent);
-    const match = label.match(pattern);
-    if (!match || Number.parseInt(match[1], 10) < 2) continue;
-
-    const href = absoluteAnchorHref(document, anchor);
-    let removedMatchingMedia = false;
-    if (href) {
-      for (const candidate of [...content.querySelectorAll('a[href]')]) {
-        if (candidate === anchor || !candidate.querySelector('img')) continue;
-        if (absoluteAnchorHref(document, candidate) !== href) continue;
-        candidate.remove();
-        removedMatchingMedia = true;
-      }
-    }
-
-    const wrapper = anchor.closest('p, center, div, span');
-    if (
-      wrapper
-      && wrapper !== content
-      && normalizeText(wrapper.textContent) === label
-      && wrapper.querySelectorAll('a[href]').length === 1
-      && wrapper.querySelectorAll('img').length === 0
-    ) {
-      wrapper.remove();
-      removed += 1;
-      continue;
-    }
-
-    if (!removedMatchingMedia) {
-      let previous = anchor.previousSibling;
-      let skipped = 0;
-      while (previous && skipped < 3) {
-        if (previous.nodeType === 3 && !normalizeText(previous.nodeValue)) {
-          const before = previous.previousSibling;
-          previous.remove();
-          previous = before;
-          skipped += 1;
-          continue;
-        }
-        if (previous.nodeType === 1 && previous.tagName === 'BR') {
-          const before = previous.previousSibling;
-          previous.remove();
-          previous = before;
-          skipped += 1;
-          continue;
-        }
-        break;
-      }
-      if (
-        previous?.nodeType === 1
-        && (previous.tagName === 'IMG' || (previous.tagName === 'A' && previous.querySelector('img')))
-      ) {
-        previous.remove();
-      }
-    }
-
-    const next = anchor.nextSibling;
-    anchor.remove();
-    if (next?.nodeType === 1 && next.tagName === 'BR') next.remove();
-    removed += 1;
-  }
-  return removed;
-}
-
 function isThreadPage(locationObject) {
   try {
     const url = new URL(locationObject?.href || '');
@@ -488,6 +432,20 @@ export function renderAgaghhhHdblogPreview(document, result) {
   if (!document || !result?.imageUrls?.length || document.getElementById(CONTAINER_ID)) return null;
   const content = firstPostContent(document);
   if (!content) return null;
+
+  const existingAssets = existingPixhostAssets(content);
+  const seenResultAssets = new Set();
+  const imageUrls = result.imageUrls.filter((value) => {
+    const url = absoluteHttpUrl(value, document.baseURI);
+    if (!url) return false;
+    const identity = pixhostAssetIdentity(url, document.baseURI);
+    const key = identity || url;
+    if (identity && existingAssets.has(identity)) return false;
+    if (seenResultAssets.has(key)) return false;
+    seenResultAssets.add(key);
+    return true;
+  });
+  if (!imageUrls.length) return null;
 
   const section = document.createElement('section');
   section.id = CONTAINER_ID;
@@ -505,7 +463,7 @@ export function renderAgaghhhHdblogPreview(document, result) {
   section.append(heading);
 
   const previewReferer = result.referer || result.articleUrl || result.sourceUrl || '';
-  result.imageUrls.forEach((url, index) => {
+  imageUrls.forEach((url, index) => {
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.target = '_blank';
@@ -536,7 +494,6 @@ export async function installAgaghhhHdblogPreview(
   if (!document || !isThreadPage(locationObject) || document.getElementById(CONTAINER_ID)) return null;
   const code = threadCode(document);
   if (!code) return null;
-  removeNumberedForumPreviewArtifacts(document, code);
   let result = null;
   try {
     result = await fetchHdblogPreviewForCode(code, gmRequest, document);

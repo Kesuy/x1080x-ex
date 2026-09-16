@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.3
+// @version      1.10.4
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -32,7 +32,6 @@
   var UNCENSORED_SUFFIX_PATTERN = /^(\d{6}[-_]\d{3,4})-([A-Z0-9]{2,12})\b\s*/i;
   var UNCENSORED_CANONICAL_PATTERN = /^([A-Z0-9]{2,12})-(\d{6}[-_]\d{3,4})\b\s*/i;
   var UNCENSORED_RELEASE_TAG_PATTERN = /^(?:\[BT\]|\((?:無碼|无码|UNCENSORED)\))\s*/iu;
-  var FORUM_PREVIEW_PATTERN = /\bpreview(?:\s*(\d+))?\b/i;
   function parseDomainList(value) {
     const domains = String(value ?? "").split(/[\s,;，；]+/).map((entry) => entry.trim()).filter(Boolean).map((entry) => {
       try {
@@ -247,39 +246,12 @@
       image.currentSrc || image.getAttribute("src") || image.getAttribute("data-original")
     );
   }
-  function forumPreviewOrdinal(image) {
-    const candidates = [
-      image.getAttribute("alt"),
-      image.getAttribute("title"),
-      image.closest("a[href]")?.getAttribute("title"),
-      image.closest("a[href]")?.textContent
-    ];
-    let current = image.closest("a[href]") || image;
-    for (let depth = 0; current && depth < 3; depth += 1) {
-      let previous = current.previousSibling;
-      let scanned = 0;
-      while (previous && scanned < 4) {
-        if (previous.nodeType === 1 && previous.querySelector?.("img")) break;
-        candidates.push(previous.textContent || previous.nodeValue || "");
-        previous = previous.previousSibling;
-        scanned += 1;
-      }
-      current = current.parentElement;
-    }
-    for (const candidate of candidates) {
-      const match = String(candidate || "").replace(/\s+/g, " ").trim().match(FORUM_PREVIEW_PATTERN);
-      if (!match) continue;
-      return match[1] ? Number.parseInt(match[1], 10) || 1 : 1;
-    }
-    return 0;
-  }
   function contentImages(document2, content) {
     if (!content) return [];
     const seen = /* @__PURE__ */ new Set();
     return [...content.querySelectorAll("img")].filter(isContentImage).map((image, order) => ({
       url: largeImageUrl(document2, image),
       cacheUrl: cachedImageUrl(document2, image),
-      previewOrdinal: forumPreviewOrdinal(image),
       ...imageSize(image),
       order
     })).filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
@@ -331,9 +303,8 @@
       url: absoluteUrl(document2, link.getAttribute("href")),
       sourceName: attachmentSourceName(link)
     })).filter((attachment) => attachment.url);
-    const allImages = contentImages(document2, content);
+    const images = contentImages(document2, content);
     const hdblogPreviews = hdblogPreviewImages(document2, content);
-    const images = hdblogPreviews.length ? allImages.filter((image) => image.previewOrdinal === 0) : allImages.filter((image) => image.previewOrdinal <= 1);
     const magnets = contentMagnets(content);
     const largestImage = images.reduce((largest, image) => {
       if (!largest) return image;
@@ -3813,11 +3784,44 @@ ${failures.join("\n")}`);
       return url ? { url, score } : null;
     }).filter(Boolean).sort((a, b) => b.score - a.score)[0]?.url || "";
   }
+  function pixhostAssetIdentity(value, baseUrl) {
+    const href = absoluteHttpUrl5(value, baseUrl);
+    if (!href) return "";
+    try {
+      const url = new URL(href);
+      const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+      const isPixhostHost = /^(?:(?:t|img)\d+\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i.test(hostname);
+      if (!isPixhostHost) return "";
+      const match = url.pathname.match(/^\/(?:show|images|thumbs)\/(\d+)\/([^/?#]+)$/i);
+      if (!match) return "";
+      return `pixhost:${match[1]}/${match[2].toLowerCase()}`;
+    } catch {
+      return "";
+    }
+  }
+  function existingPixhostAssets(content) {
+    const identities = /* @__PURE__ */ new Set();
+    if (!content) return identities;
+    const add = (value) => {
+      const identity = pixhostAssetIdentity(value, content.ownerDocument?.baseURI);
+      if (identity) identities.add(identity);
+    };
+    for (const anchor of content.querySelectorAll("a[href]")) add(anchor.getAttribute("href"));
+    for (const image of content.querySelectorAll("img")) {
+      add(image.currentSrc);
+      add(image.getAttribute("src"));
+      add(image.getAttribute("data-original"));
+      add(image.getAttribute("data-lazy-src"));
+      add(image.getAttribute("data-src"));
+    }
+    return identities;
+  }
   function bestImageUrl(document2, image) {
     if (!image) return "";
     const anchorHref = absoluteHttpUrl5(image.closest("a[href]")?.getAttribute("href"), document2.baseURI);
+    const directAnchorHref = anchorHref && !isPixhostShowUrl(anchorHref, document2.baseURI) && IMAGE_EXTENSION_PATTERN3.test(anchorHref) ? anchorHref : "";
     const candidates = [
-      anchorHref && IMAGE_EXTENSION_PATTERN3.test(anchorHref) ? anchorHref : "",
+      directAnchorHref,
       image.getAttribute("data-orig-file"),
       image.getAttribute("data-original"),
       image.getAttribute("data-lazy-src"),
@@ -3885,8 +3889,10 @@ ${failures.join("\n")}`);
     const handledImages = /* @__PURE__ */ new Set();
     const add = (value) => {
       const url = absoluteHttpUrl5(value, articleUrl);
-      if (!url || seen.has(url)) return;
-      seen.add(url);
+      if (!url) return;
+      const key = pixhostAssetIdentity(url, articleUrl) || url;
+      if (seen.has(key)) return;
+      seen.add(key);
       urls.push(url);
     };
     for (const anchor of [...range.content.querySelectorAll("a[href]")].filter((node) => inPreviewRange4(range, node))) {
@@ -3949,84 +3955,6 @@ ${failures.join("\n")}`);
     const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
     return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
   }
-  function escapeRegExp(value) {
-    return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-  function absoluteAnchorHref(document2, anchor) {
-    try {
-      return new URL(anchor?.getAttribute("href") || "", document2.baseURI).href;
-    } catch {
-      return "";
-    }
-  }
-  function removeNumberedForumPreviewArtifacts(document2, code) {
-    const content = firstPostContent(document2);
-    const normalizedCode = normalizeText5(code);
-    if (!content || !normalizedCode) return 0;
-    const pattern = new RegExp(
-      `^${escapeRegExp(normalizedCode)}\\s+Preview\\s+(\\d+)\\s*$`,
-      "i"
-    );
-    let removed = 0;
-    for (const image of [...content.querySelectorAll("img")]) {
-      const label = normalizeText5(image.getAttribute("alt") || image.getAttribute("title"));
-      const match = label.match(pattern);
-      if (!match || Number.parseInt(match[1], 10) < 2) continue;
-      const host = image.closest("a[href]");
-      if (host && normalizeText5(host.textContent) === "") host.remove();
-      else image.remove();
-    }
-    for (const anchor of [...content.querySelectorAll("a[href]")]) {
-      const label = normalizeText5(anchor.textContent);
-      const match = label.match(pattern);
-      if (!match || Number.parseInt(match[1], 10) < 2) continue;
-      const href = absoluteAnchorHref(document2, anchor);
-      let removedMatchingMedia = false;
-      if (href) {
-        for (const candidate of [...content.querySelectorAll("a[href]")]) {
-          if (candidate === anchor || !candidate.querySelector("img")) continue;
-          if (absoluteAnchorHref(document2, candidate) !== href) continue;
-          candidate.remove();
-          removedMatchingMedia = true;
-        }
-      }
-      const wrapper = anchor.closest("p, center, div, span");
-      if (wrapper && wrapper !== content && normalizeText5(wrapper.textContent) === label && wrapper.querySelectorAll("a[href]").length === 1 && wrapper.querySelectorAll("img").length === 0) {
-        wrapper.remove();
-        removed += 1;
-        continue;
-      }
-      if (!removedMatchingMedia) {
-        let previous = anchor.previousSibling;
-        let skipped = 0;
-        while (previous && skipped < 3) {
-          if (previous.nodeType === 3 && !normalizeText5(previous.nodeValue)) {
-            const before = previous.previousSibling;
-            previous.remove();
-            previous = before;
-            skipped += 1;
-            continue;
-          }
-          if (previous.nodeType === 1 && previous.tagName === "BR") {
-            const before = previous.previousSibling;
-            previous.remove();
-            previous = before;
-            skipped += 1;
-            continue;
-          }
-          break;
-        }
-        if (previous?.nodeType === 1 && (previous.tagName === "IMG" || previous.tagName === "A" && previous.querySelector("img"))) {
-          previous.remove();
-        }
-      }
-      const next = anchor.nextSibling;
-      anchor.remove();
-      if (next?.nodeType === 1 && next.tagName === "BR") next.remove();
-      removed += 1;
-    }
-    return removed;
-  }
   function isThreadPage2(locationObject) {
     try {
       const url = new URL(locationObject?.href || "");
@@ -4039,6 +3967,19 @@ ${failures.join("\n")}`);
     if (!document2 || !result?.imageUrls?.length || document2.getElementById(CONTAINER_ID)) return null;
     const content = firstPostContent(document2);
     if (!content) return null;
+    const existingAssets = existingPixhostAssets(content);
+    const seenResultAssets = /* @__PURE__ */ new Set();
+    const imageUrls = result.imageUrls.filter((value) => {
+      const url = absoluteHttpUrl5(value, document2.baseURI);
+      if (!url) return false;
+      const identity = pixhostAssetIdentity(url, document2.baseURI);
+      const key = identity || url;
+      if (identity && existingAssets.has(identity)) return false;
+      if (seenResultAssets.has(key)) return false;
+      seenResultAssets.add(key);
+      return true;
+    });
+    if (!imageUrls.length) return null;
     const section = document2.createElement("section");
     section.id = CONTAINER_ID;
     section.style.cssText = "clear:both;margin:24px 0 8px;padding:16px 0 0;border-top:1px solid #ddd";
@@ -4053,7 +3994,7 @@ ${failures.join("\n")}`);
     heading.append(source);
     section.append(heading);
     const previewReferer = result.referer || result.articleUrl || result.sourceUrl || "";
-    result.imageUrls.forEach((url, index) => {
+    imageUrls.forEach((url, index) => {
       const anchor = document2.createElement("a");
       anchor.href = url;
       anchor.target = "_blank";
@@ -4077,7 +4018,6 @@ ${failures.join("\n")}`);
     if (!document2 || !isThreadPage2(locationObject) || document2.getElementById(CONTAINER_ID)) return null;
     const code = threadCode(document2);
     if (!code) return null;
-    removeNumberedForumPreviewArtifacts(document2, code);
     let result = null;
     try {
       result = await fetchHdblogPreviewForCode(code, gmRequest2, document2);
