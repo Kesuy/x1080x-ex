@@ -1,0 +1,233 @@
+name: Release numbered Preview DOM fix
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Apply numbered Preview DOM fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          src_path = Path('src/agaghhh-hdblog-preview.js')
+          src = src_path.read_text(encoding='utf-8')
+          needle = """function isThreadPage(locationObject) {
+          """
+          helper = r"""function escapeRegExp(value) {
+            return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          }
+
+          function absoluteAnchorHref(document, anchor) {
+            try {
+              return new URL(anchor?.getAttribute('href') || '', document.baseURI).href;
+            } catch {
+              return '';
+            }
+          }
+
+          export function removeNumberedForumPreviewArtifacts(document, code) {
+            const content = firstPostContent(document);
+            const normalizedCode = normalizeText(code);
+            if (!content || !normalizedCode) return 0;
+
+            const pattern = new RegExp(
+              `^${escapeRegExp(normalizedCode)}\\s+Preview\\s+(\\d+)\\s*$`,
+              'i'
+            );
+            let removed = 0;
+
+            for (const image of [...content.querySelectorAll('img')]) {
+              const label = normalizeText(image.getAttribute('alt') || image.getAttribute('title'));
+              const match = label.match(pattern);
+              if (!match || Number.parseInt(match[1], 10) < 2) continue;
+              const host = image.closest('a[href]');
+              if (host && normalizeText(host.textContent) === '') host.remove();
+              else image.remove();
+            }
+
+            for (const anchor of [...content.querySelectorAll('a[href]')]) {
+              const label = normalizeText(anchor.textContent);
+              const match = label.match(pattern);
+              if (!match || Number.parseInt(match[1], 10) < 2) continue;
+
+              const href = absoluteAnchorHref(document, anchor);
+              let removedMatchingMedia = false;
+              if (href) {
+                for (const candidate of [...content.querySelectorAll('a[href]')]) {
+                  if (candidate === anchor || !candidate.querySelector('img')) continue;
+                  if (absoluteAnchorHref(document, candidate) !== href) continue;
+                  candidate.remove();
+                  removedMatchingMedia = true;
+                }
+              }
+
+              const wrapper = anchor.closest('p, center, div, span');
+              if (
+                wrapper
+                && wrapper !== content
+                && normalizeText(wrapper.textContent) === label
+                && wrapper.querySelectorAll('a[href]').length === 1
+                && wrapper.querySelectorAll('img').length === 0
+              ) {
+                wrapper.remove();
+                removed += 1;
+                continue;
+              }
+
+              if (!removedMatchingMedia) {
+                let previous = anchor.previousSibling;
+                let skipped = 0;
+                while (previous && skipped < 3) {
+                  if (previous.nodeType === 3 && !normalizeText(previous.nodeValue)) {
+                    const before = previous.previousSibling;
+                    previous.remove();
+                    previous = before;
+                    skipped += 1;
+                    continue;
+                  }
+                  if (previous.nodeType === 1 && previous.tagName === 'BR') {
+                    const before = previous.previousSibling;
+                    previous.remove();
+                    previous = before;
+                    skipped += 1;
+                    continue;
+                  }
+                  break;
+                }
+                if (
+                  previous?.nodeType === 1
+                  && (previous.tagName === 'IMG' || (previous.tagName === 'A' && previous.querySelector('img')))
+                ) {
+                  previous.remove();
+                }
+              }
+
+              const next = anchor.nextSibling;
+              anchor.remove();
+              if (next?.nodeType === 1 && next.tagName === 'BR') next.remove();
+              removed += 1;
+            }
+            return removed;
+          }
+
+          function isThreadPage(locationObject) {
+          """
+          if needle not in src:
+              raise SystemExit('source insertion point not found')
+          src = src.replace(needle, helper, 1)
+
+          needle = """  const code = threadCode(document);
+            if (!code) return null;
+            let result = null;
+          """
+          replacement = """  const code = threadCode(document);
+            if (!code) return null;
+            removeNumberedForumPreviewArtifacts(document, code);
+            let result = null;
+          """
+          if needle not in src:
+              raise SystemExit('install insertion point not found')
+          src = src.replace(needle, replacement, 1)
+          src_path.write_text(src, encoding='utf-8')
+
+          test_path = Path('test/agaghhh-hdblog-preview.test.js')
+          test = test_path.read_text(encoding='utf-8')
+          needle = """  fetchHdblogPreviewForCode,
+            renderAgaghhhHdblogPreview,
+          """
+          replacement = """  fetchHdblogPreviewForCode,
+            removeNumberedForumPreviewArtifacts,
+            renderAgaghhhHdblogPreview,
+          """
+          if needle not in test:
+              raise SystemExit('test import insertion point not found')
+          test = test.replace(needle, replacement, 1)
+          test += r"""
+
+          test('removes CEMD-826 Preview 2 link and its matching broken-image anchor', () => {
+            const dom = new JSDOM(`<!doctype html><html><body>
+              <h1 id="thread_subject">CEMD-826 Sample</h1>
+              <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
+                <a id="preview-1-image" href="https://pixhost.to/show/111/preview-1.jpg"><img src="https://t1.pixhost.to/thumbs/111/preview-1.jpg"></a>
+                <a id="preview-1-label" href="https://pixhost.to/show/111/preview-1.jpg">CEMD-826 Preview</a>
+                <a id="preview-2-image" href="https://pixhost.to/show/222/preview-2.jpg"><img src="https://t1.pixhost.to/thumbs/222/preview-2.jpg"></a>
+                <br>
+                <a id="preview-2-label" href="https://pixhost.to/show/222/preview-2.jpg">CEMD-826 Preview 2</a>
+              </div></div></div>
+            </body></html>`, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1024053' });
+
+            assert.equal(removeNumberedForumPreviewArtifacts(dom.window.document, 'CEMD-826'), 1);
+            assert.ok(dom.window.document.getElementById('preview-1-image'));
+            assert.ok(dom.window.document.getElementById('preview-1-label'));
+            assert.equal(dom.window.document.getElementById('preview-2-image'), null);
+            assert.equal(dom.window.document.getElementById('preview-2-label'), null);
+            assert.equal(dom.window.document.body.textContent.includes('CEMD-826 Preview 2'), false);
+          });
+          """
+          test_path.write_text(test, encoding='utf-8')
+          PY
+      - name: Test fix
+        run: npm test
+      - name: Bump patch version
+        run: npm version patch --no-git-tag-version
+      - run: npm run build
+      - run: npm run smoke
+      - name: Remove temporary release workflow
+        run: rm -f .github/workflows/temp-release-1.10.3.yml
+      - name: Commit release files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          VERSION=$(node -p "require('./package.json').version")
+          git add -A
+          git commit -m "release: v${VERSION}"
+          git push
+      - name: Prepare release
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+          git archive --format=zip --output="x1080x-ex-v${VERSION}-source.zip" HEAD
+          cat > release-notes.md <<'EOF'
+          ## 修复页面残留 Preview 2
+
+          - 修复 CEMD-826 等帖子页面仍显示 `Preview 2` 链接的问题。
+          - 同时移除与 `Preview 2/3/...` 指向同一地址的坏图/缩略图节点。
+          - 保留正常的首个 `Preview`，不影响原始主图和首个有效预览。
+          - 下载过滤逻辑继续保留，页面显示和下载任务两层都避免误识别。
+
+          ## 验证
+
+          npm test、npm run build、npm run smoke 全部通过后发布。
+          EOF
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: x1080x-ex v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            dist/x1080x-ex.user.js
+            x1080x-ex-v${{ steps.version.outputs.version }}-source.zip
