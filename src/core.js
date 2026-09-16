@@ -10,6 +10,7 @@ const HDBLOG_PREVIEW_URL_ATTR = 'data-x1080x-hdblog-preview-url';
 const UNCENSORED_SUFFIX_PATTERN = /^(\d{6}[-_]\d{3,4})-([A-Z0-9]{2,12})\b\s*/i;
 const UNCENSORED_CANONICAL_PATTERN = /^([A-Z0-9]{2,12})-(\d{6}[-_]\d{3,4})\b\s*/i;
 const UNCENSORED_RELEASE_TAG_PATTERN = /^(?:\[BT\]|\((?:無碼|无码|UNCENSORED)\))\s*/iu;
+const FORUM_PREVIEW_PATTERN = /\bpreview(?:\s*(\d+))?\b/i;
 
 export function parseDomainList(value) {
   const domains = String(value ?? '')
@@ -272,6 +273,35 @@ function cachedImageUrl(document, image) {
   );
 }
 
+function forumPreviewOrdinal(image) {
+  const candidates = [
+    image.getAttribute('alt'),
+    image.getAttribute('title'),
+    image.closest('a[href]')?.getAttribute('title'),
+    image.closest('a[href]')?.textContent,
+  ];
+
+  let current = image.closest('a[href]') || image;
+  for (let depth = 0; current && depth < 3; depth += 1) {
+    let previous = current.previousSibling;
+    let scanned = 0;
+    while (previous && scanned < 4) {
+      if (previous.nodeType === 1 && previous.querySelector?.('img')) break;
+      candidates.push(previous.textContent || previous.nodeValue || '');
+      previous = previous.previousSibling;
+      scanned += 1;
+    }
+    current = current.parentElement;
+  }
+
+  for (const candidate of candidates) {
+    const match = String(candidate || '').replace(/\s+/g, ' ').trim().match(FORUM_PREVIEW_PATTERN);
+    if (!match) continue;
+    return match[1] ? Number.parseInt(match[1], 10) || 1 : 1;
+  }
+  return 0;
+}
+
 function contentImages(document, content) {
   if (!content) return [];
   const seen = new Set();
@@ -280,6 +310,7 @@ function contentImages(document, content) {
     .map((image, order) => ({
       url: largeImageUrl(document, image),
       cacheUrl: cachedImageUrl(document, image),
+      previewOrdinal: forumPreviewOrdinal(image),
       ...imageSize(image),
       order,
     }))
@@ -360,8 +391,11 @@ export function extractThreadResources(document) {
     }))
     .filter((attachment) => attachment.url);
 
-  const images = contentImages(document, content);
+  const allImages = contentImages(document, content);
   const hdblogPreviews = hdblogPreviewImages(document, content);
+  const images = hdblogPreviews.length
+    ? allImages.filter((image) => image.previewOrdinal === 0)
+    : allImages.filter((image) => image.previewOrdinal <= 1);
   const magnets = contentMagnets(content);
   const largestImage = images.reduce((largest, image) => {
     if (!largest) return image;
