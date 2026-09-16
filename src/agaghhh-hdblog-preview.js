@@ -378,6 +378,103 @@ function firstPostContent(document) {
   return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
 }
 
+function escapeRegExp(value) {
+  return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function absoluteAnchorHref(document, anchor) {
+  try {
+    return new URL(anchor?.getAttribute('href') || '', document.baseURI).href;
+  } catch {
+    return '';
+  }
+}
+
+export function removeNumberedForumPreviewArtifacts(document, code) {
+  const content = firstPostContent(document);
+  const normalizedCode = normalizeText(code);
+  if (!content || !normalizedCode) return 0;
+
+  const pattern = new RegExp(
+    `^${escapeRegExp(normalizedCode)}\\s+Preview\\s+(\\d+)\\s*$`,
+    'i'
+  );
+  let removed = 0;
+
+  for (const image of [...content.querySelectorAll('img')]) {
+    const label = normalizeText(image.getAttribute('alt') || image.getAttribute('title'));
+    const match = label.match(pattern);
+    if (!match || Number.parseInt(match[1], 10) < 2) continue;
+    const host = image.closest('a[href]');
+    if (host && normalizeText(host.textContent) === '') host.remove();
+    else image.remove();
+  }
+
+  for (const anchor of [...content.querySelectorAll('a[href]')]) {
+    const label = normalizeText(anchor.textContent);
+    const match = label.match(pattern);
+    if (!match || Number.parseInt(match[1], 10) < 2) continue;
+
+    const href = absoluteAnchorHref(document, anchor);
+    let removedMatchingMedia = false;
+    if (href) {
+      for (const candidate of [...content.querySelectorAll('a[href]')]) {
+        if (candidate === anchor || !candidate.querySelector('img')) continue;
+        if (absoluteAnchorHref(document, candidate) !== href) continue;
+        candidate.remove();
+        removedMatchingMedia = true;
+      }
+    }
+
+    const wrapper = anchor.closest('p, center, div, span');
+    if (
+      wrapper
+      && wrapper !== content
+      && normalizeText(wrapper.textContent) === label
+      && wrapper.querySelectorAll('a[href]').length === 1
+      && wrapper.querySelectorAll('img').length === 0
+    ) {
+      wrapper.remove();
+      removed += 1;
+      continue;
+    }
+
+    if (!removedMatchingMedia) {
+      let previous = anchor.previousSibling;
+      let skipped = 0;
+      while (previous && skipped < 3) {
+        if (previous.nodeType === 3 && !normalizeText(previous.nodeValue)) {
+          const before = previous.previousSibling;
+          previous.remove();
+          previous = before;
+          skipped += 1;
+          continue;
+        }
+        if (previous.nodeType === 1 && previous.tagName === 'BR') {
+          const before = previous.previousSibling;
+          previous.remove();
+          previous = before;
+          skipped += 1;
+          continue;
+        }
+        break;
+      }
+      if (
+        previous?.nodeType === 1
+        && (previous.tagName === 'IMG' || (previous.tagName === 'A' && previous.querySelector('img')))
+      ) {
+        previous.remove();
+      }
+    }
+
+    const next = anchor.nextSibling;
+    anchor.remove();
+    if (next?.nodeType === 1 && next.tagName === 'BR') next.remove();
+    removed += 1;
+  }
+  return removed;
+}
+
 function isThreadPage(locationObject) {
   try {
     const url = new URL(locationObject?.href || '');
@@ -439,6 +536,7 @@ export async function installAgaghhhHdblogPreview(
   if (!document || !isThreadPage(locationObject) || document.getElementById(CONTAINER_ID)) return null;
   const code = threadCode(document);
   if (!code) return null;
+  removeNumberedForumPreviewArtifacts(document, code);
   let result = null;
   try {
     result = await fetchHdblogPreviewForCode(code, gmRequest, document);

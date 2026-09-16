@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.2
+// @version      1.10.3
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -3949,6 +3949,84 @@ ${failures.join("\n")}`);
     const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
     return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
   }
+  function escapeRegExp(value) {
+    return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function absoluteAnchorHref(document2, anchor) {
+    try {
+      return new URL(anchor?.getAttribute("href") || "", document2.baseURI).href;
+    } catch {
+      return "";
+    }
+  }
+  function removeNumberedForumPreviewArtifacts(document2, code) {
+    const content = firstPostContent(document2);
+    const normalizedCode = normalizeText5(code);
+    if (!content || !normalizedCode) return 0;
+    const pattern = new RegExp(
+      `^${escapeRegExp(normalizedCode)}\\s+Preview\\s+(\\d+)\\s*$`,
+      "i"
+    );
+    let removed = 0;
+    for (const image of [...content.querySelectorAll("img")]) {
+      const label = normalizeText5(image.getAttribute("alt") || image.getAttribute("title"));
+      const match = label.match(pattern);
+      if (!match || Number.parseInt(match[1], 10) < 2) continue;
+      const host = image.closest("a[href]");
+      if (host && normalizeText5(host.textContent) === "") host.remove();
+      else image.remove();
+    }
+    for (const anchor of [...content.querySelectorAll("a[href]")]) {
+      const label = normalizeText5(anchor.textContent);
+      const match = label.match(pattern);
+      if (!match || Number.parseInt(match[1], 10) < 2) continue;
+      const href = absoluteAnchorHref(document2, anchor);
+      let removedMatchingMedia = false;
+      if (href) {
+        for (const candidate of [...content.querySelectorAll("a[href]")]) {
+          if (candidate === anchor || !candidate.querySelector("img")) continue;
+          if (absoluteAnchorHref(document2, candidate) !== href) continue;
+          candidate.remove();
+          removedMatchingMedia = true;
+        }
+      }
+      const wrapper = anchor.closest("p, center, div, span");
+      if (wrapper && wrapper !== content && normalizeText5(wrapper.textContent) === label && wrapper.querySelectorAll("a[href]").length === 1 && wrapper.querySelectorAll("img").length === 0) {
+        wrapper.remove();
+        removed += 1;
+        continue;
+      }
+      if (!removedMatchingMedia) {
+        let previous = anchor.previousSibling;
+        let skipped = 0;
+        while (previous && skipped < 3) {
+          if (previous.nodeType === 3 && !normalizeText5(previous.nodeValue)) {
+            const before = previous.previousSibling;
+            previous.remove();
+            previous = before;
+            skipped += 1;
+            continue;
+          }
+          if (previous.nodeType === 1 && previous.tagName === "BR") {
+            const before = previous.previousSibling;
+            previous.remove();
+            previous = before;
+            skipped += 1;
+            continue;
+          }
+          break;
+        }
+        if (previous?.nodeType === 1 && (previous.tagName === "IMG" || previous.tagName === "A" && previous.querySelector("img"))) {
+          previous.remove();
+        }
+      }
+      const next = anchor.nextSibling;
+      anchor.remove();
+      if (next?.nodeType === 1 && next.tagName === "BR") next.remove();
+      removed += 1;
+    }
+    return removed;
+  }
   function isThreadPage2(locationObject) {
     try {
       const url = new URL(locationObject?.href || "");
@@ -3999,6 +4077,7 @@ ${failures.join("\n")}`);
     if (!document2 || !isThreadPage2(locationObject) || document2.getElementById(CONTAINER_ID)) return null;
     const code = threadCode(document2);
     if (!code) return null;
+    removeNumberedForumPreviewArtifacts(document2, code);
     let result = null;
     try {
       result = await fetchHdblogPreviewForCode(code, gmRequest2, document2);

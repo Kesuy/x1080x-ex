@@ -5,6 +5,7 @@ import { buildDownloadJobs } from '../src/core.js';
 import {
   chooseHdblogSearchResult,
   fetchHdblogPreviewForCode,
+  removeNumberedForumPreviewArtifacts,
   renderAgaghhhHdblogPreview,
 } from '../src/agaghhh-hdblog-preview.js';
 import {
@@ -179,4 +180,25 @@ test('x1080x settings exposes an independent hdblog preview switch', () => {
     if (oldGet === undefined) delete globalThis.GM_getValue;
     else globalThis.GM_getValue = oldGet;
   }
+});
+
+
+test('removes CEMD-826 Preview 2 link and its matching broken-image anchor', () => {
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <h1 id="thread_subject">CEMD-826 Sample</h1>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
+      <a id="preview-1-image" href="https://pixhost.to/show/111/preview-1.jpg"><img src="https://t1.pixhost.to/thumbs/111/preview-1.jpg"></a>
+      <a id="preview-1-label" href="https://pixhost.to/show/111/preview-1.jpg">CEMD-826 Preview</a>
+      <a id="preview-2-image" href="https://pixhost.to/show/222/preview-2.jpg"><img src="https://t1.pixhost.to/thumbs/222/preview-2.jpg"></a>
+      <br>
+      <a id="preview-2-label" href="https://pixhost.to/show/222/preview-2.jpg">CEMD-826 Preview 2</a>
+    </div></div></div>
+  </body></html>`, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1024053' });
+
+  assert.equal(removeNumberedForumPreviewArtifacts(dom.window.document, 'CEMD-826'), 1);
+  assert.ok(dom.window.document.getElementById('preview-1-image'));
+  assert.ok(dom.window.document.getElementById('preview-1-label'));
+  assert.equal(dom.window.document.getElementById('preview-2-image'), null);
+  assert.equal(dom.window.document.getElementById('preview-2-label'), null);
+  assert.equal(dom.window.document.body.textContent.includes('CEMD-826 Preview 2'), false);
 });
