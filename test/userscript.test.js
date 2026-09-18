@@ -354,6 +354,71 @@ test('agaghhh 遇到孤立 Pixhost 缩略图时只下载封面并跳过 B.jpg', 
   }
 });
 
+test('agaghhh 注入的 Pixhost Picture removed 小图不保存 B.jpg，并显示已跳过失效 Preview', async () => {
+  const dom = new JSDOM(`
+    <h1 class="ts"><span id="thread_subject">EBWH-319 [BT] 示例标题</span></h1>
+    <a href="forum.php?mod=forumdisplay&fid=244">BT</a>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">
+      <img src="https://agaghhh.cc/cover.jpg" width="1200" height="900">
+      <section id="x1080x-ex-agaghhh-hdblog-preview">
+        <img
+          src="https://img8.pixhost.to/images/9008/ebwh-319-preview.jpg"
+          data-x1080x-hdblog-preview-url="https://img8.pixhost.to/images/9008/ebwh-319-preview.jpg"
+          width="640"
+          height="320"
+        >
+      </section>
+    </div></div></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1018214&highlight=EBWH-319' });
+  const restore = installDomGlobals(dom.window);
+  const requests = [];
+  const saved = [];
+  dom.window.URL.createObjectURL = () => 'blob:forum-image';
+  dom.window.URL.revokeObjectURL = () => {};
+  dom.window.HTMLAnchorElement.prototype.click = function click() {
+    if (this.download) saved.push(this.download);
+  };
+  globalThis.GM_xmlhttpRequest = (details) => {
+    requests.push({ url: details.url, responseType: details.responseType });
+    if (details.url === 'https://agaghhh.cc/cover.jpg') {
+      queueMicrotask(() => details.onload({
+        status: 200,
+        finalUrl: details.url,
+        responseHeaders: 'Content-Type: image/jpeg',
+        response: new dom.window.Blob([new Uint8Array(128 * 1024)], { type: 'image/jpeg' }),
+      }));
+      return;
+    }
+    if (details.url === 'https://img8.pixhost.to/images/9008/ebwh-319-preview.jpg') {
+      queueMicrotask(() => details.onload({
+        status: 200,
+        finalUrl: details.url,
+        responseHeaders: 'Content-Type: image/jpeg',
+        response: new dom.window.Blob([new Uint8Array(15800)], { type: 'image/jpeg' }),
+      }));
+      return;
+    }
+    assert.fail(`unexpected request: ${details.url}`);
+  };
+
+  try {
+    await import(`../src/userscript.js?forum-pixhost-placeholder=${Date.now()}`);
+    const button = dom.window.document.querySelector('#x1080x-ex-download');
+    assert.ok(button);
+    button.click();
+    await waitFor(() => button.textContent === '已跳过失效 Preview', 'placeholder should be reported as skipped');
+
+    assert.deepEqual(saved, ['EBWH-319 A.jpg']);
+    assert.deepEqual(requests, [
+      { url: 'https://agaghhh.cc/cover.jpg', responseType: 'blob' },
+      { url: 'https://img8.pixhost.to/images/9008/ebwh-319-preview.jpg', responseType: 'blob' },
+    ]);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
 test('附件返回登录 HTML 时拒绝保存并显示可操作原因', async () => {
   const dom = threadDom();
   const restore = installDomGlobals(dom.window);
