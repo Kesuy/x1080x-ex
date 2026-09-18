@@ -272,6 +272,15 @@ function cachedImageUrl(document, image) {
   );
 }
 
+function isPixhostThumbnailUrl(value, baseUrl) {
+  try {
+    const url = new URL(value, baseUrl);
+    return /^t\d+\./i.test(url.hostname) && /^\/thumbs\//i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function pixhostShowUrlForImage(document, image) {
   const href = absoluteUrl(document, image?.closest('a[href]')?.getAttribute('href'));
   if (!href) return '';
@@ -293,10 +302,12 @@ function contentImages(document, content) {
     .map((image, order) => {
       const cacheUrl = cachedImageUrl(document, image);
       const pixhostShowUrl = pixhostShowUrlForImage(document, image);
+      const pixhostThumbUrl = isPixhostThumbnailUrl(cacheUrl, document.baseURI) ? cacheUrl : '';
       return {
         url: largeImageUrl(document, image),
         cacheUrl,
-        ...(pixhostShowUrl ? { pixhostShowUrl, pixhostThumbUrl: cacheUrl } : {}),
+        ...(pixhostShowUrl ? { pixhostShowUrl } : {}),
+        ...(pixhostThumbUrl ? { pixhostThumbUrl } : {}),
         ...imageSize(image),
         order,
       };
@@ -470,7 +481,13 @@ export function buildDownloadJobs(document) {
     const sourceImage = resources.images.find((image) => (
       (image.cacheUrl || image.url) === job.url && image.pixhostShowUrl
     ));
-    if (!sourceImage) continue;
+    if (!sourceImage) {
+      const pixhostThumbSource = resources.images.find((image) => (
+        (image.cacheUrl || image.url) === job.url && image.pixhostThumbUrl
+      ));
+      if (pixhostThumbSource) job.pixhostThumbUrl = pixhostThumbSource.pixhostThumbUrl;
+      continue;
+    }
     job.pixhostShowUrl = sourceImage.pixhostShowUrl;
     job.pixhostThumbUrl = sourceImage.pixhostThumbUrl || job.url;
   }
