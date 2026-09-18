@@ -304,6 +304,56 @@ test('agaghhh 下载前检查 Pixhost show，失效 Preview 直接跳过不保�
   }
 });
 
+test('agaghhh 遇到孤立 Pixhost 缩略图时只下载封面并跳过 B.jpg', async () => {
+  const dom = new JSDOM(`
+    <h1 class="ts"><span id="thread_subject">EBWH-319 [BT] 示例标题</span></h1>
+    <a href="forum.php?mod=forumdisplay&fid=244">BT</a>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">
+      <img src="https://agaghhh.cc/cover.jpg" width="1200" height="900">
+      <div class="preview-copy">
+        <img src="https://t8.pixhost.to/thumbs/9008/ebwh-319-preview.jpg" width="320" height="180">
+      </div>
+    </div></div></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1018214&highlight=EBWH-319' });
+  const restore = installDomGlobals(dom.window);
+  const requests = [];
+  const saved = [];
+  dom.window.URL.createObjectURL = () => 'blob:forum-image';
+  dom.window.URL.revokeObjectURL = () => {};
+  dom.window.HTMLAnchorElement.prototype.click = function click() {
+    if (this.download) saved.push(this.download);
+  };
+  globalThis.GM_xmlhttpRequest = (details) => {
+    requests.push({ url: details.url, responseType: details.responseType });
+    if (details.url === 'https://agaghhh.cc/cover.jpg') {
+      queueMicrotask(() => details.onload({
+        status: 200,
+        finalUrl: details.url,
+        responseHeaders: 'Content-Type: image/jpeg',
+        response: new dom.window.Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' }),
+      }));
+      return;
+    }
+    assert.fail(`standalone Pixhost thumbnail must not be requested: ${details.url}`);
+  };
+
+  try {
+    await import(`../src/userscript.js?forum-standalone-thumb=${Date.now()}`);
+    const button = dom.window.document.querySelector('#x1080x-ex-download');
+    assert.ok(button);
+    button.click();
+    await waitFor(() => /跳过 1/.test(button.textContent), 'standalone Pixhost thumbnail should be skipped');
+
+    assert.deepEqual(saved, ['EBWH-319 A.jpg']);
+    assert.deepEqual(requests, [
+      { url: 'https://agaghhh.cc/cover.jpg', responseType: 'blob' },
+    ]);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
 test('附件返回登录 HTML 时拒绝保存并显示可操作原因', async () => {
   const dom = threadDom();
   const restore = installDomGlobals(dom.window);
