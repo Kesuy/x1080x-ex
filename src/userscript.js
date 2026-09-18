@@ -619,6 +619,12 @@ async function download(job) {
       return { skipped: true, reason: 'Pixhost Preview 已失效' };
     }
     downloadJob = { ...job, url: resolvedUrl };
+  } else if (job.kind === 'image' && job.pixhostThumbUrl) {
+    console.info('[x1080x-ex] skipped standalone Pixhost thumbnail', {
+      name: job.name,
+      thumbnailUrl: job.pixhostThumbUrl,
+    });
+    return { skipped: true, reason: 'Pixhost 缩略图未找到可验证的大图地址' };
   }
 
   const result = await requestBlob(downloadJob);
