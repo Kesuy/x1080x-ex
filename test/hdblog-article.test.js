@@ -117,6 +117,98 @@ test('multiple image names use 番号-1 / 番号-2 and preserve the real image e
   assert.equal(hdblogImageFilename('FC2-PPV-1234567', 1, 3, 'png'), 'FC2-PPV-1234567-2.png');
 });
 
+test('removed Pixhost Preview is resolved only once and never downloaded as an image blob', async () => {
+  const dom = articleDom({
+    title: 'EBWH-319 sample',
+    url: 'https://hdblog.me/900669/ebwh-319/',
+    content: `
+      <p>Preview:</p>
+      <p><a href="https://pixhost.to/show/9004/removed-ebwh-319.jpg">
+        <img src="https://t4.pixhost.to/thumbs/9004/removed-ebwh-319.jpg">
+      </a></p>
+      <p>Rapidgator:</p>
+    `,
+  });
+  const alerts = [];
+  dom.window.alert = (message) => alerts.push(message);
+
+  const requests = [];
+  const gmRequest = (details) => {
+    requests.push({ url: details.url, responseType: details.responseType });
+    queueMicrotask(() => details.onload({
+      status: 200,
+      responseText: `<html><body><main>
+        <img src="https://pixhost.to/static/removed.png" alt="Picture removed">
+        <strong>Picture removed</strong>
+        <p>This image is no longer available.</p>
+      </main></body></html>`,
+    }));
+  };
+
+  installHdblogArticleEnhancement(dom.window.document, dom.window.location, gmRequest);
+  const button = dom.window.document.querySelector('#x1080x-ex-hdblog-image-download');
+  assert.ok(button);
+
+  button.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(requests, [{
+    url: 'https://pixhost.to/show/9004/removed-ebwh-319.jpg',
+    responseType: 'text',
+  }]);
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, '已跳过失效 Preview');
+  assert.equal(alerts.length, 0);
+  assert.match(button.title, /未下载占位图/);
+  dom.window.close();
+});
+
+test('Pixhost Preview 大图返回 404 时按失效图跳过，不显示失败状态', async () => {
+  const dom = articleDom({
+    title: 'EBWH-319 sample',
+    url: 'https://hdblog.me/900669/ebwh-319/',
+    content: `
+      <p>Preview:</p>
+      <p><a href="https://pixhost.to/show/9007/ebwh-319-preview.jpg">
+        <img src="https://t7.pixhost.to/thumbs/9007/ebwh-319-preview.jpg">
+      </a></p>
+      <p>Rapidgator:</p>
+    `,
+  });
+  const alerts = [];
+  dom.window.alert = (message) => alerts.push(message);
+
+  const requests = [];
+  const gmRequest = (details) => {
+    requests.push({ url: details.url, responseType: details.responseType });
+    if (details.responseType === 'text') {
+      queueMicrotask(() => details.onload({
+        status: 200,
+        finalUrl: details.url,
+        responseText: '<html><body><main><img class="image-img" src="https://img7.pixhost.to/images/9007/ebwh-319-preview.jpg"></main></body></html>',
+      }));
+      return;
+    }
+    queueMicrotask(() => details.onload({
+      status: 404,
+      finalUrl: details.url,
+      response: null,
+    }));
+  };
+
+  installHdblogArticleEnhancement(dom.window.document, dom.window.location, gmRequest);
+  const button = dom.window.document.querySelector('#x1080x-ex-hdblog-image-download');
+  button.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(button.textContent, '已跳过失效 Preview');
+  assert.equal(alerts.length, 0);
+  assert.deepEqual(requests.map((request) => request.responseType), ['text', 'blob']);
+  dom.window.close();
+});
+
 test('custom article width is bounded, and clearing it restores the site default layout', () => {
   assert.equal(normalizeHdblogArticleWidth('', null), null);
   assert.equal(normalizeHdblogArticleWidth('   ', null), null);

@@ -276,6 +276,94 @@ test('FC2-PPV 页面生成指定 torrent 名和 A、B 图片名', () => {
   ]);
 });
 
+test('论坛 Pixhost 图片任务保留 show 地址，供下载前检查失效状态', () => {
+  const dom = new JSDOM(`
+    <span id="thread_subject">EBWH-319 [BT] 示例标题</span>
+    <a href="forum.php?mod=forumdisplay&fid=244">BT</a>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">
+      <img src="https://agaghhh.cc/cover.jpg" width="1200" height="900">
+      <a href="https://pixhost.to/show/9005/ebwh-319-preview.jpg">
+        <img src="https://t5.pixhost.to/thumbs/9005/ebwh-319-preview.jpg" width="320" height="180">
+      </a>
+    </div></div></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1018214&highlight=EBWH-319' });
+
+  const jobs = buildDownloadJobs(dom.window.document).filter((job) => job.kind === 'image');
+  assert.equal(jobs.length, 2);
+  assert.deepEqual(jobs[0], {
+    kind: 'image',
+    url: 'https://agaghhh.cc/cover.jpg',
+    name: 'EBWH-319 A.jpg',
+  });
+  assert.deepEqual(jobs[1], {
+    kind: 'image',
+    url: 'https://t5.pixhost.to/thumbs/9005/ebwh-319-preview.jpg',
+    name: 'EBWH-319 B.jpg',
+    pixhostShowUrl: 'https://pixhost.to/show/9005/ebwh-319-preview.jpg',
+    pixhostThumbUrl: 'https://t5.pixhost.to/thumbs/9005/ebwh-319-preview.jpg',
+  });
+});
+
+test('论坛里孤立的 Pixhost 缩略图也标记为不可直接下载', () => {
+  const dom = new JSDOM(`
+    <span id="thread_subject">EBWH-319 [BT] 示例标题</span>
+    <a href="forum.php?mod=forumdisplay&fid=244">BT</a>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">
+      <img src="https://agaghhh.cc/cover.jpg" width="1200" height="900">
+      <div class="preview-copy">
+        <img src="https://t8.pixhost.to/thumbs/9008/ebwh-319-preview.jpg" width="320" height="240">
+      </div>
+    </div></div></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1018214&highlight=EBWH-319' });
+
+  const jobs = buildDownloadJobs(dom.window.document).filter((job) => job.kind === 'image');
+  assert.equal(jobs.length, 2);
+  assert.deepEqual(jobs[0], {
+    kind: 'image',
+    url: 'https://agaghhh.cc/cover.jpg',
+    name: 'EBWH-319 A.jpg',
+  });
+  assert.deepEqual(jobs[1], {
+    kind: 'image',
+    url: 'https://t8.pixhost.to/thumbs/9008/ebwh-319-preview.jpg',
+    name: 'EBWH-319 B.jpg',
+    pixhostThumbUrl: 'https://t8.pixhost.to/thumbs/9008/ebwh-319-preview.jpg',
+  });
+});
+
+test('agaghhh 注入的 Pixhost Preview 保留来源标记供下载阶段识别失效占位图', () => {
+  const dom = new JSDOM(`
+    <span id="thread_subject">EBWH-319 [BT] 示例标题</span>
+    <a href="forum.php?mod=forumdisplay&fid=244">BT</a>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1">
+      <img src="https://agaghhh.cc/cover.jpg" width="1200" height="900">
+      <section id="x1080x-ex-agaghhh-hdblog-preview">
+        <img
+          src="https://img8.pixhost.to/images/9008/ebwh-319-preview.jpg"
+          data-x1080x-hdblog-preview-url="https://img8.pixhost.to/images/9008/ebwh-319-preview.jpg"
+          width="640"
+          height="320"
+        >
+      </section>
+    </div></div></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1018214&highlight=EBWH-319' });
+
+  const jobs = buildDownloadJobs(dom.window.document).filter((job) => job.kind === 'image');
+  assert.equal(jobs.length, 2);
+  assert.deepEqual(jobs[0], {
+    kind: 'image',
+    url: 'https://agaghhh.cc/cover.jpg',
+    name: 'EBWH-319 A.jpg',
+  });
+  assert.deepEqual(jobs[1], {
+    kind: 'image',
+    url: 'https://img8.pixhost.to/images/9008/ebwh-319-preview.jpg',
+    name: 'EBWH-319 B.jpg',
+    hdblogPreview: true,
+    pixhostPreview: true,
+  });
+});
+
 test('FC2-PPV 三张及以上图片从第二张开始使用 B1、B2 编号', () => {
   const dom = new JSDOM(`
     <span id="thread_subject">FC2-PPV-4960963 [BT](FC2) 示例标题</span>

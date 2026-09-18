@@ -638,9 +638,22 @@ async function resolveCandidateUrl(document, candidate, gmRequest) {
 
 async function downloadHdblogArticleImages(button, document, locationObject, gmRequest, initialCandidates = []) {
   const view = document.defaultView;
+  const resetButton = (delay = 3000) => {
+    view?.setTimeout(() => {
+      button.textContent = '⬇';
+      button.title = '下载 Pixhost Preview 大图，并自动按影片番号重命名';
+    }, delay);
+  };
+  const showStatus = (text, detail = '') => {
+    button.disabled = false;
+    button.textContent = text;
+    if (detail) button.title = detail;
+    resetButton();
+  };
+
   const code = extractHdblogArticleCode(document);
   if (!code) {
-    view?.alert('没有识别到影片番号，未开始下载。');
+    showStatus('未识别番号', '没有识别到影片番号，未开始下载。');
     return;
   }
 
@@ -648,12 +661,14 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
     ? initialCandidates
     : collectHdblogPixhostPreviewImages(document);
   if (!candidates.length) {
-    view?.alert('Preview 区没有找到 Pixhost show 图片。');
+    showStatus('无 Preview', 'Preview 区没有找到 Pixhost show 图片。');
     return;
   }
 
   button.disabled = true;
   const failures = [];
+  let skipped = 0;
+  let downloaded = 0;
   try {
     button.textContent = '解析 Preview…';
     const resolved = [];
@@ -661,34 +676,65 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
     for (const candidate of candidates) {
       try {
         const url = await resolveCandidateUrl(document, candidate, gmRequest);
-        if (url && !seen.has(url)) {
+        if (!url) {
+          if (candidate.pixhostShowUrl) skipped += 1;
+          continue;
+        }
+        if (!seen.has(url)) {
           seen.add(url);
-          resolved.push(url);
+          resolved.push({ url, candidate });
         }
       } catch (error) {
         failures.push(error?.message || 'Pixhost 大图地址解析失败');
       }
     }
-    if (!resolved.length) throw new Error('没有解析到可下载的 Pixhost Preview 大图。');
 
-    for (const [index, url] of resolved.entries()) {
+    if (!resolved.length) {
+      if (skipped && !failures.length) {
+        showStatus('已跳过失效 Preview', 'Pixhost Preview 已失效，未下载占位图。');
+        return;
+      }
+      const detail = failures.length
+        ? failures.join('；')
+        : '没有解析到可下载的 Pixhost Preview 大图。';
+      showStatus('无可下载 Preview', detail);
+      return;
+    }
+
+    for (const [index, item] of resolved.entries()) {
+      const { url, candidate } = item;
       button.textContent = `下载 ${index + 1}/${resolved.length}`;
       try {
         const blob = await requestImageBlob(url, locationObject?.href, gmRequest);
         const extension = extensionFromBlob(blob, url);
-        saveBlob(document, blob, hdblogImageFilename(code, index, resolved.length, extension));
+        saveBlob(document, blob, hdblogImageFilename(code, downloaded, resolved.length, extension));
+        downloaded += 1;
       } catch (error) {
-        failures.push(`${index + 1}. ${error?.message || '下载失败'}`);
+        const message = error?.message || '下载失败';
+        const unavailable = Boolean(candidate?.pixhostShowUrl)
+          && /HTTP\s+(?:404|410)\b/i.test(message);
+        if (unavailable) {
+          skipped += 1;
+          continue;
+        }
+        failures.push(`${index + 1}. ${message}`);
       }
     }
   } catch (error) {
     failures.push(error?.message || '下载失败');
   } finally {
-    button.disabled = false;
-    button.textContent = failures.length ? `完成（失败 ${failures.length}）` : '✓ 下载完成';
-    view?.setTimeout(() => { button.textContent = '⬇'; }, 2500);
+    if (button.disabled) {
+      button.disabled = false;
+      button.textContent = failures.length
+        ? `完成（失败 ${failures.length}）`
+        : skipped
+          ? (downloaded ? `✓ 完成（跳过 ${skipped}）` : '已跳过失效 Preview')
+          : '✓ 下载完成';
+      if (failures.length) button.title = failures.join('；');
+      else if (skipped) button.title = 'Pixhost Preview 已失效，未下载占位图。';
+      resetButton();
+    }
   }
-  if (failures.length) view?.alert(`部分图片处理失败：\n\n${failures.join('\n')}`);
 }
 
 function installDownloadButton(document, locationObject, gmRequest) {

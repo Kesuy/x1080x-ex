@@ -4,6 +4,7 @@ const PIXHOST_PAGE_HOST_PATTERN = /^(?:www\.)?(?:pixhost\.(?:to|cc|org)|pixho\.s
 const PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(.+)$/i;
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
 const CANONICAL_SHOW_PATH_PATTERN = /^\/show\/\d+\/[^/?#]+$/i;
+const PIXHOST_UNAVAILABLE_TEXT_PATTERN = /(?:\bpicture\s+removed\b|\b(?:this\s+)?image\s+(?:is\s+)?no\s+longer\s+available\b|\bimage\s+(?:has\s+been\s+)?removed\b|\b(?:image|file)\s+not\s+found\b|\b410\s+gone\b)/i;
 const REQUEST_TIMEOUT = 30000;
 const resolutionCache = new Map();
 
@@ -66,10 +67,32 @@ function candidateUrl(value, pageUrl) {
   return href;
 }
 
-export function parsePixhostImagePage(document, html, pageUrl) {
-  if (!document || !html) return '';
+function parseImageHostDocument(document, html) {
+  if (!document || !html) return null;
   const parsed = document.implementation.createHTMLDocument('image-host');
   parsed.documentElement.innerHTML = String(html);
+  return parsed;
+}
+
+function isUnavailableImageHostDocument(parsed) {
+  if (!parsed) return false;
+  const imageLabels = [...parsed.querySelectorAll('img[alt], img[title]')]
+    .flatMap((image) => [image.getAttribute('alt'), image.getAttribute('title')]);
+  const text = [parsed.title, parsed.body?.textContent, ...imageLabels]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return PIXHOST_UNAVAILABLE_TEXT_PATTERN.test(text);
+}
+
+export function isPixhostUnavailablePage(document, html) {
+  return isUnavailableImageHostDocument(parseImageHostDocument(document, html));
+}
+
+export function parsePixhostImagePage(document, html, pageUrl) {
+  const parsed = parseImageHostDocument(document, html);
+  if (!parsed || isUnavailableImageHostDocument(parsed)) return '';
 
   // 先匹配常见“主图”结构，再退回 Open Graph / Twitter 元数据。
   // img 元素本身就是图片资源，因此不要求 URL 必须以扩展名结尾，兼容 CDN 无后缀地址。
@@ -115,7 +138,9 @@ function requestPixhostPage(showUrl, gmRequest, referer) {
       },
       onload(response) {
         if (response.status < 200 || response.status >= 300) {
-          reject(new Error(`图床页面请求失败（HTTP ${response.status || 0}）`));
+          const error = new Error(`图床页面请求失败（HTTP ${response.status || 0}）`);
+          error.status = response.status || 0;
+          reject(error);
           return;
         }
         resolve({
@@ -143,8 +168,13 @@ export function resolvePixhostShowUrl(
 
   const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl, document?.baseURI || absoluteShowUrl);
   const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document?.location?.href)
-    .then(({ html, finalUrl }) => parsePixhostImagePage(document, html, finalUrl || absoluteShowUrl) || fallback)
-    .catch(() => fallback);
+    .then(({ html, finalUrl }) => {
+      if (isPixhostUnavailablePage(document, html)) return '';
+      return parsePixhostImagePage(document, html, finalUrl || absoluteShowUrl) || fallback;
+    })
+    .catch((error) => (
+      error?.status === 404 || error?.status === 410 ? '' : fallback
+    ));
   resolutionCache.set(absoluteShowUrl, promise);
   return promise;
 }

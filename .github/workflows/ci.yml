@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test, build and smoke
+        run: npm run check
+
+      - name: Upload test userscript
+        uses: actions/upload-artifact@v4
+        with:
+          name: x1080x-ex-userscript
+          path: dist/x1080x-ex.user.js
+          if-no-files-found: error
+          retention-days: 30

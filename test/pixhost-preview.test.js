@@ -4,6 +4,7 @@ import { JSDOM } from 'jsdom';
 import {
   derivePixhostImageUrlFromThumbnail,
   isPixhostShowUrl,
+  isPixhostUnavailablePage,
   parsePixhostImagePage,
   resolvePixhostShowUrl,
 } from '../src/pixhost.js';
@@ -31,6 +32,65 @@ test('从 Pixhost 展示页的 image-img 解析真正原图地址', () => {
   </body></html>`;
 
   assert.equal(parsePixhostImagePage(dom.window.document, html, FIRST_SHOW), FIRST_FULL);
+  dom.window.close();
+});
+
+test('Pixhost 已删除页面不会把占位图识别成有效 Preview', () => {
+  const dom = new JSDOM('', { url: 'https://hdblog.me/post/' });
+  const showUrl = 'https://pixhost.to/show/9001/removed-preview.jpg';
+  const html = `<!doctype html><html><head>
+    <title>Picture removed</title>
+    <meta property="og:image" content="https://pixhost.to/static/removed.png">
+  </head><body><main>
+    <img src="https://pixhost.to/static/removed.png" alt="Picture removed">
+    <strong>Picture removed</strong>
+    <p>This image is no longer available.</p>
+  </main></body></html>`;
+
+  assert.equal(isPixhostUnavailablePage(dom.window.document, html), true);
+  assert.equal(parsePixhostImagePage(dom.window.document, html, showUrl), '');
+  dom.window.close();
+});
+
+test('Pixhost 明确返回已删除页时不再回退 thumbnail 推导地址', async () => {
+  const dom = new JSDOM('', { url: 'https://hdblog.me/post/' });
+  const showUrl = 'https://pixhost.to/show/9002/removed-preview.jpg';
+  const thumbUrl = 'https://t2.pixhost.to/thumbs/9002/removed-preview.jpg';
+  const gmRequest = (details) => queueMicrotask(() => details.onload({
+    status: 200,
+    responseText: `<html><body><main>
+      <img src="https://pixhost.to/static/removed.png" alt="Picture removed">
+      <h1>Picture removed</h1>
+      <p>This image is no longer available.</p>
+    </main></body></html>`,
+  }));
+
+  const resolved = await resolvePixhostShowUrl(
+    dom.window.document,
+    showUrl,
+    thumbUrl,
+    gmRequest
+  );
+  assert.equal(resolved, '');
+  dom.window.close();
+});
+
+test('Pixhost show 页面返回 404/410 时视为失效 Preview，不尝试猜测原图', async () => {
+  const dom = new JSDOM('', { url: 'https://hdblog.me/post/' });
+  const statuses = [404, 410];
+
+  for (const status of statuses) {
+    const showUrl = `https://pixhost.to/show/9003/removed-${status}.jpg`;
+    const thumbUrl = `https://t3.pixhost.to/thumbs/9003/removed-${status}.jpg`;
+    const gmRequest = (details) => queueMicrotask(() => details.onload({
+      status,
+      responseText: '',
+    }));
+    assert.equal(
+      await resolvePixhostShowUrl(dom.window.document, showUrl, thumbUrl, gmRequest),
+      ''
+    );
+  }
   dom.window.close();
 });
 

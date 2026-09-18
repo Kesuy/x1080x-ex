@@ -22,6 +22,7 @@ const dom = new JSDOM(`
 const calls = [];
 const saved = [];
 const revoked = [];
+let objectUrlCount = 0;
 dom.window.GM_getValue = (key, fallback) => (
   key === 'x1080x-ex:agaghhh-hdblog-preview-enabled' ? false : fallback
 );
@@ -33,8 +34,9 @@ dom.window.GM_info = {
   version: '5.5.0',
 };
 dom.window.URL.createObjectURL = (blob) => {
-  const url = `blob:smoke-${calls.length}`;
-  calls.at(-1).blobSize = blob.size;
+  objectUrlCount += 1;
+  const url = `blob:smoke-${objectUrlCount}`;
+  if (calls.length) calls.at(-1).blobSize = blob.size;
   return url;
 };
 dom.window.URL.revokeObjectURL = (url) => revoked.push(url);
@@ -65,11 +67,14 @@ dom.window.GM_xmlhttpRequest = (details) => {
     anonymous: details.anonymous,
     referer: details.headers?.Referer,
   });
+  const imageBytes = details.url.includes('img1.pixhost.to')
+    ? new Uint8Array(64 * 1024)
+    : new Uint8Array([0xff, 0xd8, 0xff]);
   queueMicrotask(() => details.onload?.({
     status: 200,
     finalUrl: details.url,
     responseHeaders: 'Content-Type: image/jpeg',
-    response: new dom.window.Blob(['jpg'], { type: 'image/jpeg' }),
+    response: new dom.window.Blob([imageBytes], { type: 'image/jpeg' }),
   }));
 };
 dom.window.alert = () => {};
@@ -101,7 +106,6 @@ assert.deepEqual(calls, [
     responseType: 'blob',
     anonymous: undefined,
     referer: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806',
-    blobSize: 3,
   },
   {
     transport: 'gm',
@@ -110,7 +114,7 @@ assert.deepEqual(calls, [
     responseType: 'blob',
     anonymous: undefined,
     referer: 'https://hdblog.me/123/abcd-123/',
-    blobSize: 3,
+    blobSize: 65536,
   },
 ]);
 assert.deepEqual(saved, [

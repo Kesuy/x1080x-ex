@@ -107,6 +107,80 @@ test('fetches hdblog Preview images including refer -> Pixhost resolution', asyn
   ]);
 });
 
+test('EBWH-319 removed Pixhost Preview is not injected or added to forum downloads', async () => {
+  const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
+  const requested = [];
+  const gmRequest = (options) => {
+    requested.push(options.url);
+    if (options.url === 'https://hdblog.me/?s=EBWH-319') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<!doctype html><html><body><main id="genesis-content">
+          <article class="entry"><h2 class="entry-title">
+            <a href="https://hdblog.me/900669/ebwh-319/">EBWH-319 sample</a>
+          </h2></article>
+        </main></body></html>`,
+      });
+      return;
+    }
+    if (options.url === 'https://hdblog.me/900669/ebwh-319/') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<!doctype html><html><body><main id="genesis-content"><article class="entry"><div class="entry-content">
+          <p>Preview:</p>
+          <p><a href="https://pixhost.to/show/9005/ebwh-319-preview.jpg">
+            <img src="https://t5.pixhost.to/thumbs/9005/ebwh-319-preview.jpg">
+          </a></p>
+          <p>Filed Under:</p>
+        </div></article></main></body></html>`,
+      });
+      return;
+    }
+    if (options.url === 'https://pixhost.to/show/9005/ebwh-319-preview.jpg') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<!doctype html><html><head><title>Picture removed</title></head><body>
+          <main><img src="https://pixhost.to/static/removed.png" alt="Picture removed">
+          <strong>Picture removed</strong><p>This image is no longer available.</p></main>
+        </body></html>`,
+      });
+      return;
+    }
+    throw new Error(`unexpected request: ${options.url}`);
+  };
+
+  const result = await withGmGetValue(() => (
+    fetchHdblogPreviewForCode('EBWH-319', gmRequest, browser.window.document)
+  ));
+
+  assert.equal(result.articleUrl, 'https://hdblog.me/900669/ebwh-319/');
+  assert.deepEqual(result.imageUrls, []);
+  assert.deepEqual(requested, [
+    'https://hdblog.me/?s=EBWH-319',
+    'https://hdblog.me/900669/ebwh-319/',
+    'https://pixhost.to/show/9005/ebwh-319-preview.jpg',
+  ]);
+
+  const forum = new JSDOM(`<!doctype html><html><head><title>EBWH-319 Sample</title></head><body>
+    <h1 id="thread_subject">EBWH-319 Sample</h1>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
+      <img src="https://agaghhh.cc/ebwh-319-cover.jpg" width="800" height="1200">
+    </div></div></div>
+  </body></html>`, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1018214&highlight=EBWH-319' });
+
+  assert.equal(renderAgaghhhHdblogPreview(forum.window.document, result), null);
+  assert.deepEqual(
+    buildDownloadJobs(forum.window.document).filter((job) => job.kind === 'image').map((job) => job.url),
+    ['https://agaghhh.cc/ebwh-319-cover.jpg']
+  );
+
+  browser.window.close();
+  forum.window.close();
+});
+
 test('download jobs name all main-post and Preview images A/B/C in order', () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>SVMGM-050 Sample</title></head><body>
     <a href="forum.php?mod=forumdisplay&fid=244">BT</a>
