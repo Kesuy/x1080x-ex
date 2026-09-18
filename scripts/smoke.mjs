@@ -65,11 +65,14 @@ dom.window.GM_xmlhttpRequest = (details) => {
     anonymous: details.anonymous,
     referer: details.headers?.Referer,
   });
+  const imageBytes = details.url.includes('img1.pixhost.to')
+    ? new Uint8Array(64 * 1024)
+    : new Uint8Array([0xff, 0xd8, 0xff]);
   queueMicrotask(() => details.onload?.({
     status: 200,
     finalUrl: details.url,
     responseHeaders: 'Content-Type: image/jpeg',
-    response: new dom.window.Blob(['jpg'], { type: 'image/jpeg' }),
+    response: new dom.window.Blob([imageBytes], { type: 'image/jpeg' }),
   }));
 };
 dom.window.alert = () => {};
@@ -110,7 +113,7 @@ assert.deepEqual(calls, [
     responseType: 'blob',
     anonymous: undefined,
     referer: 'https://hdblog.me/123/abcd-123/',
-    blobSize: 3,
+    blobSize: 65536,
   },
 ]);
 assert.deepEqual(saved, [
