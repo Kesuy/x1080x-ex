@@ -311,7 +311,7 @@ test('论坛里孤立的 Pixhost 缩略图也标记为不可直接下载', () =>
     <div id="postlist"><div id="post_1"><div id="postmessage_1">
       <img src="https://agaghhh.cc/cover.jpg" width="1200" height="900">
       <div class="preview-copy">
-        <img src="https://t8.pixhost.to/thumbs/9008/ebwh-319-preview.jpg" width="320" height="180">
+        <img src="https://t8.pixhost.to/thumbs/9008/ebwh-319-preview.jpg" width="320" height="240">
       </div>
     </div></div></div>
   `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1018214&highlight=EBWH-319' });
