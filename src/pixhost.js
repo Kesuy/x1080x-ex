@@ -80,7 +80,7 @@ function isUnavailableImageHostDocument(parsed) {
   const text = [parsed.title, parsed.body?.textContent, ...imageLabels]
     .filter(Boolean)
     .join(' ')
-    .replace(/\\s+/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
   return PIXHOST_UNAVAILABLE_TEXT_PATTERN.test(text);
 }
