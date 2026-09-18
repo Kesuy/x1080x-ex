@@ -291,7 +291,7 @@ test('agaghhh 下载前检查 Pixhost show，失效 Preview 直接跳过不保�
     const button = dom.window.document.querySelector('#x1080x-ex-download');
     assert.ok(button);
     button.click();
-    await waitFor(() => /跳过 1/.test(button.textContent), 'removed Pixhost preview should be skipped');
+    await waitFor(() => button.textContent === '已跳过失效 Preview', 'removed Pixhost preview should be skipped');
 
     assert.deepEqual(saved, ['EBWH-319 A.jpg']);
     assert.deepEqual(requests, [
@@ -342,7 +342,7 @@ test('agaghhh 遇到孤立 Pixhost 缩略图时只下载封面并跳过 B.jpg', 
     const button = dom.window.document.querySelector('#x1080x-ex-download');
     assert.ok(button);
     button.click();
-    await waitFor(() => /跳过 1/.test(button.textContent), 'standalone Pixhost thumbnail should be skipped');
+    await waitFor(() => button.textContent === '已跳过失效 Preview', 'standalone Pixhost thumbnail should be skipped');
 
     assert.deepEqual(saved, ['EBWH-319 A.jpg']);
     assert.deepEqual(requests, [
