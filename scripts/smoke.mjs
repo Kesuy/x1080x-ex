@@ -22,6 +22,7 @@ const dom = new JSDOM(`
 const calls = [];
 const saved = [];
 const revoked = [];
+let objectUrlCount = 0;
 dom.window.GM_getValue = (key, fallback) => (
   key === 'x1080x-ex:agaghhh-hdblog-preview-enabled' ? false : fallback
 );
@@ -33,8 +34,9 @@ dom.window.GM_info = {
   version: '5.5.0',
 };
 dom.window.URL.createObjectURL = (blob) => {
-  const url = `blob:smoke-${calls.length}`;
-  calls.at(-1).blobSize = blob.size;
+  objectUrlCount += 1;
+  const url = `blob:smoke-${objectUrlCount}`;
+  if (calls.length) calls.at(-1).blobSize = blob.size;
   return url;
 };
 dom.window.URL.revokeObjectURL = (url) => revoked.push(url);
