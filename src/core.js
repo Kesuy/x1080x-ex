@@ -272,17 +272,35 @@ function cachedImageUrl(document, image) {
   );
 }
 
+function pixhostShowUrlForImage(document, image) {
+  const href = absoluteUrl(document, image?.closest('a[href]')?.getAttribute('href'));
+  if (!href) return '';
+  try {
+    const url = new URL(href);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (!/^(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i.test(hostname)) return '';
+    return /^\/show\/\d+\/[^/?#]+$/i.test(url.pathname) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
 function contentImages(document, content) {
   if (!content) return [];
   const seen = new Set();
   return [...content.querySelectorAll('img')]
     .filter(isContentImage)
-    .map((image, order) => ({
-      url: largeImageUrl(document, image),
-      cacheUrl: cachedImageUrl(document, image),
-      ...imageSize(image),
-      order,
-    }))
+    .map((image, order) => {
+      const cacheUrl = cachedImageUrl(document, image);
+      const pixhostShowUrl = pixhostShowUrlForImage(document, image);
+      return {
+        url: largeImageUrl(document, image),
+        cacheUrl,
+        ...(pixhostShowUrl ? { pixhostShowUrl, pixhostThumbUrl: cacheUrl } : {}),
+        ...imageSize(image),
+        order,
+      };
+    })
     .filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
 }
 
@@ -445,6 +463,16 @@ export function buildDownloadJobs(document) {
         });
       });
     }
+  }
+
+  for (const job of jobs) {
+    if (job.kind !== 'image') continue;
+    const sourceImage = resources.images.find((image) => (
+      (image.cacheUrl || image.url) === job.url && image.pixhostShowUrl
+    ));
+    if (!sourceImage) continue;
+    job.pixhostShowUrl = sourceImage.pixhostShowUrl;
+    job.pixhostThumbUrl = sourceImage.pixhostThumbUrl || job.url;
   }
 
   return jobs;
