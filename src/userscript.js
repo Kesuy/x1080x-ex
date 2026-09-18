@@ -16,6 +16,7 @@ const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
 const REQUEST_TIMEOUT = 60000;
+const PIXHOST_PLACEHOLDER_MAX_BYTES = 32 * 1024;
 const PREVIEW_IMAGE_URL_ATTR = 'data-x1080x-hdblog-preview-url';
 const PREVIEW_REFERER_ATTR = 'data-x1080x-preview-referer';
 const DEFAULT_OPEN_TIMING = Object.freeze({
@@ -574,6 +575,16 @@ function requestBlob(job) {
   return requestBlobWithGmXhr(job);
 }
 
+function isLikelyUnavailablePixhostPreview(job, blob) {
+  if (!blob || typeof blob.size !== 'number') return false;
+  const isPixhostPreview = Boolean(
+    job?.pixhostPreview
+    || job?.pixhostThumbUrl
+    || job?.pixhostShowUrl
+  );
+  return isPixhostPreview && blob.size > 0 && blob.size <= PIXHOST_PLACEHOLDER_MAX_BYTES;
+}
+
 function saveBlob(blob, name) {
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -636,6 +647,14 @@ async function download(job) {
     contentType: result.contentType,
     size: result.blob.size,
   });
+  if (job.kind === 'image' && isLikelyUnavailablePixhostPreview(job, result.blob)) {
+    console.info('[x1080x-ex] skipped likely unavailable Pixhost preview blob', {
+      name: job.name,
+      size: result.blob.size,
+      url: redactDiagnostic(downloadJob.url),
+    });
+    return { skipped: true, reason: 'Pixhost Preview 已失效' };
+  }
   saveBlob(result.blob, job.name);
   return { skipped: false };
 }
@@ -672,7 +691,7 @@ async function downloadAll(button) {
   button.textContent = failures.length
     ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}）`
     : skipped
-      ? `✓ 完成（跳过 ${skipped}）`
+      ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
       : '✓ 下载完成';
   window.setTimeout(() => {
     button.textContent = '⬇';
