@@ -293,7 +293,7 @@ test('agaghhh 下载前检查 Pixhost show，失效 Preview 直接跳过不保�
     button.click();
     await waitFor(() => button.textContent === '已跳过失效 Preview', 'removed Pixhost preview should be skipped');
 
-    assert.deepEqual(saved, ['EBWH-319 A.jpg']);
+    assert.deepEqual(saved, ['EBWH-319.jpg']);
     assert.deepEqual(requests, [
       { url: 'https://agaghhh.cc/cover.jpg', responseType: 'blob' },
       { url: 'https://pixhost.to/show/9006/ebwh-319-preview.jpg', responseType: 'text' },
@@ -344,7 +344,7 @@ test('agaghhh 遇到孤立 Pixhost 缩略图时只下载封面并跳过 B.jpg', 
     button.click();
     await waitFor(() => button.textContent === '已跳过失效 Preview', 'standalone Pixhost thumbnail should be skipped');
 
-    assert.deepEqual(saved, ['EBWH-319 A.jpg']);
+    assert.deepEqual(saved, ['EBWH-319.jpg']);
     assert.deepEqual(requests, [
       { url: 'https://agaghhh.cc/cover.jpg', responseType: 'blob' },
     ]);
@@ -408,7 +408,7 @@ test('agaghhh 注入的 Pixhost Picture removed 小图不保存 B.jpg，并显�
     button.click();
     await waitFor(() => button.textContent === '已跳过失效 Preview', 'placeholder should be reported as skipped');
 
-    assert.deepEqual(saved, ['EBWH-319 A.jpg']);
+    assert.deepEqual(saved, ['EBWH-319.jpg']);
     assert.deepEqual(requests, [
       { url: 'https://agaghhh.cc/cover.jpg', responseType: 'blob' },
       { url: 'https://img8.pixhost.to/images/9008/ebwh-319-preview.jpg', responseType: 'blob' },
