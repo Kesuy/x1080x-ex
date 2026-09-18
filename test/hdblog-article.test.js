@@ -129,7 +129,8 @@ test('removed Pixhost Preview is resolved only once and never downloaded as an i
       <p>Rapidgator:</p>
     `,
   });
-  dom.window.alert = () => {};
+  const alerts = [];
+  dom.window.alert = (message) => alerts.push(message);
 
   const requests = [];
   const gmRequest = (details) => {
@@ -157,7 +158,9 @@ test('removed Pixhost Preview is resolved only once and never downloaded as an i
     responseType: 'text',
   }]);
   assert.equal(button.disabled, false);
-  assert.match(button.textContent, /失败/);
+  assert.equal(button.textContent, '无可下载 Preview');
+  assert.equal(alerts.length, 0);
+  assert.match(button.title, /没有解析到可下载/);
   dom.window.close();
 });
 
