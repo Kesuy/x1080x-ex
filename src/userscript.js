@@ -600,7 +600,7 @@ function saveBlob(blob, name) {
   }
 }
 
-async function download(job) {
+async function download(job, { deferImageSave = false } = {}) {
   if (job.kind === 'torrent') {
     const result = await requestTorrentBytes(job.url);
     saveBlob(new Blob([result.bytes], { type: 'application/x-bittorrent' }), job.name);
@@ -655,6 +655,9 @@ async function download(job) {
     });
     return { skipped: true, reason: 'Pixhost Preview 已失效' };
   }
+  if (job.kind === 'image' && deferImageSave) {
+    return { skipped: false, blob: result.blob, name: job.name };
+  }
   saveBlob(result.blob, job.name);
   return { skipped: false };
 }
@@ -668,6 +671,7 @@ async function downloadAll(button) {
 
   button.disabled = true;
   const failures = [];
+  const pendingImages = [];
   let skipped = 0;
   console.info('[x1080x-ex] environment', {
     downloadMode: typeof GM_info === 'object' ? GM_info.downloadMode : undefined,
@@ -677,15 +681,24 @@ async function downloadAll(button) {
   for (const [index, job] of jobs.entries()) {
     button.textContent = `下载中 ${index + 1}/${jobs.length}`;
     try {
-      const result = await download(job);
+      const result = await download(job, { deferImageSave: job.kind === 'image' });
       if (result?.skipped) {
         skipped += 1;
         button.textContent = `已跳过失效图 ${skipped}`;
+      } else if (job.kind === 'image' && result?.blob) {
+        pendingImages.push(result);
       }
     } catch (error) {
       failures.push(`${job.name}：${redactDiagnostic(error?.message || error?.error || '未知错误')}`);
     }
   }
+
+  pendingImages.forEach(({ blob, name }) => {
+    const finalName = pendingImages.length === 1
+      ? name.replace(/ A(?=\.[^.]+$)/i, '')
+      : name;
+    saveBlob(blob, finalName);
+  });
 
   button.disabled = false;
   button.textContent = failures.length
