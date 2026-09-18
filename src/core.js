@@ -315,13 +315,28 @@ function contentImages(document, content) {
     .filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
 }
 
+function isPixhostAssetUrl(value, baseUrl) {
+  try {
+    const url = new URL(value, baseUrl);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    return /^(?:img\d+\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i.test(hostname)
+      || /^t\d+\./i.test(hostname) && /(?:pixhost|pixho)/i.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
 function hdblogPreviewImages(document, content) {
   if (!content) return [];
   const seen = new Set();
   return [...content.querySelectorAll(`img[${HDBLOG_PREVIEW_URL_ATTR}]`)]
     .map((image) => absoluteUrl(document, image.getAttribute(HDBLOG_PREVIEW_URL_ATTR)))
     .filter((url) => url && !seen.has(url) && seen.add(url))
-    .map((url) => ({ url }));
+    .map((url) => ({
+      url,
+      hdblogPreview: true,
+      pixhostPreview: isPixhostAssetUrl(url, document.baseURI),
+    }));
 }
 
 function contentMagnets(content) {
@@ -437,7 +452,11 @@ export function buildDownloadJobs(document) {
   if (sequenceAllImages) {
     const seenImageUrls = new Set();
     const downloadImages = [
-      ...resources.images.map((image) => ({ url: image.cacheUrl || image.url })),
+      ...resources.images.map((image) => ({
+        url: image.cacheUrl || image.url,
+        ...(image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {}),
+        ...(image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {}),
+      })),
       ...resources.hdblogPreviews,
     ].filter((image) => (
       image.url && !seenImageUrls.has(image.url) && seenImageUrls.add(image.url)
@@ -448,6 +467,10 @@ export function buildDownloadJobs(document) {
         kind: 'image',
         url: image.url,
         name: sequencedImageFilename(resources.title.code, index, downloadImages.length),
+        ...(image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {}),
+        ...(image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {}),
+        ...(image.hdblogPreview ? { hdblogPreview: true } : {}),
+        ...(image.pixhostPreview ? { pixhostPreview: true } : {}),
       });
     });
   } else {
@@ -471,6 +494,8 @@ export function buildDownloadJobs(document) {
           name: resources.hdblogPreviews.length === 1
             ? `${safeCode} B.jpg`
             : `${safeCode} B${index + 1}.jpg`,
+          ...(image.hdblogPreview ? { hdblogPreview: true } : {}),
+          ...(image.pixhostPreview ? { pixhostPreview: true } : {}),
         });
       });
     }
