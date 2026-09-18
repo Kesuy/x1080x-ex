@@ -4,6 +4,7 @@ const PIXHOST_PAGE_HOST_PATTERN = /^(?:www\.)?(?:pixhost\.(?:to|cc|org)|pixho\.s
 const PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(.+)$/i;
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
 const CANONICAL_SHOW_PATH_PATTERN = /^\/show\/\d+\/[^/?#]+$/i;
+const PIXHOST_UNAVAILABLE_TEXT_PATTERN = /(?:\bpicture\s+removed\b|\b(?:this\s+)?image\s+(?:is\s+)?no\s+longer\s+available\b|\bimage\s+(?:has\s+been\s+)?removed\b|\b(?:image|file)\s+not\s+found\b|\b410\s+gone\b)/i;
 const REQUEST_TIMEOUT = 30000;
 const resolutionCache = new Map();
 
