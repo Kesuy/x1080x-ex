@@ -667,6 +667,8 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
 
   button.disabled = true;
   const failures = [];
+  let skipped = 0;
+  let downloaded = 0;
   try {
     button.textContent = '解析 Preview…';
     const resolved = [];
@@ -674,9 +676,13 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
     for (const candidate of candidates) {
       try {
         const url = await resolveCandidateUrl(document, candidate, gmRequest);
-        if (url && !seen.has(url)) {
+        if (!url) {
+          if (candidate.pixhostShowUrl) skipped += 1;
+          continue;
+        }
+        if (!seen.has(url)) {
           seen.add(url);
-          resolved.push(url);
+          resolved.push({ url, candidate });
         }
       } catch (error) {
         failures.push(error?.message || 'Pixhost 大图地址解析失败');
@@ -684,6 +690,10 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
     }
 
     if (!resolved.length) {
+      if (skipped && !failures.length) {
+        showStatus('已跳过失效 Preview', 'Pixhost Preview 已失效，未下载占位图。');
+        return;
+      }
       const detail = failures.length
         ? failures.join('；')
         : '没有解析到可下载的 Pixhost Preview 大图。';
@@ -691,14 +701,23 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
       return;
     }
 
-    for (const [index, url] of resolved.entries()) {
+    for (const [index, item] of resolved.entries()) {
+      const { url, candidate } = item;
       button.textContent = `下载 ${index + 1}/${resolved.length}`;
       try {
         const blob = await requestImageBlob(url, locationObject?.href, gmRequest);
         const extension = extensionFromBlob(blob, url);
-        saveBlob(document, blob, hdblogImageFilename(code, index, resolved.length, extension));
+        saveBlob(document, blob, hdblogImageFilename(code, downloaded, resolved.length, extension));
+        downloaded += 1;
       } catch (error) {
-        failures.push(`${index + 1}. ${error?.message || '下载失败'}`);
+        const message = error?.message || '下载失败';
+        const unavailable = Boolean(candidate?.pixhostShowUrl)
+          && /HTTP\s+(?:404|410)\b/i.test(message);
+        if (unavailable) {
+          skipped += 1;
+          continue;
+        }
+        failures.push(`${index + 1}. ${message}`);
       }
     }
   } catch (error) {
@@ -706,8 +725,13 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
   } finally {
     if (button.disabled) {
       button.disabled = false;
-      button.textContent = failures.length ? `完成（失败 ${failures.length}）` : '✓ 下载完成';
+      button.textContent = failures.length
+        ? `完成（失败 ${failures.length}）`
+        : skipped
+          ? (downloaded ? `✓ 完成（跳过 ${skipped}）` : '已跳过失效 Preview')
+          : '✓ 下载完成';
       if (failures.length) button.title = failures.join('；');
+      else if (skipped) button.title = 'Pixhost Preview 已失效，未下载占位图。';
       resetButton();
     }
   }
