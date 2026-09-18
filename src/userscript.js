@@ -4,6 +4,7 @@ import {
   isAllowedHost,
   parseDomainList,
 } from './core.js';
+import { resolvePixhostShowUrl } from './pixhost.js';
 import { requestTorrentBytes } from './torrent.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
@@ -599,9 +600,28 @@ async function download(job) {
       source: new URL(result.sourceUrl).hostname,
       size: result.bytes.byteLength,
     });
-    return;
+    return { skipped: false };
   }
-  const result = await requestBlob(job);
+
+  let downloadJob = job;
+  if (job.kind === 'image' && job.pixhostShowUrl) {
+    const resolvedUrl = await resolvePixhostShowUrl(
+      document,
+      job.pixhostShowUrl,
+      job.pixhostThumbUrl || job.url,
+      globalThis.GM_xmlhttpRequest
+    );
+    if (!resolvedUrl) {
+      console.info('[x1080x-ex] skipped unavailable Pixhost image', {
+        name: job.name,
+        showUrl: job.pixhostShowUrl,
+      });
+      return { skipped: true, reason: 'Pixhost Preview 已失效' };
+    }
+    downloadJob = { ...job, url: resolvedUrl };
+  }
+
+  const result = await requestBlob(downloadJob);
   console.info('[x1080x-ex] response', {
     kind: job.kind,
     name: job.name,
@@ -611,6 +631,7 @@ async function download(job) {
     size: result.blob.size,
   });
   saveBlob(result.blob, job.name);
+  return { skipped: false };
 }
 
 async function downloadAll(button) {
@@ -622,6 +643,7 @@ async function downloadAll(button) {
 
   button.disabled = true;
   const failures = [];
+  let skipped = 0;
   console.info('[x1080x-ex] environment', {
     downloadMode: typeof GM_info === 'object' ? GM_info.downloadMode : undefined,
     scriptHandler: typeof GM_info === 'object' ? GM_info.scriptHandler : undefined,
@@ -630,14 +652,22 @@ async function downloadAll(button) {
   for (const [index, job] of jobs.entries()) {
     button.textContent = `下载中 ${index + 1}/${jobs.length}`;
     try {
-      await download(job);
+      const result = await download(job);
+      if (result?.skipped) {
+        skipped += 1;
+        button.textContent = `已跳过失效图 ${skipped}`;
+      }
     } catch (error) {
       failures.push(`${job.name}：${redactDiagnostic(error?.message || error?.error || '未知错误')}`);
     }
   }
 
   button.disabled = false;
-  button.textContent = failures.length ? `完成（失败 ${failures.length}）` : '✓ 下载完成';
+  button.textContent = failures.length
+    ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}）`
+    : skipped
+      ? `✓ 完成（跳过 ${skipped}）`
+      : '✓ 下载完成';
   window.setTimeout(() => {
     button.textContent = '⬇';
   }, 2500);
