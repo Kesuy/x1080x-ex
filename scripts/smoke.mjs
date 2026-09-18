@@ -104,7 +104,6 @@ assert.deepEqual(calls, [
     responseType: 'blob',
     anonymous: undefined,
     referer: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806',
-    blobSize: 3,
   },
   {
     transport: 'gm',
