@@ -6,9 +6,8 @@ import {
 } from './hdblog-search.js';
 import { isHdblogReferUrl } from './hdblog-refer.js';
 import {
-  derivePixhostImageUrlFromThumbnail,
   isPixhostShowUrl,
-  parsePixhostImagePage,
+  resolvePixhostShowUrl,
 } from './pixhost.js';
 import {
   fetchOfficialPreviewFallbackForCode,
@@ -273,16 +272,6 @@ function bestImageUrl(document, image) {
   return wordpressOriginalUrl(srcset) || srcset;
 }
 
-async function resolvePixhostTarget(document, showUrl, thumbnailUrl, articleUrl, gmRequest) {
-  const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl, document.baseURI || showUrl);
-  try {
-    const response = await requestText(showUrl, gmRequest, articleUrl);
-    return parsePixhostImagePage(document, response.html, response.finalUrl || showUrl) || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function textNodesUnder(root) {
   const view = root.ownerDocument.defaultView;
   const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
@@ -347,7 +336,7 @@ export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequ
       target = await resolveHdblogReferTarget(document, target, articleUrl, gmRequest);
     }
     if (target && isPixhostShowUrl(target, document.baseURI)) {
-      target = await resolvePixhostTarget(document, target, thumbnail, articleUrl, gmRequest);
+      target = await resolvePixhostShowUrl(document, target, thumbnail, gmRequest);
     }
     if (target && (IMAGE_EXTENSION_PATTERN.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
       add(wordpressOriginalUrl(target) || target);
