@@ -335,8 +335,13 @@ export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequ
     if (isHdblogReferUrl(target, document.baseURI)) {
       target = await resolveHdblogReferTarget(document, target, articleUrl, gmRequest);
     }
-    if (target && isPixhostShowUrl(target, document.baseURI)) {
+    const pixhostShowTarget = target && isPixhostShowUrl(target, document.baseURI);
+    if (pixhostShowTarget) {
       target = await resolvePixhostShowUrl(document, target, thumbnail, gmRequest);
+      if (!target) {
+        if (image) handledImages.add(image);
+        continue;
+      }
     }
     if (target && (IMAGE_EXTENSION_PATTERN.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
       add(wordpressOriginalUrl(target) || target);
