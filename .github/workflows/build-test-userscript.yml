@@ -1,0 +1,28 @@
+name: Build test userscript
+
+on:
+  push:
+    branches:
+      - fix/skip-removed-pixhost-preview
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Rename test script
+        run: cp dist/x1080x-ex.user.js x1080x-ex-test-removed-preview.user.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x1080x-ex-test-userscript
+          path: x1080x-ex-test-removed-preview.user.js
+          if-no-files-found: error
