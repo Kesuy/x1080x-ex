@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.4
+// @version      1.10.5
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -246,20 +246,60 @@
       image.currentSrc || image.getAttribute("src") || image.getAttribute("data-original")
     );
   }
+  function isPixhostThumbnailUrl(value, baseUrl) {
+    try {
+      const url = new URL(value, baseUrl);
+      return /^t\d+\./i.test(url.hostname) && /^\/thumbs\//i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function pixhostShowUrlForImage(document2, image) {
+    const href = absoluteUrl(document2, image?.closest("a[href]")?.getAttribute("href"));
+    if (!href) return "";
+    try {
+      const url = new URL(href);
+      const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+      if (!/^(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i.test(hostname)) return "";
+      return /^\/show\/\d+\/[^/?#]+$/i.test(url.pathname) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
   function contentImages(document2, content) {
     if (!content) return [];
     const seen = /* @__PURE__ */ new Set();
-    return [...content.querySelectorAll("img")].filter(isContentImage).map((image, order) => ({
-      url: largeImageUrl(document2, image),
-      cacheUrl: cachedImageUrl(document2, image),
-      ...imageSize(image),
-      order
-    })).filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
+    return [...content.querySelectorAll("img")].filter(isContentImage).map((image, order) => {
+      const cacheUrl = cachedImageUrl(document2, image);
+      const pixhostShowUrl = pixhostShowUrlForImage(document2, image);
+      const pixhostThumbUrl = isPixhostThumbnailUrl(cacheUrl, document2.baseURI) ? cacheUrl : "";
+      return {
+        url: largeImageUrl(document2, image),
+        cacheUrl,
+        ...pixhostShowUrl ? { pixhostShowUrl } : {},
+        ...pixhostThumbUrl ? { pixhostThumbUrl } : {},
+        ...imageSize(image),
+        order
+      };
+    }).filter((image) => image.url && !seen.has(image.url) && seen.add(image.url));
+  }
+  function isPixhostAssetUrl(value, baseUrl) {
+    try {
+      const url = new URL(value, baseUrl);
+      const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+      return /^(?:img\d+\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i.test(hostname) || /^t\d+\./i.test(hostname) && /(?:pixhost|pixho)/i.test(hostname);
+    } catch {
+      return false;
+    }
   }
   function hdblogPreviewImages(document2, content) {
     if (!content) return [];
     const seen = /* @__PURE__ */ new Set();
-    return [...content.querySelectorAll(`img[${HDBLOG_PREVIEW_URL_ATTR}]`)].map((image) => absoluteUrl(document2, image.getAttribute(HDBLOG_PREVIEW_URL_ATTR))).filter((url) => url && !seen.has(url) && seen.add(url)).map((url) => ({ url }));
+    return [...content.querySelectorAll(`img[${HDBLOG_PREVIEW_URL_ATTR}]`)].map((image) => absoluteUrl(document2, image.getAttribute(HDBLOG_PREVIEW_URL_ATTR))).filter((url) => url && !seen.has(url) && seen.add(url)).map((url) => ({
+      url,
+      hdblogPreview: true,
+      pixhostPreview: isPixhostAssetUrl(url, document2.baseURI)
+    }));
   }
   function contentMagnets(content) {
     const matches = String(content?.textContent ?? "").match(MAGNET_PATTERN) || [];
@@ -347,14 +387,22 @@
     if (sequenceAllImages) {
       const seenImageUrls = /* @__PURE__ */ new Set();
       const downloadImages = [
-        ...resources.images.map((image) => ({ url: image.cacheUrl || image.url })),
+        ...resources.images.map((image) => ({
+          url: image.cacheUrl || image.url,
+          ...image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {},
+          ...image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {}
+        })),
         ...resources.hdblogPreviews
       ].filter((image) => image.url && !seenImageUrls.has(image.url) && seenImageUrls.add(image.url));
       downloadImages.forEach((image, index) => {
         jobs.push({
           kind: "image",
           url: image.url,
-          name: sequencedImageFilename(resources.title.code, index, downloadImages.length)
+          name: sequencedImageFilename(resources.title.code, index, downloadImages.length),
+          ...image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {},
+          ...image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {},
+          ...image.hdblogPreview ? { hdblogPreview: true } : {},
+          ...image.pixhostPreview ? { pixhostPreview: true } : {}
         });
       });
     } else {
@@ -372,12 +420,248 @@
           jobs.push({
             kind: "image",
             url: image.url,
-            name: resources.hdblogPreviews.length === 1 ? `${safeCode} B.jpg` : `${safeCode} B${index + 1}.jpg`
+            name: resources.hdblogPreviews.length === 1 ? `${safeCode} B.jpg` : `${safeCode} B${index + 1}.jpg`,
+            ...image.hdblogPreview ? { hdblogPreview: true } : {},
+            ...image.pixhostPreview ? { pixhostPreview: true } : {}
           });
         });
       }
     }
+    for (const job of jobs) {
+      if (job.kind !== "image") continue;
+      const sourceImage = resources.images.find((image) => (image.cacheUrl || image.url) === job.url && image.pixhostShowUrl);
+      if (!sourceImage) {
+        const pixhostThumbSource = resources.images.find((image) => (image.cacheUrl || image.url) === job.url && image.pixhostThumbUrl);
+        if (pixhostThumbSource) job.pixhostThumbUrl = pixhostThumbSource.pixhostThumbUrl;
+        continue;
+      }
+      job.pixhostShowUrl = sourceImage.pixhostShowUrl;
+      job.pixhostThumbUrl = sourceImage.pixhostThumbUrl || job.url;
+    }
     return jobs;
+  }
+
+  // src/hdblog-image-hosts.js
+  var HDBLOG_IMAGE_HOSTS_KEY = "x1080x-ex:hdblog-image-hosts";
+  var DEFAULT_HDBLOG_IMAGE_HOSTS = Object.freeze([
+    "pixhost.to",
+    "pixhost.cc",
+    "pixho.st",
+    // 旧版本代码曾兼容该域名，保留以免历史文章失效。
+    "pixhost.org"
+  ]);
+  var HDBLOG_SETTINGS_PANEL_ID = "x1080x-ex-hdblog-settings-panel";
+  var IMAGE_HOSTS_FIELD_ATTR = "data-x1080x-hdblog-image-hosts-field";
+  var IMAGE_HOSTS_BOUND_ATTR = "data-x1080x-hdblog-image-hosts-bound";
+  function normalizeHostname(value) {
+    const text = String(value ?? "").trim();
+    if (!text) return "";
+    try {
+      const url = new URL(text.includes("://") ? text : `https://${text}`);
+      return url.hostname.toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
+    } catch {
+      return "";
+    }
+  }
+  function parseHdblogImageHosts(value) {
+    const seen = /* @__PURE__ */ new Set();
+    return String(value ?? "").split(/[\s,;，；]+/).map(normalizeHostname).filter(Boolean).filter((hostname) => !seen.has(hostname) && seen.add(hostname));
+  }
+  function getCustomHdblogImageHosts() {
+    if (typeof GM_getValue !== "function") return [];
+    const stored = GM_getValue(HDBLOG_IMAGE_HOSTS_KEY, "");
+    return parseHdblogImageHosts(stored);
+  }
+  function getHdblogImageHosts() {
+    return [.../* @__PURE__ */ new Set([...DEFAULT_HDBLOG_IMAGE_HOSTS, ...getCustomHdblogImageHosts()])];
+  }
+  function isHdblogImagePageHost(hostname) {
+    const host = String(hostname ?? "").toLowerCase().replace(/\.$/, "");
+    if (!host) return false;
+    return getHdblogImageHosts().some((domain) => host === domain || host === `www.${domain}`);
+  }
+  function isHdblogHost(locationObject) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
+  }
+  function enhanceHdblogSettingsPanel(document2) {
+    const overlay = document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID);
+    const panel = overlay?.querySelector("form");
+    if (!panel || panel.querySelector(`[${IMAGE_HOSTS_FIELD_ATTR}]`)) return false;
+    const label = document2.createElement("label");
+    label.setAttribute(IMAGE_HOSTS_FIELD_ATTR, "1");
+    label.style.cssText = "display:block;margin-bottom:18px";
+    const title = document2.createElement("span");
+    title.textContent = "\u989D\u5916\u56FE\u5E8A\u57DF\u540D";
+    title.style.cssText = "display:block;font-weight:600;margin-bottom:6px";
+    const textarea = document2.createElement("textarea");
+    textarea.setAttribute("data-setting", "image-hosts");
+    textarea.rows = 4;
+    textarea.placeholder = "\u901A\u5E38\u65E0\u9700\u586B\u5199\uFF1B\u56FE\u5E8A\u66F4\u6362\u57DF\u540D\u65F6\u6BCF\u884C\u6DFB\u52A0\u4E00\u4E2A";
+    textarea.value = getCustomHdblogImageHosts().join("\n");
+    textarea.style.cssText = "width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical";
+    const help = document2.createElement("small");
+    help.style.cssText = "display:block;margin-top:5px;color:#666";
+    help.textContent = `\u5185\u7F6E\u517C\u5BB9\uFF1A${DEFAULT_HDBLOG_IMAGE_HOSTS.join("\u3001")}\u3002\u53EF\u586B\u4E3B\u57DF\u540D\u6216\u5B8C\u6574 URL\uFF1B\u811A\u672C\u4E5F\u4F1A\u81EA\u52A8\u8BC6\u522B\u5E38\u89C1 /show/ \u56FE\u7247\u5C55\u793A\u9875\u3002`;
+    label.append(title, textarea, help);
+    panel.insertBefore(label, panel.lastElementChild || null);
+    if (panel.getAttribute(IMAGE_HOSTS_BOUND_ATTR) !== "1") {
+      panel.setAttribute(IMAGE_HOSTS_BOUND_ATTR, "1");
+      panel.addEventListener("submit", () => {
+        const input = panel.querySelector('[data-setting="image-hosts"]');
+        if (!input || typeof GM_setValue !== "function") return;
+        const hosts = parseHdblogImageHosts(input.value);
+        GM_setValue(HDBLOG_IMAGE_HOSTS_KEY, hosts.join("\n"));
+      }, true);
+    }
+    return true;
+  }
+  function installHdblogImageHostSettings(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2?.body || !isHdblogHost(locationObject)) return;
+    enhanceHdblogSettingsPanel(document2);
+    const MutationObserverCtor = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
+    if (typeof MutationObserverCtor !== "function") return;
+    const observer = new MutationObserverCtor(() => enhanceHdblogSettingsPanel(document2));
+    observer.observe(document2.body, { childList: true, subtree: true });
+  }
+
+  // src/pixhost.js
+  var PIXHOST_PAGE_HOST_PATTERN = /^(?:www\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
+  var PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(.+)$/i;
+  var IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
+  var CANONICAL_SHOW_PATH_PATTERN = /^\/show\/\d+\/[^/?#]+$/i;
+  var PIXHOST_UNAVAILABLE_TEXT_PATTERN = /(?:\bpicture\s+removed\b|\b(?:this\s+)?image\s+(?:is\s+)?no\s+longer\s+available\b|\bimage\s+(?:has\s+been\s+)?removed\b|\b(?:image|file)\s+not\s+found\b|\b410\s+gone\b)/i;
+  var REQUEST_TIMEOUT = 3e4;
+  var resolutionCache = /* @__PURE__ */ new Map();
+  function absoluteUrl2(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function isDirectImageDeliveryUrl(url) {
+    return /^img\d+\./i.test(url.hostname) || /^\/(?:images?|thumbs?|full|raw)\//i.test(url.pathname);
+  }
+  function isPixhostShowUrl(value, baseUrl = "https://pixhost.to/") {
+    const href = absoluteUrl2(value, baseUrl);
+    if (!href) return false;
+    try {
+      const url = new URL(href);
+      if (isDirectImageDeliveryUrl(url)) return false;
+      if (CANONICAL_SHOW_PATH_PATTERN.test(url.pathname)) return true;
+      return (PIXHOST_PAGE_HOST_PATTERN.test(url.hostname) || isHdblogImagePageHost(url.hostname)) && !/^\/(?:images?|thumbs?)\//i.test(url.pathname) && !IMAGE_EXTENSION_PATTERN.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function derivePixhostImageUrlFromThumbnail(value, baseUrl = "https://pixhost.to/") {
+    const href = absoluteUrl2(value, baseUrl);
+    if (!href) return "";
+    try {
+      const url = new URL(href);
+      const hostMatch = url.hostname.match(PIXHOST_THUMB_HOST_PATTERN);
+      if (!hostMatch || !/^\/thumbs\//i.test(url.pathname)) return "";
+      url.hostname = `img${hostMatch[1]}.${hostMatch[2]}`;
+      url.pathname = url.pathname.replace(/^\/thumbs\//i, "/images/");
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+  function candidateUrl(value, pageUrl) {
+    const href = absoluteUrl2(value, pageUrl);
+    if (!href || isPixhostShowUrl(href, pageUrl)) return "";
+    return href;
+  }
+  function parseImageHostDocument(document2, html) {
+    if (!document2 || !html) return null;
+    const parsed = document2.implementation.createHTMLDocument("image-host");
+    parsed.documentElement.innerHTML = String(html);
+    return parsed;
+  }
+  function isUnavailableImageHostDocument(parsed) {
+    if (!parsed) return false;
+    const imageLabels = [...parsed.querySelectorAll("img[alt], img[title]")].flatMap((image) => [image.getAttribute("alt"), image.getAttribute("title")]);
+    const text = [parsed.title, parsed.body?.textContent, ...imageLabels].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    return PIXHOST_UNAVAILABLE_TEXT_PATTERN.test(text);
+  }
+  function isPixhostUnavailablePage(document2, html) {
+    return isUnavailableImageHostDocument(parseImageHostDocument(document2, html));
+  }
+  function parsePixhostImagePage(document2, html, pageUrl) {
+    const parsed = parseImageHostDocument(document2, html);
+    if (!parsed || isUnavailableImageHostDocument(parsed)) return "";
+    const selectors = [
+      ["img.image-img[src]", "src"],
+      ["img.image-img[data-src]", "data-src"],
+      ["img.image-img[data-original]", "data-original"],
+      ["img#image[src]", "src"],
+      ["img#image[data-src]", "data-src"],
+      ["figure img[src]", "src"],
+      ["a#image[href]", "href"],
+      ["a.image[href]", "href"],
+      ['meta[property="og:image"]', "content"],
+      ['meta[name="twitter:image"]', "content"],
+      ['link[rel="image_src"]', "href"],
+      ["main img[src]", "src"],
+      ["main img[data-src]", "data-src"]
+    ];
+    for (const [selector, attribute] of selectors) {
+      const value = parsed.querySelector(selector)?.getAttribute(attribute);
+      const url = candidateUrl(value, pageUrl);
+      if (url) return url;
+    }
+    const raw = String(html).match(/<img\b(?=[^>]*\bclass=["'][^"']*\bimage-img\b[^"']*["'])[^>]*\bsrc=["']([^"']+)["'][^>]*>/i)?.[1];
+    return candidateUrl(raw, pageUrl);
+  }
+  function requestPixhostPage(showUrl, gmRequest2, referer) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest2 !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      gmRequest2({
+        method: "GET",
+        url: showUrl,
+        responseType: "text",
+        timeout: REQUEST_TIMEOUT,
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          ...referer ? { Referer: referer } : {}
+        },
+        onload(response) {
+          if (response.status < 200 || response.status >= 300) {
+            const error = new Error(`\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`);
+            error.status = response.status || 0;
+            reject(error);
+            return;
+          }
+          resolve({
+            html: String(response.responseText ?? response.response ?? ""),
+            finalUrl: response.finalUrl || response.responseURL || showUrl
+          });
+        },
+        onerror: () => reject(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF")),
+        ontimeout: () => reject(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  function resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2 = "", gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    const absoluteShowUrl = absoluteUrl2(showUrl, document2?.baseURI || "https://pixhost.to/");
+    if (!absoluteShowUrl || !isPixhostShowUrl(absoluteShowUrl, document2?.baseURI)) {
+      return Promise.resolve("");
+    }
+    if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
+    const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2?.baseURI || absoluteShowUrl);
+    const promise = requestPixhostPage(absoluteShowUrl, gmRequest2, document2?.location?.href).then(({ html, finalUrl }) => {
+      if (isPixhostUnavailablePage(document2, html)) return "";
+      return parsePixhostImagePage(document2, html, finalUrl || absoluteShowUrl) || fallback;
+    }).catch((error) => error?.status === 404 || error?.status === 410 ? "" : fallback);
+    resolutionCache.set(absoluteShowUrl, promise);
+    return promise;
   }
 
   // src/torrent.js
@@ -942,7 +1226,8 @@ ${settings.password}`;
   var BUTTON_ID = "x1080x-ex-download";
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
   var BATCH_TOOLBAR_ID = "x1080x-ex-open-page-toolbar";
-  var REQUEST_TIMEOUT = 6e4;
+  var REQUEST_TIMEOUT2 = 6e4;
+  var PIXHOST_PLACEHOLDER_MAX_BYTES = 32 * 1024;
   var PREVIEW_IMAGE_URL_ATTR = "data-x1080x-hdblog-preview-url";
   var PREVIEW_REFERER_ATTR = "data-x1080x-preview-referer";
   var DEFAULT_OPEN_TIMING = Object.freeze({
@@ -1337,7 +1622,7 @@ ${failures.join("\n")}`);
   }
   async function requestBlobWithPageFetch(job) {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+    const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT2);
     try {
       const response = await window.fetch(job.url, {
         method: "GET",
@@ -1356,7 +1641,7 @@ ${failures.join("\n")}`);
       });
     } catch (error) {
       if (error?.name === "AbortError") {
-        throw new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT / 1e3} \u79D2\uFF09`);
+        throw new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT2 / 1e3} \u79D2\uFF09`);
       }
       const details = safeErrorDetails(error);
       console.error("[x1080x-ex] page fetch failed", details);
@@ -1391,7 +1676,7 @@ ${failures.join("\n")}`);
         method: "GET",
         url: job.url,
         responseType: "blob",
-        timeout: REQUEST_TIMEOUT,
+        timeout: REQUEST_TIMEOUT2,
         ...referer ? { headers: { Referer: referer } } : {},
         onload: (response) => {
           validateResponse(response).then(resolve, reject);
@@ -1402,7 +1687,7 @@ ${failures.join("\n")}`);
             `\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25\uFF1Aerror=${details.error || "unknown_error"}\uFF1Bdetails=${details.details || details.message || "\u65E0\u8BE6\u7EC6\u4FE1\u606F"}`
           ));
         },
-        ontimeout: () => reject(new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT / 1e3} \u79D2\uFF09`))
+        ontimeout: () => reject(new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT2 / 1e3} \u79D2\uFF09`))
       });
     });
   }
@@ -1427,6 +1712,13 @@ ${failures.join("\n")}`);
     }
     return requestBlobWithGmXhr(job);
   }
+  function isLikelyUnavailablePixhostPreview(job, blob) {
+    if (!blob || typeof blob.size !== "number") return false;
+    const isPixhostPreview = Boolean(
+      job?.pixhostPreview || job?.pixhostThumbUrl || job?.pixhostShowUrl
+    );
+    return isPixhostPreview && blob.size > 0 && blob.size <= PIXHOST_PLACEHOLDER_MAX_BYTES;
+  }
   function saveBlob(blob, name) {
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -1441,7 +1733,7 @@ ${failures.join("\n")}`);
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     }
   }
-  async function download(job) {
+  async function download(job, { deferImageSave = false } = {}) {
     if (job.kind === "torrent") {
       const result2 = await requestTorrentBytes(job.url);
       saveBlob(new Blob([result2.bytes], { type: "application/x-bittorrent" }), job.name);
@@ -1452,9 +1744,32 @@ ${failures.join("\n")}`);
         source: new URL(result2.sourceUrl).hostname,
         size: result2.bytes.byteLength
       });
-      return;
+      return { skipped: false };
     }
-    const result = await requestBlob(job);
+    let downloadJob = job;
+    if (job.kind === "image" && job.pixhostShowUrl) {
+      const resolvedUrl = await resolvePixhostShowUrl(
+        document,
+        job.pixhostShowUrl,
+        job.pixhostThumbUrl || job.url,
+        globalThis.GM_xmlhttpRequest
+      );
+      if (!resolvedUrl) {
+        console.info("[x1080x-ex] skipped unavailable Pixhost image", {
+          name: job.name,
+          showUrl: job.pixhostShowUrl
+        });
+        return { skipped: true, reason: "Pixhost Preview \u5DF2\u5931\u6548" };
+      }
+      downloadJob = { ...job, url: resolvedUrl };
+    } else if (job.kind === "image" && job.pixhostThumbUrl) {
+      console.info("[x1080x-ex] skipped standalone Pixhost thumbnail", {
+        name: job.name,
+        thumbnailUrl: job.pixhostThumbUrl
+      });
+      return { skipped: true, reason: "Pixhost \u7F29\u7565\u56FE\u672A\u627E\u5230\u53EF\u9A8C\u8BC1\u7684\u5927\u56FE\u5730\u5740" };
+    }
+    const result = await requestBlob(downloadJob);
     console.info("[x1080x-ex] response", {
       kind: job.kind,
       name: job.name,
@@ -1463,7 +1778,19 @@ ${failures.join("\n")}`);
       contentType: result.contentType,
       size: result.blob.size
     });
+    if (job.kind === "image" && isLikelyUnavailablePixhostPreview(job, result.blob)) {
+      console.info("[x1080x-ex] skipped likely unavailable Pixhost preview blob", {
+        name: job.name,
+        size: result.blob.size,
+        url: redactDiagnostic(downloadJob.url)
+      });
+      return { skipped: true, reason: "Pixhost Preview \u5DF2\u5931\u6548" };
+    }
+    if (job.kind === "image" && deferImageSave) {
+      return { skipped: false, blob: result.blob, name: job.name };
+    }
     saveBlob(result.blob, job.name);
+    return { skipped: false };
   }
   async function downloadAll(button) {
     const jobs = buildDownloadJobs(document);
@@ -1473,6 +1800,8 @@ ${failures.join("\n")}`);
     }
     button.disabled = true;
     const failures = [];
+    const pendingImages = [];
+    let skipped = 0;
     console.info("[x1080x-ex] environment", {
       downloadMode: typeof GM_info === "object" ? GM_info.downloadMode : void 0,
       scriptHandler: typeof GM_info === "object" ? GM_info.scriptHandler : void 0,
@@ -1481,13 +1810,23 @@ ${failures.join("\n")}`);
     for (const [index, job] of jobs.entries()) {
       button.textContent = `\u4E0B\u8F7D\u4E2D ${index + 1}/${jobs.length}`;
       try {
-        await download(job);
+        const result = await download(job, { deferImageSave: job.kind === "image" });
+        if (result?.skipped) {
+          skipped += 1;
+          button.textContent = `\u5DF2\u8DF3\u8FC7\u5931\u6548\u56FE ${skipped}`;
+        } else if (job.kind === "image" && result?.blob) {
+          pendingImages.push(result);
+        }
       } catch (error) {
         failures.push(`${job.name}\uFF1A${redactDiagnostic(error?.message || error?.error || "\u672A\u77E5\u9519\u8BEF")}`);
       }
     }
+    pendingImages.forEach(({ blob, name }) => {
+      const finalName = pendingImages.length === 1 ? name.replace(/ A(?=\.[^.]+$)/i, "") : name;
+      saveBlob(blob, finalName);
+    });
     button.disabled = false;
-    button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}\uFF09` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
+    button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}${skipped ? `\uFF0C\u8DF3\u8FC7 ${skipped}` : ""}\uFF09` : skipped ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
     window.setTimeout(() => {
       button.textContent = "\u2B07";
     }, 2500);
@@ -1693,209 +2032,6 @@ ${failures.join("\n")}
   function installHdblogSearchEnhancement() {
     if (typeof window === "undefined" || typeof document === "undefined") return;
     applyHdblogSearchEnhancement(window);
-  }
-
-  // src/hdblog-image-hosts.js
-  var HDBLOG_IMAGE_HOSTS_KEY = "x1080x-ex:hdblog-image-hosts";
-  var DEFAULT_HDBLOG_IMAGE_HOSTS = Object.freeze([
-    "pixhost.to",
-    "pixhost.cc",
-    "pixho.st",
-    // 旧版本代码曾兼容该域名，保留以免历史文章失效。
-    "pixhost.org"
-  ]);
-  var HDBLOG_SETTINGS_PANEL_ID = "x1080x-ex-hdblog-settings-panel";
-  var IMAGE_HOSTS_FIELD_ATTR = "data-x1080x-hdblog-image-hosts-field";
-  var IMAGE_HOSTS_BOUND_ATTR = "data-x1080x-hdblog-image-hosts-bound";
-  function normalizeHostname(value) {
-    const text = String(value ?? "").trim();
-    if (!text) return "";
-    try {
-      const url = new URL(text.includes("://") ? text : `https://${text}`);
-      return url.hostname.toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
-    } catch {
-      return "";
-    }
-  }
-  function parseHdblogImageHosts(value) {
-    const seen = /* @__PURE__ */ new Set();
-    return String(value ?? "").split(/[\s,;，；]+/).map(normalizeHostname).filter(Boolean).filter((hostname) => !seen.has(hostname) && seen.add(hostname));
-  }
-  function getCustomHdblogImageHosts() {
-    if (typeof GM_getValue !== "function") return [];
-    const stored = GM_getValue(HDBLOG_IMAGE_HOSTS_KEY, "");
-    return parseHdblogImageHosts(stored);
-  }
-  function getHdblogImageHosts() {
-    return [.../* @__PURE__ */ new Set([...DEFAULT_HDBLOG_IMAGE_HOSTS, ...getCustomHdblogImageHosts()])];
-  }
-  function isHdblogImagePageHost(hostname) {
-    const host = String(hostname ?? "").toLowerCase().replace(/\.$/, "");
-    if (!host) return false;
-    return getHdblogImageHosts().some((domain) => host === domain || host === `www.${domain}`);
-  }
-  function isHdblogHost(locationObject) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
-  }
-  function enhanceHdblogSettingsPanel(document2) {
-    const overlay = document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID);
-    const panel = overlay?.querySelector("form");
-    if (!panel || panel.querySelector(`[${IMAGE_HOSTS_FIELD_ATTR}]`)) return false;
-    const label = document2.createElement("label");
-    label.setAttribute(IMAGE_HOSTS_FIELD_ATTR, "1");
-    label.style.cssText = "display:block;margin-bottom:18px";
-    const title = document2.createElement("span");
-    title.textContent = "\u989D\u5916\u56FE\u5E8A\u57DF\u540D";
-    title.style.cssText = "display:block;font-weight:600;margin-bottom:6px";
-    const textarea = document2.createElement("textarea");
-    textarea.setAttribute("data-setting", "image-hosts");
-    textarea.rows = 4;
-    textarea.placeholder = "\u901A\u5E38\u65E0\u9700\u586B\u5199\uFF1B\u56FE\u5E8A\u66F4\u6362\u57DF\u540D\u65F6\u6BCF\u884C\u6DFB\u52A0\u4E00\u4E2A";
-    textarea.value = getCustomHdblogImageHosts().join("\n");
-    textarea.style.cssText = "width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical";
-    const help = document2.createElement("small");
-    help.style.cssText = "display:block;margin-top:5px;color:#666";
-    help.textContent = `\u5185\u7F6E\u517C\u5BB9\uFF1A${DEFAULT_HDBLOG_IMAGE_HOSTS.join("\u3001")}\u3002\u53EF\u586B\u4E3B\u57DF\u540D\u6216\u5B8C\u6574 URL\uFF1B\u811A\u672C\u4E5F\u4F1A\u81EA\u52A8\u8BC6\u522B\u5E38\u89C1 /show/ \u56FE\u7247\u5C55\u793A\u9875\u3002`;
-    label.append(title, textarea, help);
-    panel.insertBefore(label, panel.lastElementChild || null);
-    if (panel.getAttribute(IMAGE_HOSTS_BOUND_ATTR) !== "1") {
-      panel.setAttribute(IMAGE_HOSTS_BOUND_ATTR, "1");
-      panel.addEventListener("submit", () => {
-        const input = panel.querySelector('[data-setting="image-hosts"]');
-        if (!input || typeof GM_setValue !== "function") return;
-        const hosts = parseHdblogImageHosts(input.value);
-        GM_setValue(HDBLOG_IMAGE_HOSTS_KEY, hosts.join("\n"));
-      }, true);
-    }
-    return true;
-  }
-  function installHdblogImageHostSettings(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2?.body || !isHdblogHost(locationObject)) return;
-    enhanceHdblogSettingsPanel(document2);
-    const MutationObserverCtor = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
-    if (typeof MutationObserverCtor !== "function") return;
-    const observer = new MutationObserverCtor(() => enhanceHdblogSettingsPanel(document2));
-    observer.observe(document2.body, { childList: true, subtree: true });
-  }
-
-  // src/pixhost.js
-  var PIXHOST_PAGE_HOST_PATTERN = /^(?:www\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
-  var PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(.+)$/i;
-  var IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
-  var CANONICAL_SHOW_PATH_PATTERN = /^\/show\/\d+\/[^/?#]+$/i;
-  var REQUEST_TIMEOUT2 = 3e4;
-  var resolutionCache = /* @__PURE__ */ new Map();
-  function absoluteUrl2(value, baseUrl) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
-    try {
-      const url = new URL(String(value), baseUrl);
-      return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function isDirectImageDeliveryUrl(url) {
-    return /^img\d+\./i.test(url.hostname) || /^\/(?:images?|thumbs?|full|raw)\//i.test(url.pathname);
-  }
-  function isPixhostShowUrl(value, baseUrl = "https://pixhost.to/") {
-    const href = absoluteUrl2(value, baseUrl);
-    if (!href) return false;
-    try {
-      const url = new URL(href);
-      if (isDirectImageDeliveryUrl(url)) return false;
-      if (CANONICAL_SHOW_PATH_PATTERN.test(url.pathname)) return true;
-      return (PIXHOST_PAGE_HOST_PATTERN.test(url.hostname) || isHdblogImagePageHost(url.hostname)) && !/^\/(?:images?|thumbs?)\//i.test(url.pathname) && !IMAGE_EXTENSION_PATTERN.test(url.pathname);
-    } catch {
-      return false;
-    }
-  }
-  function derivePixhostImageUrlFromThumbnail(value, baseUrl = "https://pixhost.to/") {
-    const href = absoluteUrl2(value, baseUrl);
-    if (!href) return "";
-    try {
-      const url = new URL(href);
-      const hostMatch = url.hostname.match(PIXHOST_THUMB_HOST_PATTERN);
-      if (!hostMatch || !/^\/thumbs\//i.test(url.pathname)) return "";
-      url.hostname = `img${hostMatch[1]}.${hostMatch[2]}`;
-      url.pathname = url.pathname.replace(/^\/thumbs\//i, "/images/");
-      return url.href;
-    } catch {
-      return "";
-    }
-  }
-  function candidateUrl(value, pageUrl) {
-    const href = absoluteUrl2(value, pageUrl);
-    if (!href || isPixhostShowUrl(href, pageUrl)) return "";
-    return href;
-  }
-  function parsePixhostImagePage(document2, html, pageUrl) {
-    if (!document2 || !html) return "";
-    const parsed = document2.implementation.createHTMLDocument("image-host");
-    parsed.documentElement.innerHTML = String(html);
-    const selectors = [
-      ["img.image-img[src]", "src"],
-      ["img.image-img[data-src]", "data-src"],
-      ["img.image-img[data-original]", "data-original"],
-      ["img#image[src]", "src"],
-      ["img#image[data-src]", "data-src"],
-      ["figure img[src]", "src"],
-      ["a#image[href]", "href"],
-      ["a.image[href]", "href"],
-      ['meta[property="og:image"]', "content"],
-      ['meta[name="twitter:image"]', "content"],
-      ['link[rel="image_src"]', "href"],
-      ["main img[src]", "src"],
-      ["main img[data-src]", "data-src"]
-    ];
-    for (const [selector, attribute] of selectors) {
-      const value = parsed.querySelector(selector)?.getAttribute(attribute);
-      const url = candidateUrl(value, pageUrl);
-      if (url) return url;
-    }
-    const raw = String(html).match(/<img\b(?=[^>]*\bclass=["'][^"']*\bimage-img\b[^"']*["'])[^>]*\bsrc=["']([^"']+)["'][^>]*>/i)?.[1];
-    return candidateUrl(raw, pageUrl);
-  }
-  function requestPixhostPage(showUrl, gmRequest2, referer) {
-    return new Promise((resolve, reject) => {
-      if (typeof gmRequest2 !== "function") {
-        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
-        return;
-      }
-      gmRequest2({
-        method: "GET",
-        url: showUrl,
-        responseType: "text",
-        timeout: REQUEST_TIMEOUT2,
-        headers: {
-          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-          ...referer ? { Referer: referer } : {}
-        },
-        onload(response) {
-          if (response.status < 200 || response.status >= 300) {
-            reject(new Error(`\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
-            return;
-          }
-          resolve({
-            html: String(response.responseText ?? response.response ?? ""),
-            finalUrl: response.finalUrl || response.responseURL || showUrl
-          });
-        },
-        onerror: () => reject(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF")),
-        ontimeout: () => reject(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u8D85\u65F6"))
-      });
-    });
-  }
-  function resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2 = "", gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    const absoluteShowUrl = absoluteUrl2(showUrl, document2?.baseURI || "https://pixhost.to/");
-    if (!absoluteShowUrl || !isPixhostShowUrl(absoluteShowUrl, document2?.baseURI)) {
-      return Promise.resolve("");
-    }
-    if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
-    const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2?.baseURI || absoluteShowUrl);
-    const promise = requestPixhostPage(absoluteShowUrl, gmRequest2, document2?.location?.href).then(({ html, finalUrl }) => parsePixhostImagePage(document2, html, finalUrl || absoluteShowUrl) || fallback).catch(() => fallback);
-    resolutionCache.set(absoluteShowUrl, promise);
-    return promise;
   }
 
   // src/hdblog-article.js
@@ -2462,18 +2598,32 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   async function downloadHdblogArticleImages(button, document2, locationObject, gmRequest2, initialCandidates = []) {
     const view = document2.defaultView;
+    const resetButton = (delay = 3e3) => {
+      view?.setTimeout(() => {
+        button.textContent = "\u2B07";
+        button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
+      }, delay);
+    };
+    const showStatus = (text, detail = "") => {
+      button.disabled = false;
+      button.textContent = text;
+      if (detail) button.title = detail;
+      resetButton();
+    };
     const code = extractHdblogArticleCode(document2);
     if (!code) {
-      view?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\uFF0C\u672A\u5F00\u59CB\u4E0B\u8F7D\u3002");
+      showStatus("\u672A\u8BC6\u522B\u756A\u53F7", "\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\uFF0C\u672A\u5F00\u59CB\u4E0B\u8F7D\u3002");
       return;
     }
     const candidates = initialCandidates.length ? initialCandidates : collectHdblogPixhostPreviewImages(document2);
     if (!candidates.length) {
-      view?.alert("Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
+      showStatus("\u65E0 Preview", "Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
       return;
     }
     button.disabled = true;
     const failures = [];
+    let skipped = 0;
+    let downloaded = 0;
     try {
       button.textContent = "\u89E3\u6790 Preview\u2026";
       const resolved = [];
@@ -2481,37 +2631,56 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       for (const candidate of candidates) {
         try {
           const url = await resolveCandidateUrl(document2, candidate, gmRequest2);
-          if (url && !seen.has(url)) {
+          if (!url) {
+            if (candidate.pixhostShowUrl) skipped += 1;
+            continue;
+          }
+          if (!seen.has(url)) {
             seen.add(url);
-            resolved.push(url);
+            resolved.push({ url, candidate });
           }
         } catch (error) {
           failures.push(error?.message || "Pixhost \u5927\u56FE\u5730\u5740\u89E3\u6790\u5931\u8D25");
         }
       }
-      if (!resolved.length) throw new Error("\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u4E0B\u8F7D\u7684 Pixhost Preview \u5927\u56FE\u3002");
-      for (const [index, url] of resolved.entries()) {
+      if (!resolved.length) {
+        if (skipped && !failures.length) {
+          showStatus("\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview", "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002");
+          return;
+        }
+        const detail = failures.length ? failures.join("\uFF1B") : "\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u4E0B\u8F7D\u7684 Pixhost Preview \u5927\u56FE\u3002";
+        showStatus("\u65E0\u53EF\u4E0B\u8F7D Preview", detail);
+        return;
+      }
+      for (const [index, item] of resolved.entries()) {
+        const { url, candidate } = item;
         button.textContent = `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
         try {
           const blob = await requestImageBlob(url, locationObject?.href, gmRequest2);
           const extension = extensionFromBlob(blob, url);
-          saveBlob2(document2, blob, hdblogImageFilename(code, index, resolved.length, extension));
+          saveBlob2(document2, blob, hdblogImageFilename(code, downloaded, resolved.length, extension));
+          downloaded += 1;
         } catch (error) {
-          failures.push(`${index + 1}. ${error?.message || "\u4E0B\u8F7D\u5931\u8D25"}`);
+          const message = error?.message || "\u4E0B\u8F7D\u5931\u8D25";
+          const unavailable = Boolean(candidate?.pixhostShowUrl) && /HTTP\s+(?:404|410)\b/i.test(message);
+          if (unavailable) {
+            skipped += 1;
+            continue;
+          }
+          failures.push(`${index + 1}. ${message}`);
         }
       }
     } catch (error) {
       failures.push(error?.message || "\u4E0B\u8F7D\u5931\u8D25");
     } finally {
-      button.disabled = false;
-      button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}\uFF09` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
-      view?.setTimeout(() => {
-        button.textContent = "\u2B07";
-      }, 2500);
+      if (button.disabled) {
+        button.disabled = false;
+        button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}\uFF09` : skipped ? downloaded ? `\u2713 \u5B8C\u6210\uFF08\u8DF3\u8FC7 ${skipped}\uFF09` : "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
+        if (failures.length) button.title = failures.join("\uFF1B");
+        else if (skipped) button.title = "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002";
+        resetButton();
+      }
     }
-    if (failures.length) view?.alert(`\u90E8\u5206\u56FE\u7247\u5904\u7406\u5931\u8D25\uFF1A
-
-${failures.join("\n")}`);
   }
   function installDownloadButton(document2, locationObject, gmRequest2) {
     if (document2.getElementById(DOWNLOAD_BUTTON_ID)) return;
@@ -3840,15 +4009,6 @@ ${failures.join("\n")}`);
     );
     return wordpressOriginalUrl2(srcset) || srcset;
   }
-  async function resolvePixhostTarget(document2, showUrl, thumbnailUrl2, articleUrl, gmRequest2) {
-    const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2.baseURI || showUrl);
-    try {
-      const response = await requestText2(showUrl, gmRequest2, articleUrl);
-      return parsePixhostImagePage(document2, response.html, response.finalUrl || showUrl) || fallback;
-    } catch {
-      return fallback;
-    }
-  }
   function textNodesUnder4(root) {
     const view = root.ownerDocument.defaultView;
     const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
@@ -3902,8 +4062,13 @@ ${failures.join("\n")}`);
       if (isHdblogReferUrl(target, document2.baseURI)) {
         target = await resolveHdblogReferTarget(document2, target, articleUrl, gmRequest2);
       }
-      if (target && isPixhostShowUrl(target, document2.baseURI)) {
-        target = await resolvePixhostTarget(document2, target, thumbnail, articleUrl, gmRequest2);
+      const pixhostShowTarget = target && isPixhostShowUrl(target, document2.baseURI);
+      if (pixhostShowTarget) {
+        target = await resolvePixhostShowUrl(document2, target, thumbnail, gmRequest2);
+        if (!target) {
+          if (image) handledImages.add(image);
+          continue;
+        }
       }
       if (target && (IMAGE_EXTENSION_PATTERN3.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
         add(wordpressOriginalUrl2(target) || target);
