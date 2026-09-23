@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.5
+// @version      1.10.6
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1222,6 +1222,10 @@ ${settings.password}`;
   var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = "x1080x-ex:hdblog-expand-preview-images";
   var AGAGHHH_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:agaghhh-batch-open-enabled";
   var HDBLOG_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-enabled";
+  var AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = "x1080x-ex:agaghhh-batch-open-interval-min-ms";
+  var AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:agaghhh-batch-open-interval-max-ms";
+  var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = "x1080x-ex:hdblog-batch-open-interval-min-ms";
+  var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:hdblog-batch-open-interval-max-ms";
   var DEFAULT_DOMAINS = "agaghhh.cc\nhdblog.me";
   var BUTTON_ID = "x1080x-ex-download";
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
@@ -1448,8 +1452,20 @@ ${domains.join("\n")}
     });
     return expanded;
   }
+  function readBatchOpenIntervalMs(key, fallback) {
+    if (typeof GM_getValue !== "function") return fallback;
+    const numeric = Number(GM_getValue(key, fallback));
+    return Number.isFinite(numeric) && numeric >= 100 && numeric <= 6e5 ? Math.round(numeric) : fallback;
+  }
   function batchOpenTiming() {
-    return isAllowedHost(location.hostname, ["hdblog.me"]) ? HDBLOG_OPEN_TIMING : DEFAULT_OPEN_TIMING;
+    const isHdblog = isAllowedHost(location.hostname, ["hdblog.me"]);
+    const timing = isHdblog ? HDBLOG_OPEN_TIMING : DEFAULT_OPEN_TIMING;
+    const minKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY;
+    const maxKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY;
+    const delayMin = readBatchOpenIntervalMs(minKey, timing.delayMin);
+    const delayMax = readBatchOpenIntervalMs(maxKey, timing.delayMax);
+    if (delayMax < delayMin) return timing;
+    return { ...timing, delayMin, delayMax };
   }
   function randomDelay(minimum, maximum) {
     return Math.round(minimum + Math.random() * (maximum - minimum));
@@ -2044,6 +2060,10 @@ ${failures.join("\n")}
   var HDBLOG_BLOCKED_KEYWORDS_KEY = "x1080x-ex:hdblog-blocked-keywords";
   var HDBLOG_SEARCH_FILTER_ENABLED_KEY2 = "x1080x-ex:hdblog-search-filter-enabled";
   var HDBLOG_BATCH_OPEN_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-open-enabled";
+  var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2 = "x1080x-ex:hdblog-batch-open-interval-min-ms";
+  var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2 = "x1080x-ex:hdblog-batch-open-interval-max-ms";
+  var DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS = 800;
+  var DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS = 1600;
   var DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
   var DEFAULT_HDBLOG_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
   var HDBLOG_SETTINGS_PANEL_ID2 = "x1080x-ex-hdblog-settings-panel";
@@ -2803,6 +2823,28 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (typeof GM_getValue !== "function") return true;
     return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, true) !== false;
   }
+  function readBatchOpenIntervalMs2(key, fallback) {
+    if (typeof GM_getValue !== "function") return fallback;
+    const numeric = Number(GM_getValue(key, fallback));
+    return Number.isFinite(numeric) && numeric >= 100 && numeric <= 6e5 ? Math.round(numeric) : fallback;
+  }
+  function getHdblogBatchOpenInterval() {
+    const delayMin = readBatchOpenIntervalMs2(
+      HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2,
+      DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS
+    );
+    const delayMax = readBatchOpenIntervalMs2(
+      HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2,
+      DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS
+    );
+    if (delayMax < delayMin) {
+      return {
+        delayMin: DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS,
+        delayMax: DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS
+      };
+    }
+    return { delayMin, delayMax };
+  }
   function isHdblogPreviewExpansionEnabled() {
     if (typeof GM_getValue !== "function") return true;
     return GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, true) !== false;
@@ -2890,10 +2932,22 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     </div>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">\u641C\u7D22 / \u5217\u8868\u9875\u529F\u80FD</div>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="batch-open" type="checkbox">
         \u663E\u793A\u201C\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\u201D\u6309\u94AE
       </label>
+      <div data-batch-open-interval-row style="margin:0 0 10px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">\u4E3B\u9898\u6253\u5F00\u95F4\u9694\uFF08\u79D2\uFF09</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input data-setting="batch-open-interval-min" type="number" min="0.1" max="600" step="0.1" aria-label="\u6700\u5C0F\u95F4\u9694"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>\u2014</span>
+          <input data-setting="batch-open-interval-max" type="number" min="0.1" max="600" step="0.1" aria-label="\u6700\u5927\u95F4\u9694"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">\u6062\u590D\u9ED8\u8BA4</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u4E2A\u4E3B\u9898\u5728\u8BE5\u8303\u56F4\u5185\u968F\u673A\u7B49\u5F85\uFF1B\u9ED8\u8BA4 0.8\u20131.6 \u79D2\u3002\u5B9A\u671F\u957F\u505C\u987F\u89C4\u5219\u4FDD\u6301\u4E0D\u53D8\u3002</small>
+      </div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="search-filter" type="checkbox">
         \u542F\u7528\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u4E0E\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C
@@ -2916,6 +2970,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
     const previewInput = panel.querySelector('[data-setting="expand-preview"]');
     const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
+    const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
+    const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
+    const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
     const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
     const keywordsInput = panel.querySelector('[data-setting="keywords"]');
     layoutInput.checked = isHdblogArticleLayoutEnabled();
@@ -2925,15 +2982,28 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     crossSearchInput.checked = isHdblogCrossSearchEnabled();
     previewInput.checked = isHdblogPreviewExpansionEnabled();
     batchOpenInput.checked = isHdblogBatchOpenEnabled();
+    const batchInterval = getHdblogBatchOpenInterval();
+    batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
+    batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
     searchFilterInput.checked = isHdblogSearchFilterEnabled();
     keywordsInput.value = readBlockedKeywordsText();
     const syncDependentFields = () => {
       widthInput.disabled = !layoutInput.checked;
       keywordsInput.disabled = !searchFilterInput.checked;
+      const batchIntervalDisabled = !batchOpenInput.checked;
+      batchIntervalMinInput.disabled = batchIntervalDisabled;
+      batchIntervalMaxInput.disabled = batchIntervalDisabled;
+      batchIntervalResetButton.disabled = batchIntervalDisabled;
     };
     syncDependentFields();
     layoutInput.addEventListener("change", syncDependentFields);
     searchFilterInput.addEventListener("change", syncDependentFields);
+    batchOpenInput.addEventListener("change", syncDependentFields);
+    batchIntervalResetButton.addEventListener("click", () => {
+      batchIntervalMinInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS / 1e3);
+      batchIntervalMaxInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS / 1e3);
+      batchIntervalResetButton.blur();
+    });
     panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeHdblogSettingsPanel(document2));
     overlay.addEventListener("click", (event) => {
       if (event.target === overlay) closeHdblogSettingsPanel(document2);
@@ -2950,6 +3020,15 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
           return;
         }
       }
+      const batchIntervalMinSeconds = Number(batchIntervalMinInput.value);
+      const batchIntervalMaxSeconds = Number(batchIntervalMaxInput.value);
+      if (!Number.isFinite(batchIntervalMinSeconds) || !Number.isFinite(batchIntervalMaxSeconds) || batchIntervalMinSeconds < 0.1 || batchIntervalMaxSeconds > 600 || batchIntervalMaxSeconds < batchIntervalMinSeconds) {
+        document2.defaultView?.alert("\u6279\u91CF\u6253\u5F00\u4E3B\u9898\u95F4\u9694\u8BF7\u8F93\u5165 0.1\u2013600 \u79D2\uFF0C\u4E14\u6700\u5927\u95F4\u9694\u4E0D\u80FD\u5C0F\u4E8E\u6700\u5C0F\u95F4\u9694\u3002");
+        batchIntervalMinInput.focus();
+        return;
+      }
+      const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1e3);
+      const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1e3);
       if (typeof GM_setValue === "function") {
         GM_setValue(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY, layoutInput.checked);
         GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
@@ -2958,6 +3037,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
         GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, previewInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, batchOpenInput.checked);
+        GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2, batchIntervalMinMs);
+        GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
         GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY2, searchFilterInput.checked);
         GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
       }
@@ -4207,6 +4288,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
 
   // src/agaghhh-enhancement.js
   var AGAGHHH_BATCH_OPEN_ENABLED_KEY2 = "x1080x-ex:agaghhh-batch-open-enabled";
+  var AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY2 = "x1080x-ex:agaghhh-batch-open-interval-min-ms";
+  var AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY2 = "x1080x-ex:agaghhh-batch-open-interval-max-ms";
+  var DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
+  var DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS = 3500;
   var AGAGHHH_DOWNLOAD_ENABLED_KEY = "x1080x-ex:agaghhh-download-enabled";
   var AGAGHHH_CROSS_SEARCH_ENABLED_KEY = "x1080x-ex:agaghhh-cross-search-enabled";
   var AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:agaghhh-search-auto-redirect-enabled";
@@ -4241,6 +4326,28 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function isAgaghhhBatchOpenEnabled() {
     return readBooleanSetting(AGAGHHH_BATCH_OPEN_ENABLED_KEY2);
+  }
+  function readBatchOpenIntervalMs3(key, fallback) {
+    if (typeof GM_getValue !== "function") return fallback;
+    const numeric = Number(GM_getValue(key, fallback));
+    return Number.isFinite(numeric) && numeric >= 100 && numeric <= 6e5 ? Math.round(numeric) : fallback;
+  }
+  function getAgaghhhBatchOpenInterval() {
+    const delayMin = readBatchOpenIntervalMs3(
+      AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY2,
+      DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS
+    );
+    const delayMax = readBatchOpenIntervalMs3(
+      AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY2,
+      DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS
+    );
+    if (delayMax < delayMin) {
+      return {
+        delayMin: DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS,
+        delayMax: DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS
+      };
+    }
+    return { delayMin, delayMax };
   }
   function isAgaghhhDownloadEnabled() {
     return readBooleanSetting(AGAGHHH_DOWNLOAD_ENABLED_KEY);
@@ -4595,10 +4702,22 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     <h2 style="margin:0 0 18px;font-size:20px">x1080x \u8BBE\u7F6E</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:11px">agaghhh.cc \u589E\u5F3A\u529F\u80FD</div>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="batch-open" type="checkbox" style="margin-top:3px">
         <span><strong>\u6279\u91CF\u6253\u5F00\u5E16\u5B50\u529F\u80FD</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5217\u8868\u9875\u663E\u793A\u201C\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\u201D\u6309\u94AE\u3002</small></span>
       </label>
+      <div data-batch-open-interval-row style="margin:0 0 13px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">\u4E3B\u9898\u6253\u5F00\u95F4\u9694\uFF08\u79D2\uFF09</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input data-setting="batch-open-interval-min" type="number" min="0.1" max="600" step="0.1" aria-label="\u6700\u5C0F\u95F4\u9694"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>\u2014</span>
+          <input data-setting="batch-open-interval-max" type="number" min="0.1" max="600" step="0.1" aria-label="\u6700\u5927\u95F4\u9694"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">\u6062\u590D\u9ED8\u8BA4</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u4E2A\u4E3B\u9898\u5728\u8BE5\u8303\u56F4\u5185\u968F\u673A\u7B49\u5F85\uFF1B\u9ED8\u8BA4 1.8\u20133.5 \u79D2\u3002\u5B9A\u671F\u957F\u505C\u987F\u89C4\u5219\u4FDD\u6301\u4E0D\u53D8\u3002</small>
+      </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
         <span><strong>\u4E0B\u8F7D\u589E\u5F3A</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u9875\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u5E76\u4F7F\u7528\u73B0\u6709\u9644\u4EF6\u3001\u56FE\u7247\u3001\u79CD\u5B50\u4E0B\u8F7D\u4E0E\u81EA\u52A8\u547D\u540D\u903B\u8F91\u3002</small></span>
@@ -4625,25 +4744,55 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
     </div>`;
     const batchInput = panel.querySelector('[data-setting="batch-open"]');
+    const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
+    const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
+    const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
     const downloadInput = panel.querySelector('[data-setting="download"]');
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
     const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
     const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
     const actressInput = panel.querySelector('[data-setting="real-actress"]');
     batchInput.checked = isAgaghhhBatchOpenEnabled();
+    const batchInterval = getAgaghhhBatchOpenInterval();
+    batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
+    batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
     downloadInput.checked = isAgaghhhDownloadEnabled();
     crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
     searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
     previewInput.checked = isAgaghhhHdblogPreviewEnabled();
     actressInput.checked = isAgaghhhRealActressEnabled();
+    const syncBatchIntervalFields = () => {
+      const disabled = !batchInput.checked;
+      batchIntervalMinInput.disabled = disabled;
+      batchIntervalMaxInput.disabled = disabled;
+      batchIntervalResetButton.disabled = disabled;
+    };
+    syncBatchIntervalFields();
+    batchInput.addEventListener("change", syncBatchIntervalFields);
+    batchIntervalResetButton.addEventListener("click", () => {
+      batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1e3);
+      batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1e3);
+      batchIntervalResetButton.blur();
+    });
     panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeX1080xSettingsPanel(document2));
     overlay.addEventListener("click", (event) => {
       if (event.target === overlay) closeX1080xSettingsPanel(document2);
     });
     panel.addEventListener("submit", (event) => {
       event.preventDefault();
+      const batchIntervalMinSeconds = Number(batchIntervalMinInput.value);
+      const batchIntervalMaxSeconds = Number(batchIntervalMaxInput.value);
+      if (!Number.isFinite(batchIntervalMinSeconds) || !Number.isFinite(batchIntervalMaxSeconds) || batchIntervalMinSeconds < 0.1 || batchIntervalMaxSeconds > 600 || batchIntervalMaxSeconds < batchIntervalMinSeconds) {
+        document2.defaultView?.alert("\u6279\u91CF\u6253\u5F00\u4E3B\u9898\u95F4\u9694\u8BF7\u8F93\u5165 0.1\u2013600 \u79D2\uFF0C\u4E14\u6700\u5927\u95F4\u9694\u4E0D\u80FD\u5C0F\u4E8E\u6700\u5C0F\u95F4\u9694\u3002");
+        batchIntervalMinInput.focus();
+        return;
+      }
+      const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1e3);
+      const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1e3);
       if (typeof GM_setValue === "function") {
         GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY2, batchInput.checked);
+        GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY2, batchIntervalMinMs);
+        GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
         GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
         GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
         GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
