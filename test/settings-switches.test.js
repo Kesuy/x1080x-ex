@@ -62,9 +62,15 @@ test('batch-open interval settings load custom values and restore current defaul
     const maxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
     assert.equal(minInput.value, '2.2');
     assert.equal(maxInput.value, '4.4');
-    panel.querySelector('[data-action="reset-batch-open-interval"]').click();
+    const resetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
+    assert.equal(resetButton.style.getPropertyValue('background'), '#fff');
+    assert.equal(resetButton.style.getPropertyPriority('background'), 'important');
+    assert.equal(resetButton.style.getPropertyValue('color'), '#333');
+    assert.equal(resetButton.style.getPropertyPriority('color'), 'important');
+    resetButton.click();
     assert.equal(minInput.value, '1.8');
     assert.equal(maxInput.value, '3.5');
+    assert.notEqual(agaghhhDom.window.document.activeElement, resetButton);
   });
 
   const hdblogDom = hdblogArticleDom();
@@ -78,9 +84,15 @@ test('batch-open interval settings load custom values and restore current defaul
     const maxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
     assert.equal(minInput.value, '1.2');
     assert.equal(maxInput.value, '2.4');
-    panel.querySelector('[data-action="reset-batch-open-interval"]').click();
+    const resetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
+    assert.equal(resetButton.style.getPropertyValue('background'), '#fff');
+    assert.equal(resetButton.style.getPropertyPriority('background'), 'important');
+    assert.equal(resetButton.style.getPropertyValue('color'), '#333');
+    assert.equal(resetButton.style.getPropertyPriority('color'), 'important');
+    resetButton.click();
     assert.equal(minInput.value, '0.8');
     assert.equal(maxInput.value, '1.6');
+    assert.notEqual(hdblogDom.window.document.activeElement, resetButton);
   });
 });
 
