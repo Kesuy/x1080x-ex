@@ -63,9 +63,9 @@ test('batch-open interval settings load custom values and restore current defaul
     assert.equal(minInput.value, '2.2');
     assert.equal(maxInput.value, '4.4');
     const resetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
-    assert.equal(resetButton.style.getPropertyValue('background'), '#fff');
+    assert.equal(resetButton.style.getPropertyValue('background'), 'rgb(255, 255, 255)');
     assert.equal(resetButton.style.getPropertyPriority('background'), 'important');
-    assert.equal(resetButton.style.getPropertyValue('color'), '#333');
+    assert.equal(resetButton.style.getPropertyValue('color'), 'rgb(51, 51, 51)');
     assert.equal(resetButton.style.getPropertyPriority('color'), 'important');
     resetButton.click();
     assert.equal(minInput.value, '1.8');
@@ -85,9 +85,9 @@ test('batch-open interval settings load custom values and restore current defaul
     assert.equal(minInput.value, '1.2');
     assert.equal(maxInput.value, '2.4');
     const resetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
-    assert.equal(resetButton.style.getPropertyValue('background'), '#fff');
+    assert.equal(resetButton.style.getPropertyValue('background'), 'rgb(255, 255, 255)');
     assert.equal(resetButton.style.getPropertyPriority('background'), 'important');
-    assert.equal(resetButton.style.getPropertyValue('color'), '#333');
+    assert.equal(resetButton.style.getPropertyValue('color'), 'rgb(51, 51, 51)');
     assert.equal(resetButton.style.getPropertyPriority('color'), 'important');
     resetButton.click();
     assert.equal(minInput.value, '0.8');
