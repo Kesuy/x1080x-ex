@@ -9,6 +9,10 @@ export const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview
 export const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 export const HDBLOG_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-search-filter-enabled';
 export const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
+export const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
+export const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
+export const DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS = 800;
+export const DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS = 1600;
 export const DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
 const DEFAULT_HDBLOG_BLOCKED_KEYWORDS = 'モザイク破壊';
 const HDBLOG_SETTINGS_PANEL_ID = 'x1080x-ex-hdblog-settings-panel';
@@ -854,6 +858,32 @@ export function isHdblogBatchOpenEnabled() {
   return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
 }
 
+function readBatchOpenIntervalMs(key, fallback) {
+  if (typeof GM_getValue !== 'function') return fallback;
+  const numeric = Number(GM_getValue(key, fallback));
+  return Number.isFinite(numeric) && numeric >= 100 && numeric <= 600000
+    ? Math.round(numeric)
+    : fallback;
+}
+
+export function getHdblogBatchOpenInterval() {
+  const delayMin = readBatchOpenIntervalMs(
+    HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY,
+    DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS
+  );
+  const delayMax = readBatchOpenIntervalMs(
+    HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY,
+    DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS
+  );
+  if (delayMax < delayMin) {
+    return {
+      delayMin: DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS,
+      delayMax: DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS,
+    };
+  }
+  return { delayMin, delayMax };
+}
+
 export function isHdblogPreviewExpansionEnabled() {
   if (typeof GM_getValue !== 'function') return true;
   return GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
@@ -942,10 +972,22 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     </div>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">搜索 / 列表页功能</div>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="batch-open" type="checkbox">
         显示“后台顺序打开本页主题”按钮
       </label>
+      <div data-batch-open-interval-row style="margin:0 0 10px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">主题打开间隔（秒）</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input data-setting="batch-open-interval-min" type="number" min="0.1" max="600" step="0.1" aria-label="最小间隔"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>—</span>
+          <input data-setting="batch-open-interval-max" type="number" min="0.1" max="600" step="0.1" aria-label="最大间隔"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">恢复默认</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">每个主题在该范围内随机等待；默认 0.8–1.6 秒。定期长停顿规则保持不变。</small>
+      </div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="search-filter" type="checkbox">
         启用搜索结果屏蔽与单结果自动跳转
@@ -969,6 +1011,9 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const previewInput = panel.querySelector('[data-setting="expand-preview"]');
   const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
+  const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
+  const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
+  const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
   const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
   const keywordsInput = panel.querySelector('[data-setting="keywords"]');
 
@@ -979,16 +1024,29 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   crossSearchInput.checked = isHdblogCrossSearchEnabled();
   previewInput.checked = isHdblogPreviewExpansionEnabled();
   batchOpenInput.checked = isHdblogBatchOpenEnabled();
+  const batchInterval = getHdblogBatchOpenInterval();
+  batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
+  batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
   searchFilterInput.checked = isHdblogSearchFilterEnabled();
   keywordsInput.value = readBlockedKeywordsText();
 
   const syncDependentFields = () => {
     widthInput.disabled = !layoutInput.checked;
     keywordsInput.disabled = !searchFilterInput.checked;
+    const batchIntervalDisabled = !batchOpenInput.checked;
+    batchIntervalMinInput.disabled = batchIntervalDisabled;
+    batchIntervalMaxInput.disabled = batchIntervalDisabled;
+    batchIntervalResetButton.disabled = batchIntervalDisabled;
   };
   syncDependentFields();
   layoutInput.addEventListener('change', syncDependentFields);
   searchFilterInput.addEventListener('change', syncDependentFields);
+  batchOpenInput.addEventListener('change', syncDependentFields);
+  batchIntervalResetButton.addEventListener('click', () => {
+    batchIntervalMinInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
+    batchIntervalMaxInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
+    batchIntervalResetButton.blur();
+  });
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeHdblogSettingsPanel(document));
   overlay.addEventListener('click', (event) => {
@@ -1007,6 +1065,22 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       }
     }
 
+    const batchIntervalMinSeconds = Number(batchIntervalMinInput.value);
+    const batchIntervalMaxSeconds = Number(batchIntervalMaxInput.value);
+    if (
+      !Number.isFinite(batchIntervalMinSeconds)
+      || !Number.isFinite(batchIntervalMaxSeconds)
+      || batchIntervalMinSeconds < 0.1
+      || batchIntervalMaxSeconds > 600
+      || batchIntervalMaxSeconds < batchIntervalMinSeconds
+    ) {
+      document.defaultView?.alert('批量打开主题间隔请输入 0.1–600 秒，且最大间隔不能小于最小间隔。');
+      batchIntervalMinInput.focus();
+      return;
+    }
+    const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1000);
+    const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1000);
+
     if (typeof GM_setValue === 'function') {
       GM_setValue(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY, layoutInput.checked);
       GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
@@ -1015,6 +1089,8 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
       GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, previewInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
+      GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
+      GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
       GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, searchFilterInput.checked);
       GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
     }

@@ -2,6 +2,10 @@ import { parseThreadTitle } from './core.js';
 import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
 
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
+export const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
+export const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interval-max-ms';
+export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
+export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS = 3500;
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
 export const AGAGHHH_CROSS_SEARCH_ENABLED_KEY = 'x1080x-ex:agaghhh-cross-search-enabled';
 export const AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = 'x1080x-ex:agaghhh-search-auto-redirect-enabled';
@@ -42,6 +46,32 @@ function readBooleanSetting(key) {
 
 export function isAgaghhhBatchOpenEnabled() {
   return readBooleanSetting(AGAGHHH_BATCH_OPEN_ENABLED_KEY);
+}
+
+function readBatchOpenIntervalMs(key, fallback) {
+  if (typeof GM_getValue !== 'function') return fallback;
+  const numeric = Number(GM_getValue(key, fallback));
+  return Number.isFinite(numeric) && numeric >= 100 && numeric <= 600000
+    ? Math.round(numeric)
+    : fallback;
+}
+
+export function getAgaghhhBatchOpenInterval() {
+  const delayMin = readBatchOpenIntervalMs(
+    AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY,
+    DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS
+  );
+  const delayMax = readBatchOpenIntervalMs(
+    AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY,
+    DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS
+  );
+  if (delayMax < delayMin) {
+    return {
+      delayMin: DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS,
+      delayMax: DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS,
+    };
+  }
+  return { delayMin, delayMax };
 }
 
 export function isAgaghhhDownloadEnabled() {
@@ -448,10 +478,22 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     <h2 style="margin:0 0 18px;font-size:20px">x1080x 设置</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:11px">agaghhh.cc 增强功能</div>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="batch-open" type="checkbox" style="margin-top:3px">
         <span><strong>批量打开帖子功能</strong><small style="display:block;margin-top:2px;color:#666">在列表页显示“后台顺序打开本页主题”按钮。</small></span>
       </label>
+      <div data-batch-open-interval-row style="margin:0 0 13px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">主题打开间隔（秒）</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input data-setting="batch-open-interval-min" type="number" min="0.1" max="600" step="0.1" aria-label="最小间隔"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>—</span>
+          <input data-setting="batch-open-interval-max" type="number" min="0.1" max="600" step="0.1" aria-label="最大间隔"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">恢复默认</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">每个主题在该范围内随机等待；默认 1.8–3.5 秒。定期长停顿规则保持不变。</small>
+      </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
         <span><strong>下载增强</strong><small style="display:block;margin-top:2px;color:#666">在帖子页显示下载按钮，并使用现有附件、图片、种子下载与自动命名逻辑。</small></span>
@@ -479,17 +521,37 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     </div>`;
 
   const batchInput = panel.querySelector('[data-setting="batch-open"]');
+  const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
+  const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
+  const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
   const downloadInput = panel.querySelector('[data-setting="download"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
   const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
   const actressInput = panel.querySelector('[data-setting="real-actress"]');
   batchInput.checked = isAgaghhhBatchOpenEnabled();
+  const batchInterval = getAgaghhhBatchOpenInterval();
+  batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
+  batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
   downloadInput.checked = isAgaghhhDownloadEnabled();
   crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
   searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
   previewInput.checked = isAgaghhhHdblogPreviewEnabled();
   actressInput.checked = isAgaghhhRealActressEnabled();
+
+  const syncBatchIntervalFields = () => {
+    const disabled = !batchInput.checked;
+    batchIntervalMinInput.disabled = disabled;
+    batchIntervalMaxInput.disabled = disabled;
+    batchIntervalResetButton.disabled = disabled;
+  };
+  syncBatchIntervalFields();
+  batchInput.addEventListener('change', syncBatchIntervalFields);
+  batchIntervalResetButton.addEventListener('click', () => {
+    batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
+    batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
+    batchIntervalResetButton.blur();
+  });
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeX1080xSettingsPanel(document));
   overlay.addEventListener('click', (event) => {
@@ -497,8 +559,25 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   });
   panel.addEventListener('submit', (event) => {
     event.preventDefault();
+    const batchIntervalMinSeconds = Number(batchIntervalMinInput.value);
+    const batchIntervalMaxSeconds = Number(batchIntervalMaxInput.value);
+    if (
+      !Number.isFinite(batchIntervalMinSeconds)
+      || !Number.isFinite(batchIntervalMaxSeconds)
+      || batchIntervalMinSeconds < 0.1
+      || batchIntervalMaxSeconds > 600
+      || batchIntervalMaxSeconds < batchIntervalMinSeconds
+    ) {
+      document.defaultView?.alert('批量打开主题间隔请输入 0.1–600 秒，且最大间隔不能小于最小间隔。');
+      batchIntervalMinInput.focus();
+      return;
+    }
+    const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1000);
+    const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1000);
     if (typeof GM_setValue === 'function') {
       GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
+      GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
+      GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
       GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);

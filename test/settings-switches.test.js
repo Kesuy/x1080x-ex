@@ -50,6 +50,52 @@ test('x1080x settings exposes every independent agaghhh feature switch', () => {
   });
 });
 
+test('batch-open interval settings load custom values and restore current defaults', () => {
+  const agaghhhDom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
+  const agaghhhValues = new Map([
+    ['x1080x-ex:agaghhh-batch-open-interval-min-ms', 2200],
+    ['x1080x-ex:agaghhh-batch-open-interval-max-ms', 4400],
+  ]);
+  withGm(agaghhhValues, () => {
+    const panel = openX1080xSettingsPanel(agaghhhDom.window.document);
+    const minInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
+    const maxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
+    assert.equal(minInput.value, '2.2');
+    assert.equal(maxInput.value, '4.4');
+    const resetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
+    assert.equal(resetButton.style.getPropertyValue('background'), 'rgb(255, 255, 255)');
+    assert.equal(resetButton.style.getPropertyPriority('background'), 'important');
+    assert.equal(resetButton.style.getPropertyValue('color'), 'rgb(51, 51, 51)');
+    assert.equal(resetButton.style.getPropertyPriority('color'), 'important');
+    resetButton.click();
+    assert.equal(minInput.value, '1.8');
+    assert.equal(maxInput.value, '3.5');
+    assert.notEqual(agaghhhDom.window.document.activeElement, resetButton);
+  });
+
+  const hdblogDom = hdblogArticleDom();
+  const hdblogValues = new Map([
+    ['x1080x-ex:hdblog-batch-open-interval-min-ms', 1200],
+    ['x1080x-ex:hdblog-batch-open-interval-max-ms', 2400],
+  ]);
+  withGm(hdblogValues, () => {
+    const panel = openHdblogSettingsPanel(hdblogDom.window.document);
+    const minInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
+    const maxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
+    assert.equal(minInput.value, '1.2');
+    assert.equal(maxInput.value, '2.4');
+    const resetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
+    assert.equal(resetButton.style.getPropertyValue('background'), 'rgb(255, 255, 255)');
+    assert.equal(resetButton.style.getPropertyPriority('background'), 'important');
+    assert.equal(resetButton.style.getPropertyValue('color'), 'rgb(51, 51, 51)');
+    assert.equal(resetButton.style.getPropertyPriority('color'), 'important');
+    resetButton.click();
+    assert.equal(minInput.value, '0.8');
+    assert.equal(maxInput.value, '1.6');
+    assert.notEqual(hdblogDom.window.document.activeElement, resetButton);
+  });
+});
+
 test('agaghhh cross-search remains available when download enhancement is off', () => {
   const dom = new JSDOM(`<!doctype html><body><div class="vwthd">
     <span id="thread_subject">SVMGM-050 Sample</span><button id="x1080x-ex-download">⬇</button>
