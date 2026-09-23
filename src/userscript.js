@@ -11,6 +11,10 @@ const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
 const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
+const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
+const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interval-max-ms';
+const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
+const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
 const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
@@ -266,10 +270,23 @@ function expandHdblogPreviewImages() {
   return expanded;
 }
 
+function readBatchOpenIntervalMs(key, fallback) {
+  if (typeof GM_getValue !== 'function') return fallback;
+  const numeric = Number(GM_getValue(key, fallback));
+  return Number.isFinite(numeric) && numeric >= 100 && numeric <= 600000
+    ? Math.round(numeric)
+    : fallback;
+}
+
 function batchOpenTiming() {
-  return isAllowedHost(location.hostname, ['hdblog.me'])
-    ? HDBLOG_OPEN_TIMING
-    : DEFAULT_OPEN_TIMING;
+  const isHdblog = isAllowedHost(location.hostname, ['hdblog.me']);
+  const timing = isHdblog ? HDBLOG_OPEN_TIMING : DEFAULT_OPEN_TIMING;
+  const minKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY;
+  const maxKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY;
+  const delayMin = readBatchOpenIntervalMs(minKey, timing.delayMin);
+  const delayMax = readBatchOpenIntervalMs(maxKey, timing.delayMax);
+  if (delayMax < delayMin) return timing;
+  return { ...timing, delayMin, delayMax };
 }
 
 function randomDelay(minimum, maximum) {
