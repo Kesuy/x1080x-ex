@@ -49,13 +49,20 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
   const restore = installDomGlobals(dom.window);
   const opened = [];
   const syntheticClicks = [];
+  const delays = [];
   const originalSetTimeout = dom.window.setTimeout;
   const originalClearTimeout = dom.window.clearTimeout;
-  dom.window.setTimeout = (callback) => {
+  dom.window.setTimeout = (callback, delay) => {
+    delays.push(delay);
     queueMicrotask(callback);
     return 1;
   };
   dom.window.clearTimeout = () => {};
+  globalThis.GM_getValue = (key, fallback) => {
+    if (key === 'x1080x-ex:agaghhh-batch-open-interval-min-ms') return 2200;
+    if (key === 'x1080x-ex:agaghhh-batch-open-interval-max-ms') return 2200;
+    return fallback;
+  };
   globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
   dom.window.document.querySelectorAll('a.xst').forEach((link) => {
     link.addEventListener('click', () => syntheticClicks.push(link.textContent));
@@ -74,6 +81,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
       options: { active: false, insert: false, setParent: true },
     })));
     assert.deepEqual(syntheticClicks, []);
+    assert.equal(delays.filter((delay) => delay === 2200).length, 2);
   } finally {
     dom.window.setTimeout = originalSetTimeout;
     dom.window.clearTimeout = originalClearTimeout;
@@ -98,14 +106,21 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
   `, { url: 'https://hdblog.me/tag/fc2-ppv/' });
   const restore = installDomGlobals(dom.window);
   const opened = [];
+  const delays = [];
   const originalSetTimeout = dom.window.setTimeout;
   const originalClearTimeout = dom.window.clearTimeout;
-  dom.window.setTimeout = (callback) => {
+  dom.window.setTimeout = (callback, delay) => {
+    delays.push(delay);
     queueMicrotask(callback);
     return 1;
   };
   dom.window.clearTimeout = () => {};
-  globalThis.GM_getValue = () => 'agaghhh.cc';
+  globalThis.GM_getValue = (key, fallback) => {
+    if (key === 'x1080x-ex:domains') return 'agaghhh.cc';
+    if (key === 'x1080x-ex:hdblog-batch-open-interval-min-ms') return 900;
+    if (key === 'x1080x-ex:hdblog-batch-open-interval-max-ms') return 900;
+    return fallback;
+  };
   globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
 
   try {
@@ -130,6 +145,7 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
       url,
       options: { active: false, insert: false, setParent: true },
     })));
+    assert.equal(delays.filter((delay) => delay === 900).length, 1);
   } finally {
     dom.window.setTimeout = originalSetTimeout;
     dom.window.clearTimeout = originalClearTimeout;
