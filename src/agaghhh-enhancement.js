@@ -490,7 +490,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
           <span>—</span>
           <input data-setting="batch-open-interval-max" type="number" min="0.1" max="600" step="0.1" aria-label="最大间隔"
             style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
-          <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px">恢复默认</button>
+          <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">恢复默认</button>
         </div>
         <small style="display:block;margin-top:5px;color:#666">每个主题在该范围内随机等待；默认 1.8–3.5 秒。定期长停顿规则保持不变。</small>
       </div>
@@ -550,6 +550,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   batchIntervalResetButton.addEventListener('click', () => {
     batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
     batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
+    batchIntervalResetButton.blur();
   });
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeX1080xSettingsPanel(document));
