@@ -29,6 +29,7 @@ export function enhanceQbittorrentSettingsPanel(
 
   const current = getQbSettings();
   form.style.width = 'min(640px, 100%)';
+  form.setAttribute('autocomplete', 'off');
 
   const section = document.createElement('div');
   section.setAttribute(QB_SECTION_ATTR, '1');
@@ -46,11 +47,11 @@ export function enhanceQbittorrentSettingsPanel(
     <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-bottom:10px">
       <label style="display:block">
         <span style="display:block;font-weight:600;margin-bottom:5px">用户名</span>
-        <input data-setting="qb-username" type="text" required autocomplete="username" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+        <input data-setting="qb-username" type="text" required autocomplete="off" data-lpignore="true" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
       </label>
       <label style="display:block">
         <span style="display:block;font-weight:600;margin-bottom:5px">密码</span>
-        <input data-setting="qb-password" type="password" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+        <input data-setting="qb-password" type="password" autocomplete="off" data-lpignore="true" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
       </label>
     </div>
     <label style="display:block;margin-bottom:10px">

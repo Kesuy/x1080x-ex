@@ -18,6 +18,10 @@ import {
   openHdblogSettingsPanel,
 } from '../src/hdblog-article.js';
 import { applyHdblogSearchEnhancement } from '../src/hdblog-search.js';
+import {
+  AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
+  HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY,
+} from '../src/download-guard.js';
 
 function withGm(values, callback) {
   const oldGet = globalThis.GM_getValue;
@@ -44,7 +48,7 @@ test('x1080x settings exposes every independent agaghhh feature switch', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   withGm(new Map(), () => {
     const panel = openX1080xSettingsPanel(dom.window.document);
-    for (const key of ['batch-open', 'download', 'cross-search', 'hdblog-preview', 'real-actress']) {
+    for (const key of ['batch-open', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'real-actress']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });
@@ -115,7 +119,7 @@ test('hdblog settings exposes layout, cross-search, preview, batch-open and sear
   const dom = hdblogArticleDom();
   withGm(new Map(), () => {
     const panel = openHdblogSettingsPanel(dom.window.document);
-    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'cross-search', 'expand-preview', 'batch-open', 'search-filter']) {
+    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'batch-open', 'search-filter']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });
@@ -155,6 +159,9 @@ test('new hdblog switches default to enabled except layout which preserves legac
     assert.equal(panel.querySelector('[data-setting="cross-search"]').checked, true);
     assert.equal(panel.querySelector('[data-setting="batch-open"]').checked, true);
     assert.equal(panel.querySelector('[data-setting="search-filter"]').checked, true);
+    assert.equal(panel.querySelector('[data-setting="download-guard"]').checked, true);
   });
   assert.equal(HDBLOG_BATCH_OPEN_ENABLED_KEY, 'x1080x-ex:hdblog-batch-open-enabled');
+  assert.equal(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, 'x1080x-ex:agaghhh-download-guard-enabled');
+  assert.equal(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY, 'x1080x-ex:hdblog-download-guard-enabled');
 });

@@ -39,6 +39,11 @@ test('在 x1080x 设置面板中注入 qBittorrent 回退配置', () => {
     assert.equal(section.querySelector('[data-setting="qb-url"]').value, 'http://192.0.2.10:8080');
     assert.equal(section.querySelector('[data-setting="qb-username"]').value, 'tester');
     assert.equal(section.querySelector('[data-setting="qb-password"]').value, 'secret');
+    assert.equal(section.closest('form').getAttribute('autocomplete'), 'off');
+    assert.equal(section.querySelector('[data-setting="qb-username"]').getAttribute('autocomplete'), 'off');
+    assert.equal(section.querySelector('[data-setting="qb-username"]').getAttribute('data-lpignore'), 'true');
+    assert.equal(section.querySelector('[data-setting="qb-password"]').getAttribute('autocomplete'), 'off');
+    assert.equal(section.querySelector('[data-setting="qb-password"]').getAttribute('data-lpignore'), 'true');
     assert.equal(section.querySelector('[data-setting="qb-timeout"]').value, '90');
     assert.ok(section.querySelector('[data-action="qb-test"]'));
     assert.equal(enhanceQbittorrentSettingsPanel(dom.window.document, () => {}), false);

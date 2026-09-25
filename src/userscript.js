@@ -6,6 +6,11 @@ import {
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
 import { requestTorrentBytes } from './torrent.js';
+import {
+  AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
+  beginDownloadGuard,
+  isDownloadGuardEnabled,
+} from './download-guard.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
@@ -686,49 +691,57 @@ async function downloadAll(button) {
     return;
   }
 
+  const endDownloadGuard = beginDownloadGuard(document, {
+    enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY),
+  });
   button.disabled = true;
   const failures = [];
   const pendingImages = [];
   let skipped = 0;
-  console.info('[x1080x-ex] environment', {
-    downloadMode: typeof GM_info === 'object' ? GM_info.downloadMode : undefined,
-    scriptHandler: typeof GM_info === 'object' ? GM_info.scriptHandler : undefined,
-    version: typeof GM_info === 'object' ? GM_info.version : undefined,
-  });
-  for (const [index, job] of jobs.entries()) {
-    button.textContent = `下载中 ${index + 1}/${jobs.length}`;
-    try {
-      const result = await download(job, { deferImageSave: job.kind === 'image' });
-      if (result?.skipped) {
-        skipped += 1;
-        button.textContent = `已跳过失效图 ${skipped}`;
-      } else if (job.kind === 'image' && result?.blob) {
-        pendingImages.push(result);
+
+  try {
+    console.info('[x1080x-ex] environment', {
+      downloadMode: typeof GM_info === 'object' ? GM_info.downloadMode : undefined,
+      scriptHandler: typeof GM_info === 'object' ? GM_info.scriptHandler : undefined,
+      version: typeof GM_info === 'object' ? GM_info.version : undefined,
+    });
+    for (const [index, job] of jobs.entries()) {
+      button.textContent = `下载中 ${index + 1}/${jobs.length}`;
+      try {
+        const result = await download(job, { deferImageSave: job.kind === 'image' });
+        if (result?.skipped) {
+          skipped += 1;
+          button.textContent = `已跳过失效图 ${skipped}`;
+        } else if (job.kind === 'image' && result?.blob) {
+          pendingImages.push(result);
+        }
+      } catch (error) {
+        failures.push(`${job.name}：${redactDiagnostic(error?.message || error?.error || '未知错误')}`);
       }
-    } catch (error) {
-      failures.push(`${job.name}：${redactDiagnostic(error?.message || error?.error || '未知错误')}`);
     }
-  }
 
-  pendingImages.forEach(({ blob, name }) => {
-    const finalName = pendingImages.length === 1
-      ? name.replace(/ A(?=\.[^.]+$)/i, '')
-      : name;
-    saveBlob(blob, finalName);
-  });
+    pendingImages.forEach(({ blob, name }) => {
+      const finalName = pendingImages.length === 1
+        ? name.replace(/ A(?=\.[^.]+$)/i, '')
+        : name;
+      saveBlob(blob, finalName);
+    });
 
-  button.disabled = false;
-  button.textContent = failures.length
-    ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}）`
-    : skipped
-      ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
-      : '✓ 下载完成';
-  window.setTimeout(() => {
-    button.textContent = '⬇';
-  }, 2500);
+    button.disabled = false;
+    button.textContent = failures.length
+      ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}）`
+      : skipped
+        ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
+        : '✓ 下载完成';
+    window.setTimeout(() => {
+      button.textContent = '⬇';
+    }, 2500);
 
-  if (failures.length) {
-    window.alert(`以下文件下载失败：\n\n${failures.join('\n')}\n\n可检查登录状态或浏览器下载权限后重试。`);
+    if (failures.length) {
+      window.alert(`以下文件下载失败：\n\n${failures.join('\n')}\n\n可检查登录状态或浏览器下载权限后重试。`);
+    }
+  } finally {
+    endDownloadGuard();
   }
 }
 
