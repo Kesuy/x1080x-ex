@@ -1,4 +1,9 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
+import {
+  HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY,
+  beginDownloadGuard,
+  isDownloadGuardEnabled,
+} from './download-guard.js';
 
 export const HDBLOG_ARTICLE_WIDTH_KEY = 'x1080x-ex:hdblog-article-width';
 export const HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY = 'x1080x-ex:hdblog-article-layout-enabled';
@@ -669,6 +674,9 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
     return;
   }
 
+  const endDownloadGuard = beginDownloadGuard(document, {
+    enabled: isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY),
+  });
   button.disabled = true;
   const failures = [];
   let skipped = 0;
@@ -738,6 +746,7 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
       else if (skipped) button.title = 'Pixhost Preview 已失效，未下载占位图。';
       resetButton();
     }
+    endDownloadGuard();
   }
 }
 
@@ -957,9 +966,13 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <input data-setting="show-downloads" type="checkbox">
         显示 Btfile / katfile / Freedl / Rapidgator 网盘下载区域
       </label>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="show-image-download" type="checkbox">
         显示标题旁的图片下载按钮（⬇）
+      </label>
+      <label data-download-guard-row style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
+        <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
+        <span>下载时标记标签页并在关闭时提醒<small style="display:block;margin-top:2px;color:#666">仅下载进行中生效，完成后自动恢复标签标题并解除关闭提示。</small></span>
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="cross-search" type="checkbox">
@@ -1008,6 +1021,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const widthInput = panel.querySelector('[data-setting="width"]');
   const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
   const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
+  const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const previewInput = panel.querySelector('[data-setting="expand-preview"]');
   const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
@@ -1021,6 +1035,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   widthInput.value = rawStoredWidth() || String(DEFAULT_HDBLOG_ARTICLE_WIDTH);
   downloadsInput.checked = readDownloadAreaVisible();
   imageDownloadInput.checked = readImageDownloadButtonVisible();
+  downloadGuardInput.checked = isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY);
   crossSearchInput.checked = isHdblogCrossSearchEnabled();
   previewInput.checked = isHdblogPreviewExpansionEnabled();
   batchOpenInput.checked = isHdblogBatchOpenEnabled();
@@ -1032,6 +1047,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
 
   const syncDependentFields = () => {
     widthInput.disabled = !layoutInput.checked;
+    downloadGuardInput.disabled = !imageDownloadInput.checked;
     keywordsInput.disabled = !searchFilterInput.checked;
     const batchIntervalDisabled = !batchOpenInput.checked;
     batchIntervalMinInput.disabled = batchIntervalDisabled;
@@ -1040,6 +1056,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   };
   syncDependentFields();
   layoutInput.addEventListener('change', syncDependentFields);
+  imageDownloadInput.addEventListener('change', syncDependentFields);
   searchFilterInput.addEventListener('change', syncDependentFields);
   batchOpenInput.addEventListener('change', syncDependentFields);
   batchIntervalResetButton.addEventListener('click', () => {
@@ -1086,6 +1103,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
       GM_setValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, downloadsInput.checked);
       GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
+      GM_setValue(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
       GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, previewInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
