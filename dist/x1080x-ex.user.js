@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.6
+// @version      1.10.7
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1217,6 +1217,51 @@ ${settings.password}`;
     }
   }
 
+  // src/download-guard.js
+  var AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY = "x1080x-ex:agaghhh-download-guard-enabled";
+  var HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY = "x1080x-ex:hdblog-download-guard-enabled";
+  var activeStates = /* @__PURE__ */ new WeakMap();
+  function isDownloadGuardEnabled(key) {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(key, true) !== false;
+  }
+  function beginDownloadGuard(document2 = globalThis.document, { enabled = true, label = "\u2B07 \u4E0B\u8F7D\u4E2D" } = {}) {
+    const view = document2?.defaultView || globalThis.window;
+    if (!enabled || !document2 || !view?.addEventListener || !view?.removeEventListener) {
+      return () => {
+      };
+    }
+    let state = activeStates.get(document2);
+    if (!state) {
+      state = {
+        count: 0,
+        originalTitle: "",
+        beforeUnload(event) {
+          event.preventDefault();
+          event.returnValue = "";
+          return "";
+        }
+      };
+      activeStates.set(document2, state);
+    }
+    state.count += 1;
+    if (state.count === 1) {
+      state.originalTitle = document2.title || "";
+      document2.title = state.originalTitle ? `${label} \xB7 ${state.originalTitle}` : label;
+      view.addEventListener("beforeunload", state.beforeUnload);
+    }
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      state.count = Math.max(0, state.count - 1);
+      if (state.count !== 0) return;
+      view.removeEventListener("beforeunload", state.beforeUnload);
+      document2.title = state.originalTitle;
+      activeStates.delete(document2);
+    };
+  }
+
   // src/userscript.js
   var STORAGE_KEY = "x1080x-ex:domains";
   var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = "x1080x-ex:hdblog-expand-preview-images";
@@ -1814,44 +1859,51 @@ ${failures.join("\n")}`);
       window.alert("\u4E3B\u697C\u4E2D\u6CA1\u6709\u627E\u5230\u9644\u4EF6\u6216\u53EF\u4E0B\u8F7D\u56FE\u7247\u3002");
       return;
     }
+    const endDownloadGuard = beginDownloadGuard(document, {
+      enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY)
+    });
     button.disabled = true;
     const failures = [];
     const pendingImages = [];
     let skipped = 0;
-    console.info("[x1080x-ex] environment", {
-      downloadMode: typeof GM_info === "object" ? GM_info.downloadMode : void 0,
-      scriptHandler: typeof GM_info === "object" ? GM_info.scriptHandler : void 0,
-      version: typeof GM_info === "object" ? GM_info.version : void 0
-    });
-    for (const [index, job] of jobs.entries()) {
-      button.textContent = `\u4E0B\u8F7D\u4E2D ${index + 1}/${jobs.length}`;
-      try {
-        const result = await download(job, { deferImageSave: job.kind === "image" });
-        if (result?.skipped) {
-          skipped += 1;
-          button.textContent = `\u5DF2\u8DF3\u8FC7\u5931\u6548\u56FE ${skipped}`;
-        } else if (job.kind === "image" && result?.blob) {
-          pendingImages.push(result);
+    try {
+      console.info("[x1080x-ex] environment", {
+        downloadMode: typeof GM_info === "object" ? GM_info.downloadMode : void 0,
+        scriptHandler: typeof GM_info === "object" ? GM_info.scriptHandler : void 0,
+        version: typeof GM_info === "object" ? GM_info.version : void 0
+      });
+      for (const [index, job] of jobs.entries()) {
+        button.textContent = `\u4E0B\u8F7D\u4E2D ${index + 1}/${jobs.length}`;
+        try {
+          const result = await download(job, { deferImageSave: job.kind === "image" });
+          if (result?.skipped) {
+            skipped += 1;
+            button.textContent = `\u5DF2\u8DF3\u8FC7\u5931\u6548\u56FE ${skipped}`;
+          } else if (job.kind === "image" && result?.blob) {
+            pendingImages.push(result);
+          }
+        } catch (error) {
+          failures.push(`${job.name}\uFF1A${redactDiagnostic(error?.message || error?.error || "\u672A\u77E5\u9519\u8BEF")}`);
         }
-      } catch (error) {
-        failures.push(`${job.name}\uFF1A${redactDiagnostic(error?.message || error?.error || "\u672A\u77E5\u9519\u8BEF")}`);
       }
-    }
-    pendingImages.forEach(({ blob, name }) => {
-      const finalName = pendingImages.length === 1 ? name.replace(/ A(?=\.[^.]+$)/i, "") : name;
-      saveBlob(blob, finalName);
-    });
-    button.disabled = false;
-    button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}${skipped ? `\uFF0C\u8DF3\u8FC7 ${skipped}` : ""}\uFF09` : skipped ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
-    window.setTimeout(() => {
-      button.textContent = "\u2B07";
-    }, 2500);
-    if (failures.length) {
-      window.alert(`\u4EE5\u4E0B\u6587\u4EF6\u4E0B\u8F7D\u5931\u8D25\uFF1A
+      pendingImages.forEach(({ blob, name }) => {
+        const finalName = pendingImages.length === 1 ? name.replace(/ A(?=\.[^.]+$)/i, "") : name;
+        saveBlob(blob, finalName);
+      });
+      button.disabled = false;
+      button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}${skipped ? `\uFF0C\u8DF3\u8FC7 ${skipped}` : ""}\uFF09` : skipped ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
+      window.setTimeout(() => {
+        button.textContent = "\u2B07";
+      }, 2500);
+      if (failures.length) {
+        window.alert(`\u4EE5\u4E0B\u6587\u4EF6\u4E0B\u8F7D\u5931\u8D25\uFF1A
 
 ${failures.join("\n")}
 
 \u53EF\u68C0\u67E5\u767B\u5F55\u72B6\u6001\u6216\u6D4F\u89C8\u5668\u4E0B\u8F7D\u6743\u9650\u540E\u91CD\u8BD5\u3002`);
+      }
+    } finally {
+      endDownloadGuard();
     }
   }
   function addDownloadButton() {
@@ -2640,6 +2692,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       showStatus("\u65E0 Preview", "Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
       return;
     }
+    const endDownloadGuard = beginDownloadGuard(document2, {
+      enabled: isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY)
+    });
     button.disabled = true;
     const failures = [];
     let skipped = 0;
@@ -2700,6 +2755,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         else if (skipped) button.title = "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002";
         resetButton();
       }
+      endDownloadGuard();
     }
   }
   function installDownloadButton(document2, locationObject, gmRequest2) {
@@ -2917,9 +2973,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <input data-setting="show-downloads" type="checkbox">
         \u663E\u793A Btfile / katfile / Freedl / Rapidgator \u7F51\u76D8\u4E0B\u8F7D\u533A\u57DF
       </label>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="show-image-download" type="checkbox">
         \u663E\u793A\u6807\u9898\u65C1\u7684\u56FE\u7247\u4E0B\u8F7D\u6309\u94AE\uFF08\u2B07\uFF09
+      </label>
+      <label data-download-guard-row style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
+        <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
+        <span>\u4E0B\u8F7D\u65F6\u6807\u8BB0\u6807\u7B7E\u9875\u5E76\u5728\u5173\u95ED\u65F6\u63D0\u9192<small style="display:block;margin-top:2px;color:#666">\u4EC5\u4E0B\u8F7D\u8FDB\u884C\u4E2D\u751F\u6548\uFF0C\u5B8C\u6210\u540E\u81EA\u52A8\u6062\u590D\u6807\u7B7E\u6807\u9898\u5E76\u89E3\u9664\u5173\u95ED\u63D0\u793A\u3002</small></span>
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="cross-search" type="checkbox">
@@ -2967,6 +3027,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const widthInput = panel.querySelector('[data-setting="width"]');
     const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
     const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
+    const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
     const previewInput = panel.querySelector('[data-setting="expand-preview"]');
     const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
@@ -2979,6 +3040,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     widthInput.value = rawStoredWidth() || String(DEFAULT_HDBLOG_ARTICLE_WIDTH);
     downloadsInput.checked = readDownloadAreaVisible();
     imageDownloadInput.checked = readImageDownloadButtonVisible();
+    downloadGuardInput.checked = isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY);
     crossSearchInput.checked = isHdblogCrossSearchEnabled();
     previewInput.checked = isHdblogPreviewExpansionEnabled();
     batchOpenInput.checked = isHdblogBatchOpenEnabled();
@@ -2989,6 +3051,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     keywordsInput.value = readBlockedKeywordsText();
     const syncDependentFields = () => {
       widthInput.disabled = !layoutInput.checked;
+      downloadGuardInput.disabled = !imageDownloadInput.checked;
       keywordsInput.disabled = !searchFilterInput.checked;
       const batchIntervalDisabled = !batchOpenInput.checked;
       batchIntervalMinInput.disabled = batchIntervalDisabled;
@@ -2997,6 +3060,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     };
     syncDependentFields();
     layoutInput.addEventListener("change", syncDependentFields);
+    imageDownloadInput.addEventListener("change", syncDependentFields);
     searchFilterInput.addEventListener("change", syncDependentFields);
     batchOpenInput.addEventListener("change", syncDependentFields);
     batchIntervalResetButton.addEventListener("click", () => {
@@ -3034,6 +3098,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
         GM_setValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, downloadsInput.checked);
         GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
+        GM_setValue(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
         GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
         GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, previewInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, batchOpenInput.checked);
@@ -4718,9 +4783,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         </div>
         <small style="display:block;margin-top:5px;color:#666">\u6BCF\u4E2A\u4E3B\u9898\u5728\u8BE5\u8303\u56F4\u5185\u968F\u673A\u7B49\u5F85\uFF1B\u9ED8\u8BA4 1.8\u20133.5 \u79D2\u3002\u5B9A\u671F\u957F\u505C\u987F\u89C4\u5219\u4FDD\u6301\u4E0D\u53D8\u3002</small>
       </div>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
         <span><strong>\u4E0B\u8F7D\u589E\u5F3A</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u9875\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u5E76\u4F7F\u7528\u73B0\u6709\u9644\u4EF6\u3001\u56FE\u7247\u3001\u79CD\u5B50\u4E0B\u8F7D\u4E0E\u81EA\u52A8\u547D\u540D\u903B\u8F91\u3002</small></span>
+      </label>
+      <label data-download-guard-row style="display:flex;align-items:flex-start;gap:9px;margin:0 0 13px 24px">
+        <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
+        <span><strong>\u4E0B\u8F7D\u65F6\u4FDD\u62A4\u6807\u7B7E\u9875</strong><small style="display:block;margin-top:2px;color:#666">\u4E0B\u8F7D\u4E2D\u5728\u6807\u7B7E\u6807\u9898\u663E\u793A\u201C\u2B07 \u4E0B\u8F7D\u4E2D\u201D\uFF0C\u5173\u95ED\u6807\u7B7E\u9875\u65F6\u7531\u6D4F\u89C8\u5668\u5F39\u51FA\u786E\u8BA4\u63D0\u793A\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="cross-search" type="checkbox" style="margin-top:3px">
@@ -4748,6 +4817,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
     const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
     const downloadInput = panel.querySelector('[data-setting="download"]');
+    const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
     const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
     const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
@@ -4757,6 +4827,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
     batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
     downloadInput.checked = isAgaghhhDownloadEnabled();
+    downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
     crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
     searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
     previewInput.checked = isAgaghhhHdblogPreviewEnabled();
@@ -4767,8 +4838,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       batchIntervalMaxInput.disabled = disabled;
       batchIntervalResetButton.disabled = disabled;
     };
+    const syncDownloadGuardField = () => {
+      downloadGuardInput.disabled = !downloadInput.checked;
+    };
     syncBatchIntervalFields();
+    syncDownloadGuardField();
     batchInput.addEventListener("change", syncBatchIntervalFields);
+    downloadInput.addEventListener("change", syncDownloadGuardField);
     batchIntervalResetButton.addEventListener("click", () => {
       batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1e3);
       batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1e3);
@@ -4794,6 +4870,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY2, batchIntervalMinMs);
         GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
         GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+        GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
         GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
         GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
         GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
@@ -4848,6 +4925,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
     const current = getQbSettings();
     form.style.width = "min(640px, 100%)";
+    form.setAttribute("autocomplete", "off");
     const section = document2.createElement("div");
     section.setAttribute(QB_SECTION_ATTR, "1");
     section.style.cssText = "margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa";
@@ -4864,11 +4942,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-bottom:10px">
       <label style="display:block">
         <span style="display:block;font-weight:600;margin-bottom:5px">\u7528\u6237\u540D</span>
-        <input data-setting="qb-username" type="text" required autocomplete="username" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+        <input data-setting="qb-username" type="text" required autocomplete="off" data-lpignore="true" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
       </label>
       <label style="display:block">
         <span style="display:block;font-weight:600;margin-bottom:5px">\u5BC6\u7801</span>
-        <input data-setting="qb-password" type="password" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+        <input data-setting="qb-password" type="password" autocomplete="off" data-lpignore="true" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
       </label>
     </div>
     <label style="display:block;margin-bottom:10px">
