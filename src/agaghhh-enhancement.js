@@ -1,5 +1,9 @@
 import { parseThreadTitle } from './core.js';
 import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
+import {
+  AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
+  isDownloadGuardEnabled,
+} from './download-guard.js';
 
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 export const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
@@ -494,9 +498,13 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         </div>
         <small style="display:block;margin-top:5px;color:#666">每个主题在该范围内随机等待；默认 1.8–3.5 秒。定期长停顿规则保持不变。</small>
       </div>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
         <span><strong>下载增强</strong><small style="display:block;margin-top:2px;color:#666">在帖子页显示下载按钮，并使用现有附件、图片、种子下载与自动命名逻辑。</small></span>
+      </label>
+      <label data-download-guard-row style="display:flex;align-items:flex-start;gap:9px;margin:0 0 13px 24px">
+        <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
+        <span><strong>下载时保护标签页</strong><small style="display:block;margin-top:2px;color:#666">下载中在标签标题显示“⬇ 下载中”，关闭标签页时由浏览器弹出确认提示。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="cross-search" type="checkbox" style="margin-top:3px">
@@ -525,6 +533,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
   const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
   const downloadInput = panel.querySelector('[data-setting="download"]');
+  const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
   const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
@@ -534,6 +543,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
   batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
   downloadInput.checked = isAgaghhhDownloadEnabled();
+  downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
   crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
   searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
   previewInput.checked = isAgaghhhHdblogPreviewEnabled();
@@ -545,8 +555,13 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     batchIntervalMaxInput.disabled = disabled;
     batchIntervalResetButton.disabled = disabled;
   };
+  const syncDownloadGuardField = () => {
+    downloadGuardInput.disabled = !downloadInput.checked;
+  };
   syncBatchIntervalFields();
+  syncDownloadGuardField();
   batchInput.addEventListener('change', syncBatchIntervalFields);
+  downloadInput.addEventListener('change', syncDownloadGuardField);
   batchIntervalResetButton.addEventListener('click', () => {
     batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
     batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
@@ -579,6 +594,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+      GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
       GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
       GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
