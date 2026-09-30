@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
+  AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY,
+  AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
   AGAGHHH_CROSS_SEARCH_ENABLED_KEY,
   AGAGHHH_DOWNLOAD_ENABLED_KEY,
   AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY,
@@ -48,7 +50,7 @@ test('x1080x settings exposes every independent agaghhh feature switch', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   withGm(new Map(), () => {
     const panel = openX1080xSettingsPanel(dom.window.document);
-    for (const key of ['batch-open', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'real-actress']) {
+    for (const key of ['batch-open', 'batch-open-history', 'batch-open-history-limit', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'real-actress']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });
@@ -97,6 +99,30 @@ test('batch-open interval settings load custom values and restore current defaul
     assert.equal(minInput.value, '0.8');
     assert.equal(maxInput.value, '1.6');
     assert.notEqual(hdblogDom.window.document.activeElement, resetButton);
+  });
+});
+
+test('batch-open history defaults off, enables its limit field, and saves the configured limit', () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
+  const values = new Map();
+  withGm(values, () => {
+    const panel = openX1080xSettingsPanel(dom.window.document);
+    const enabled = panel.querySelector('[data-setting="batch-open-history"]');
+    const limit = panel.querySelector('[data-setting="batch-open-history-limit"]');
+    assert.equal(enabled.checked, false);
+    assert.equal(limit.value, '5000');
+    assert.equal(limit.disabled, true);
+
+    enabled.click();
+    assert.equal(limit.disabled, false);
+    limit.value = '1234';
+    panel.querySelector('form')?.dispatchEvent(new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    assert.equal(values.get(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY), true);
+    assert.equal(values.get(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY), 1234);
   });
 });
 
