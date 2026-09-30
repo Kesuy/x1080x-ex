@@ -8,6 +8,10 @@ import {
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 export const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
 export const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interval-max-ms';
+export const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-history-enabled';
+export const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
+export const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
+export const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5000;
 export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
 export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS = 3500;
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
@@ -76,6 +80,22 @@ export function getAgaghhhBatchOpenInterval() {
     };
   }
   return { delayMin, delayMax };
+}
+
+export function isAgaghhhBatchOpenHistoryEnabled() {
+  if (typeof GM_getValue !== 'function') return false;
+  return GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, false) === true;
+}
+
+export function getAgaghhhBatchOpenHistoryLimit() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
+  const numeric = Number(GM_getValue(
+    AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
+    DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT
+  ));
+  return Number.isInteger(numeric) && numeric >= 1 && numeric <= 50000
+    ? numeric
+    : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
 }
 
 export function isAgaghhhDownloadEnabled() {
@@ -498,6 +518,19 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         </div>
         <small style="display:block;margin-top:5px;color:#666">每个主题在该范围内随机等待；默认 1.8–3.5 秒。定期长停顿规则保持不变。</small>
       </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
+        <input data-setting="batch-open-history" type="checkbox" style="margin-top:3px">
+        <span><strong>保存批量打开记录</strong><small style="display:block;margin-top:2px;color:#666">记录脚本批量打开过的主题，并在列表页以紫色标记；仅影响脚本批量打开，不改变浏览器原生访问记录。</small></span>
+      </label>
+      <div data-batch-open-history-row style="margin:0 0 13px 24px">
+        <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:600">最多保存</span>
+          <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="批量打开记录保存条数"
+            style="width:100px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>条</span>
+        </label>
+        <small style="display:block;margin-top:5px;color:#666">默认 5000 条；超过上限后自动删除最旧记录。关闭此功能不会删除已经保存的记录。</small>
+      </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
         <span><strong>下载增强</strong><small style="display:block;margin-top:2px;color:#666">在帖子页显示下载按钮，并使用现有附件、图片、种子下载与自动命名逻辑。</small></span>
@@ -532,6 +565,8 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
   const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
   const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
+  const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
+  const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
   const downloadInput = panel.querySelector('[data-setting="download"]');
   const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
@@ -542,6 +577,8 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const batchInterval = getAgaghhhBatchOpenInterval();
   batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
   batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
+  batchHistoryInput.checked = isAgaghhhBatchOpenHistoryEnabled();
+  batchHistoryLimitInput.value = String(getAgaghhhBatchOpenHistoryLimit());
   downloadInput.checked = isAgaghhhDownloadEnabled();
   downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
   crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
@@ -555,12 +592,21 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     batchIntervalMaxInput.disabled = disabled;
     batchIntervalResetButton.disabled = disabled;
   };
+  const syncBatchHistoryFields = () => {
+    batchHistoryInput.disabled = !batchInput.checked;
+    batchHistoryLimitInput.disabled = !batchInput.checked || !batchHistoryInput.checked;
+  };
   const syncDownloadGuardField = () => {
     downloadGuardInput.disabled = !downloadInput.checked;
   };
   syncBatchIntervalFields();
+  syncBatchHistoryFields();
   syncDownloadGuardField();
-  batchInput.addEventListener('change', syncBatchIntervalFields);
+  batchInput.addEventListener('change', () => {
+    syncBatchIntervalFields();
+    syncBatchHistoryFields();
+  });
+  batchHistoryInput.addEventListener('change', syncBatchHistoryFields);
   downloadInput.addEventListener('change', syncDownloadGuardField);
   batchIntervalResetButton.addEventListener('click', () => {
     batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
@@ -587,12 +633,24 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       batchIntervalMinInput.focus();
       return;
     }
+    const batchHistoryLimit = Number(batchHistoryLimitInput.value);
+    if (
+      !Number.isInteger(batchHistoryLimit)
+      || batchHistoryLimit < 1
+      || batchHistoryLimit > 50000
+    ) {
+      document.defaultView?.alert('批量打开记录保存条数请输入 1–50000 的整数。');
+      batchHistoryLimitInput.focus();
+      return;
+    }
     const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1000);
     const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1000);
     if (typeof GM_setValue === 'function') {
       GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
+      GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, batchHistoryInput.checked);
+      GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
