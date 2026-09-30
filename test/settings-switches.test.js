@@ -206,7 +206,10 @@ test('hdblog batch-open history settings support limit, custom color and reset',
     resetColor.click();
     assert.equal(color.value, '#bd10e0');
     color.value = '#abcdef';
-    panel.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    panel.querySelector('form')?.dispatchEvent(new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }));
 
     assert.equal(values.get(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY), true);
     assert.equal(values.get(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY), 4321);
