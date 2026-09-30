@@ -11,7 +11,9 @@ export const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open
 export const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-history-enabled';
 export const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
 export const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
+export const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
 export const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5000;
+export const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
 export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS = 3500;
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
@@ -96,6 +98,17 @@ export function getAgaghhhBatchOpenHistoryLimit() {
   return Number.isInteger(numeric) && numeric >= 1 && numeric <= 50000
     ? numeric
     : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
+}
+
+export function getAgaghhhBatchOpenHistoryColor() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
+  const value = String(GM_getValue(
+    AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
+    DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR
+  ) || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(value)
+    ? value.toLowerCase()
+    : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
 }
 
 export function isAgaghhhDownloadEnabled() {
@@ -529,7 +542,14 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
             style="width:100px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
           <span>条</span>
         </label>
-        <small style="display:block;margin-top:5px;color:#666">默认 5000 条；超过上限后自动删除最旧记录。关闭此功能不会删除已经保存的记录。</small>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <span style="font-weight:600">标记颜色</span>
+          <input data-setting="batch-open-history-color" type="color" aria-label="批量打开记录标记颜色"
+            style="width:44px;height:32px;padding:2px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer">
+          <button type="button" data-action="reset-batch-open-history-color"
+            style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">还原默认紫色</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">默认 5000 条；超过上限后自动删除最旧记录。默认标记颜色为 #bd10e0。关闭此功能不会删除已经保存的记录。</small>
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
@@ -567,6 +587,8 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
   const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
   const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
+  const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
+  const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
   const downloadInput = panel.querySelector('[data-setting="download"]');
   const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
@@ -579,6 +601,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
   batchHistoryInput.checked = isAgaghhhBatchOpenHistoryEnabled();
   batchHistoryLimitInput.value = String(getAgaghhhBatchOpenHistoryLimit());
+  batchHistoryColorInput.value = getAgaghhhBatchOpenHistoryColor();
   downloadInput.checked = isAgaghhhDownloadEnabled();
   downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
   crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
@@ -593,8 +616,11 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     batchIntervalResetButton.disabled = disabled;
   };
   const syncBatchHistoryFields = () => {
+    const detailsDisabled = !batchInput.checked || !batchHistoryInput.checked;
     batchHistoryInput.disabled = !batchInput.checked;
-    batchHistoryLimitInput.disabled = !batchInput.checked || !batchHistoryInput.checked;
+    batchHistoryLimitInput.disabled = detailsDisabled;
+    batchHistoryColorInput.disabled = detailsDisabled;
+    batchHistoryColorResetButton.disabled = detailsDisabled;
   };
   const syncDownloadGuardField = () => {
     downloadGuardInput.disabled = !downloadInput.checked;
@@ -612,6 +638,10 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
     batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
     batchIntervalResetButton.blur();
+  });
+  batchHistoryColorResetButton.addEventListener('click', () => {
+    batchHistoryColorInput.value = DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
+    batchHistoryColorResetButton.blur();
   });
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeX1080xSettingsPanel(document));
@@ -651,6 +681,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, batchHistoryInput.checked);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
+      GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
       if (typeof GM_getValue === 'function') {
         const existingHistory = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
         if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
