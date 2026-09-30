@@ -18,6 +18,12 @@ const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
 const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
 const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interval-max-ms';
+const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-history-enabled';
+const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
+const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
+const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5000;
+const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
+const BATCH_OPEN_HISTORY_STYLE_ID = 'x1080x-ex-batch-open-history-style';
 const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
 const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
 const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me';
@@ -106,6 +112,79 @@ function isBatchOpenEnabledForCurrentHost() {
     return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
   }
   return true;
+}
+
+function isAgaghhhBatchOpenHistoryEnabled() {
+  if (typeof GM_getValue !== 'function') return false;
+  const host = currentHost();
+  if (host !== 'agaghhh.cc' && !host.endsWith('.agaghhh.cc')) return false;
+  return GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, false) === true;
+}
+
+function batchOpenHistoryLimit() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
+  const numeric = Number(GM_getValue(
+    AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
+    DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT
+  ));
+  return Number.isInteger(numeric) && numeric >= 1 && numeric <= 50000
+    ? numeric
+    : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
+}
+
+function batchOpenHistoryId(value) {
+  try {
+    const url = new URL(value, location.href);
+    const queryTid = url.searchParams.get('mod') === 'viewthread'
+      ? url.searchParams.get('tid')
+      : '';
+    if (queryTid && /^\d+$/.test(queryTid)) return `tid:${queryTid}`;
+    const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
+    return pathMatch ? `tid:${pathMatch[1]}` : '';
+  } catch {
+    return '';
+  }
+}
+
+function readBatchOpenHistory() {
+  if (typeof GM_getValue !== 'function') return [];
+  const stored = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+  const values = Array.isArray(stored) ? stored : [];
+  return [...new Set(values.filter((value) => typeof value === 'string' && /^tid:\d+$/.test(value)))];
+}
+
+function rememberBatchOpenedThread(url) {
+  if (!isAgaghhhBatchOpenHistoryEnabled() || typeof GM_setValue !== 'function') return false;
+  const id = batchOpenHistoryId(url);
+  if (!id) return false;
+  const history = readBatchOpenHistory().filter((item) => item !== id);
+  history.push(id);
+  GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, history.slice(-batchOpenHistoryLimit()));
+  return true;
+}
+
+function applyBatchOpenHistory(document) {
+  if (!document || !isAgaghhhBatchOpenHistoryEnabled()) return 0;
+  let style = document.getElementById(BATCH_OPEN_HISTORY_STYLE_ID);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = BATCH_OPEN_HISTORY_STYLE_ID;
+    style.textContent = `a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: #bd10e0 !important; }`;
+    (document.head || document.documentElement).append(style);
+  }
+
+  document.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`)
+    .forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
+
+  const history = new Set(readBatchOpenHistory());
+  let marked = 0;
+  collectForumThreadLinks(document).forEach((thread) => {
+    const id = batchOpenHistoryId(thread.url);
+    if (!id || !history.has(id)) return;
+    thread.link.setAttribute(BATCH_OPEN_HISTORY_ATTR, '1');
+    marked += 1;
+  });
+  return marked;
 }
 
 function isThreadPage() {
@@ -361,6 +440,7 @@ async function openCurrentPageThreads(button) {
           insert: false,
           setParent: true,
         });
+        if (rememberBatchOpenedThread(thread.url)) applyBatchOpenHistory(document);
         opened += 1;
       } catch (error) {
         failures.push(`${index + 1}. ${redactDiagnostic(error?.message || error || '打开失败')}`);
@@ -842,5 +922,8 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
   if (expandHdblogPreview) expandHdblogPreviewImages();
   if (isThreadPage()) addDownloadButton();
-  if (isBatchOpenPage() && isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
+  if (isBatchOpenPage()) {
+    applyBatchOpenHistory(document);
+    if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
+  }
 }
