@@ -58,11 +58,17 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     return 1;
   };
   dom.window.clearTimeout = () => {};
+  const stored = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-history-limit', 2],
+    ['x1080x-ex:agaghhh-batch-open-history', ['tid:302']],
+  ]);
   globalThis.GM_getValue = (key, fallback) => {
     if (key === 'x1080x-ex:agaghhh-batch-open-interval-min-ms') return 2200;
     if (key === 'x1080x-ex:agaghhh-batch-open-interval-max-ms') return 2200;
-    return fallback;
+    return stored.has(key) ? stored.get(key) : fallback;
   };
+  globalThis.GM_setValue = (key, value) => stored.set(key, value);
   globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
   dom.window.document.querySelectorAll('a.xst').forEach((link) => {
     link.addEventListener('click', () => syntheticClicks.push(link.textContent));
@@ -73,6 +79,14 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     const button = dom.window.document.querySelector('#x1080x-ex-open-page');
     assert.ok(button);
     assert.equal(button.textContent, '后台顺序打开本页主题（3）');
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
+    assert.match(
+      dom.window.document.querySelector('#x1080x-ex-batch-open-history-style').textContent,
+      /#bd10e0/
+    );
     button.click();
     await waitFor(() => opened.length === 3, 'all normal threads should open in order');
 
@@ -82,6 +96,22 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     })));
     assert.deepEqual(syntheticClicks, []);
     assert.equal(delays.filter((delay) => delay === 2200).length, 2);
+    assert.deepEqual(
+      stored.get('x1080x-ex:agaghhh-batch-open-history'),
+      ['tid:302', 'tid:301']
+    );
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=303"]').hasAttribute('data-x1080x-batch-opened'),
+      false
+    );
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=301"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
   } finally {
     dom.window.setTimeout = originalSetTimeout;
     dom.window.clearTimeout = originalClearTimeout;
