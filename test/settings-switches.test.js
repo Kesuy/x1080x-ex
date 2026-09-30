@@ -153,7 +153,10 @@ test('x1080x settings menu callback opens the panel without throwing', () => {
     const callback = callbacks.get('⚙️ x1080x 设置');
     assert.equal(typeof callback, 'function');
     assert.doesNotThrow(() => callback());
-    assert.ok(dom.window.document.getElementById('x1080x-ex-settings-panel'));
+    const host = dom.window.document.getElementById('x1080x-ex-settings-panel');
+    assert.ok(host);
+    assert.ok(host.shadowRoot);
+    assert.ok(host.shadowRoot.querySelector('form'));
   } finally {
     if (oldRegister === undefined) delete globalThis.GM_registerMenuCommand;
     else globalThis.GM_registerMenuCommand = oldRegister;
