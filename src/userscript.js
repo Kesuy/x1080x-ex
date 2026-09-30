@@ -21,7 +21,9 @@ const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interv
 const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-history-enabled';
 const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
 const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
+const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
 const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5000;
+const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
 const BATCH_OPEN_HISTORY_STYLE_ID = 'x1080x-ex-batch-open-history-style';
 const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
@@ -132,6 +134,17 @@ function batchOpenHistoryLimit() {
     : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
 }
 
+function batchOpenHistoryColor() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
+  const value = String(GM_getValue(
+    AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
+    DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR
+  ) || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(value)
+    ? value.toLowerCase()
+    : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
+}
+
 function batchOpenHistoryId(value) {
   try {
     const url = new URL(value, location.href);
@@ -169,9 +182,9 @@ function applyBatchOpenHistory(document) {
   if (!style) {
     style = document.createElement('style');
     style.id = BATCH_OPEN_HISTORY_STYLE_ID;
-    style.textContent = `a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: #bd10e0 !important; }`;
     (document.head || document.documentElement).append(style);
   }
+  style.textContent = `a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }`;
 
   document.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`)
     .forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
