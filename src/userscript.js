@@ -22,8 +22,12 @@ const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-his
 const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
 const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
 const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
-const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5000;
-const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
+const HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-history-enabled';
+const HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:hdblog-batch-open-history-limit';
+const HDBLOG_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:hdblog-batch-open-history';
+const HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:hdblog-batch-open-history-color';
+const DEFAULT_BATCH_OPEN_HISTORY_LIMIT = 5000;
+const DEFAULT_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
 const BATCH_OPEN_HISTORY_STYLE_ID = 'x1080x-ex-batch-open-history-style';
 const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
@@ -116,78 +120,112 @@ function isBatchOpenEnabledForCurrentHost() {
   return true;
 }
 
-function isAgaghhhBatchOpenHistoryEnabled() {
-  if (typeof GM_getValue !== 'function') return false;
+function batchOpenHistoryConfig() {
   const host = currentHost();
-  if (host !== 'agaghhh.cc' && !host.endsWith('.agaghhh.cc')) return false;
-  return GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, false) === true;
+  if (host === 'agaghhh.cc' || host.endsWith('.agaghhh.cc')) {
+    return {
+      enabledKey: AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY,
+      limitKey: AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
+      historyKey: AGAGHHH_BATCH_OPEN_HISTORY_KEY,
+      colorKey: AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
+      kind: 'agaghhh',
+    };
+  }
+  if (host === 'hdblog.me' || host.endsWith('.hdblog.me')) {
+    return {
+      enabledKey: HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY,
+      limitKey: HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
+      historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY,
+      colorKey: HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
+      kind: 'hdblog',
+    };
+  }
+  return null;
+}
+
+function isBatchOpenHistoryEnabled() {
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_getValue !== 'function') return false;
+  return GM_getValue(config.enabledKey, false) === true;
 }
 
 function batchOpenHistoryLimit() {
-  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
-  const numeric = Number(GM_getValue(
-    AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
-    DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT
-  ));
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_getValue !== 'function') return DEFAULT_BATCH_OPEN_HISTORY_LIMIT;
+  const numeric = Number(GM_getValue(config.limitKey, DEFAULT_BATCH_OPEN_HISTORY_LIMIT));
   return Number.isInteger(numeric) && numeric >= 1 && numeric <= 50000
     ? numeric
-    : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
+    : DEFAULT_BATCH_OPEN_HISTORY_LIMIT;
 }
 
 function batchOpenHistoryColor() {
-  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
-  const value = String(GM_getValue(
-    AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
-    DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR
-  ) || '').trim();
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_getValue !== 'function') return DEFAULT_BATCH_OPEN_HISTORY_COLOR;
+  const value = String(GM_getValue(config.colorKey, DEFAULT_BATCH_OPEN_HISTORY_COLOR) || '').trim();
   return /^#[0-9a-f]{6}$/i.test(value)
     ? value.toLowerCase()
-    : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
+    : DEFAULT_BATCH_OPEN_HISTORY_COLOR;
 }
 
 function batchOpenHistoryId(value) {
+  const config = batchOpenHistoryConfig();
+  if (!config) return '';
   try {
     const url = new URL(value, location.href);
-    const queryTid = url.searchParams.get('mod') === 'viewthread'
-      ? url.searchParams.get('tid')
-      : '';
-    if (queryTid && /^\d+$/.test(queryTid)) return `tid:${queryTid}`;
-    const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
-    return pathMatch ? `tid:${pathMatch[1]}` : '';
+    if (config.kind === 'agaghhh') {
+      const queryTid = url.searchParams.get('mod') === 'viewthread'
+        ? url.searchParams.get('tid')
+        : '';
+      if (queryTid && /^\d+$/.test(queryTid)) return `tid:${queryTid}`;
+      const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
+      return pathMatch ? `tid:${pathMatch[1]}` : '';
+    }
+    const postMatch = url.pathname.match(/^\/(\d+)(?:\/|$)/);
+    if (postMatch) return `post:${postMatch[1]}`;
+    return `url:${url.pathname}${url.search}`;
   } catch {
     return '';
   }
 }
 
 function readBatchOpenHistory() {
-  if (typeof GM_getValue !== 'function') return [];
-  const stored = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_getValue !== 'function') return [];
+  const stored = GM_getValue(config.historyKey, []);
   const values = Array.isArray(stored) ? stored : [];
-  return [...new Set(values.filter((value) => typeof value === 'string' && /^tid:\d+$/.test(value)))];
+  return [...new Set(values.filter((value) => (
+    typeof value === 'string'
+    && (/^(?:tid|post):\d+$/.test(value) || /^url:\//.test(value))
+  )))];
 }
 
 function rememberBatchOpenedThread(url) {
-  if (!isAgaghhhBatchOpenHistoryEnabled() || typeof GM_setValue !== 'function') return false;
+  const config = batchOpenHistoryConfig();
+  if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== 'function') return false;
   const id = batchOpenHistoryId(url);
   if (!id) return false;
   const history = readBatchOpenHistory().filter((item) => item !== id);
   history.push(id);
-  GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, history.slice(-batchOpenHistoryLimit()));
+  GM_setValue(config.historyKey, history.slice(-batchOpenHistoryLimit()));
   return true;
 }
 
 function applyBatchOpenHistory(document) {
-  if (!document || !isAgaghhhBatchOpenHistoryEnabled()) return 0;
+  const config = batchOpenHistoryConfig();
+  if (!document || !config) return 0;
+
   let style = document.getElementById(BATCH_OPEN_HISTORY_STYLE_ID);
   if (!style) {
     style = document.createElement('style');
     style.id = BATCH_OPEN_HISTORY_STYLE_ID;
     (document.head || document.documentElement).append(style);
   }
-  style.textContent = `a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }`;
+  style.textContent = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }`;
 
   document.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`)
     .forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
+
+  if (!isBatchOpenHistoryEnabled()) return 0;
 
   const history = new Set(readBatchOpenHistory());
   let marked = 0;
