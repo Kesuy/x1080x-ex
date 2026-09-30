@@ -520,7 +520,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="batch-open-history" type="checkbox" style="margin-top:3px">
-        <span><strong>保存批量打开记录</strong><small style="display:block;margin-top:2px;color:#666">记录脚本批量打开过的主题，并在列表页以紫色标记；仅影响脚本批量打开，不改变浏览器原生访问记录。</small></span>
+        <span><strong>保存批量打开记录</strong><small style="display:block;margin-top:2px;color:#666">记录脚本批量打开过的主题，并在列表页以紫色标记；记录保存在 Tampermonkey 中，不依赖 Chrome 的 :visited。</small></span>
       </label>
       <div data-batch-open-history-row style="margin:0 0 13px 24px">
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -651,6 +651,12 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, batchHistoryInput.checked);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
+      if (typeof GM_getValue === 'function') {
+        const existingHistory = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+        if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
+          GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, existingHistory.slice(-batchHistoryLimit));
+        }
+      }
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
