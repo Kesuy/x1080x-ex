@@ -1207,6 +1207,8 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
 
 function registerHdblogSettingsMenu(document, locationObject) {
   if (!isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== 'function') return;
+  const view = document?.defaultView;
+  if (view && view.top !== view) return;
   GM_registerMenuCommand('⚙️ hdblog 设置', () => openHdblogSettingsPanel(document));
 }
 
