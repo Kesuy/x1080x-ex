@@ -91,6 +91,9 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     );
     button.click();
     assert.equal(dom.window.document.title, '↗ 批量打开中 · agaghhh 列表');
+    const agaghhhBeforeUnload = new dom.window.Event('beforeunload', { cancelable: true });
+    assert.equal(dom.window.dispatchEvent(agaghhhBeforeUnload), false);
+    assert.equal(agaghhhBeforeUnload.defaultPrevented, true);
     await waitFor(() => opened.length === 3, 'all normal threads should open in order');
 
     assert.deepEqual(opened, [303, 302, 301].map((tid) => ({
@@ -186,6 +189,9 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
 
     button.click();
     assert.equal(dom.window.document.title, '↗ 批量打开中 · HDBlog 标签');
+    const hdblogBeforeUnload = new dom.window.Event('beforeunload', { cancelable: true });
+    assert.equal(dom.window.dispatchEvent(hdblogBeforeUnload), false);
+    assert.equal(hdblogBeforeUnload.defaultPrevented, true);
     await waitFor(() => opened.length === 2, 'all hdblog articles should open in order');
 
     assert.deepEqual(opened, [
