@@ -38,6 +38,7 @@ function installDomGlobals(window) {
 
 test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => {
   const dom = new JSDOM(`
+    <title>agaghhh 列表</title>
     <div id="pgt"></div>
     <div id="threadlist"><table>
       <tbody id="stickthread_100"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=100">置顶</a></th></tr></tbody>
@@ -89,6 +90,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
       /#123456/
     );
     button.click();
+    assert.equal(dom.window.document.title, '↗ 批量打开中 · agaghhh 列表');
     await waitFor(() => opened.length === 3, 'all normal threads should open in order');
 
     assert.deepEqual(opened, [303, 302, 301].map((tid) => ({
@@ -113,6 +115,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
       dom.window.document.querySelector('a[href*="tid=301"]').getAttribute('data-x1080x-batch-opened'),
       '1'
     );
+    assert.equal(dom.window.document.title, 'agaghhh 列表');
   } finally {
     dom.window.setTimeout = originalSetTimeout;
     dom.window.clearTimeout = originalClearTimeout;
@@ -123,6 +126,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
 
 test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台打开', async () => {
   const dom = new JSDOM(`
+    <title>HDBlog 标签</title>
     <main id="genesis-content">
       <div class="archive-description"><h1>FC2-PPV</h1></div>
       <article class="entry" id="post-983859"><header class="entry-header"><h2 class="entry-title">
@@ -181,6 +185,7 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     assert.match(historyStyle, /#345678/);
 
     button.click();
+    assert.equal(dom.window.document.title, '↗ 批量打开中 · HDBlog 标签');
     await waitFor(() => opened.length === 2, 'all hdblog articles should open in order');
 
     assert.deepEqual(opened, [
@@ -203,6 +208,7 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
       dom.window.document.querySelector('a[href^="/983856/"]').getAttribute('data-x1080x-batch-opened'),
       '1'
     );
+    assert.equal(dom.window.document.title, 'HDBlog 标签');
   } finally {
     dom.window.setTimeout = originalSetTimeout;
     dom.window.clearTimeout = originalClearTimeout;
