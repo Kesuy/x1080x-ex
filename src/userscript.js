@@ -8,6 +8,7 @@ import { resolvePixhostShowUrl } from './pixhost.js';
 import { requestTorrentBytes } from './torrent.js';
 import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
+  HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY,
   beginDownloadGuard,
   isDownloadGuardEnabled,
 } from './download-guard.js';
@@ -73,6 +74,7 @@ function saveDomains(domains) {
 }
 
 function registerSettingsMenu() {
+  if (window.top !== window.self) return;
   GM_registerMenuCommand('⚙️ 设置匹配域名', () => {
     const current = getConfiguredDomains().join('\n');
     const input = window.prompt(
@@ -456,6 +458,14 @@ function setBatchButtonIdle(button, count) {
   button.style.background = '#398bd4';
 }
 
+function batchOpenGuardEnabled() {
+  const host = currentHost();
+  const key = host === 'hdblog.me' || host.endsWith('.hdblog.me')
+    ? HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY
+    : AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY;
+  return isDownloadGuardEnabled(key);
+}
+
 async function openCurrentPageThreads(button) {
   if (batchOpenState) {
     cancelBatchOpen();
@@ -477,6 +487,10 @@ async function openCurrentPageThreads(button) {
   const failures = [];
   let opened = 0;
   const timing = batchOpenTiming();
+  const endBatchOpenGuard = beginDownloadGuard(document, {
+    enabled: batchOpenGuardEnabled(),
+    label: '↗ 批量打开中',
+  });
   button.style.background = '#b84b4b';
 
   try {
@@ -507,6 +521,7 @@ async function openCurrentPageThreads(button) {
       await waitForBatchDelay(delay, state);
     }
   } finally {
+    endBatchOpenGuard();
     const wasCancelled = state.cancelled;
     batchOpenState = null;
     button.textContent = wasCancelled
