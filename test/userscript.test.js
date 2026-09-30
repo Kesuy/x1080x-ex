@@ -38,6 +38,7 @@ function installDomGlobals(window) {
 
 test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => {
   const dom = new JSDOM(`
+    <title>agaghhh 列表</title>
     <div id="pgt"></div>
     <div id="threadlist"><table>
       <tbody id="stickthread_100"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=100">置顶</a></th></tr></tbody>
@@ -58,11 +59,18 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     return 1;
   };
   dom.window.clearTimeout = () => {};
+  const stored = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-history-limit', 2],
+    ['x1080x-ex:agaghhh-batch-open-history-color', '#123456'],
+    ['x1080x-ex:agaghhh-batch-open-history', ['tid:302']],
+  ]);
   globalThis.GM_getValue = (key, fallback) => {
     if (key === 'x1080x-ex:agaghhh-batch-open-interval-min-ms') return 2200;
     if (key === 'x1080x-ex:agaghhh-batch-open-interval-max-ms') return 2200;
-    return fallback;
+    return stored.has(key) ? stored.get(key) : fallback;
   };
+  globalThis.GM_setValue = (key, value) => stored.set(key, value);
   globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
   dom.window.document.querySelectorAll('a.xst').forEach((link) => {
     link.addEventListener('click', () => syntheticClicks.push(link.textContent));
@@ -73,7 +81,19 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     const button = dom.window.document.querySelector('#x1080x-ex-open-page');
     assert.ok(button);
     assert.equal(button.textContent, '后台顺序打开本页主题（3）');
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
+    assert.match(
+      dom.window.document.querySelector('#x1080x-ex-batch-open-history-style').textContent,
+      /#123456/
+    );
     button.click();
+    assert.equal(dom.window.document.title, '↗ 批量打开中 · agaghhh 列表');
+    const agaghhhBeforeUnload = new dom.window.Event('beforeunload', { cancelable: true });
+    assert.equal(dom.window.dispatchEvent(agaghhhBeforeUnload), false);
+    assert.equal(agaghhhBeforeUnload.defaultPrevented, true);
     await waitFor(() => opened.length === 3, 'all normal threads should open in order');
 
     assert.deepEqual(opened, [303, 302, 301].map((tid) => ({
@@ -82,6 +102,23 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     })));
     assert.deepEqual(syntheticClicks, []);
     assert.equal(delays.filter((delay) => delay === 2200).length, 2);
+    assert.deepEqual(
+      stored.get('x1080x-ex:agaghhh-batch-open-history'),
+      ['tid:302', 'tid:301']
+    );
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=303"]').hasAttribute('data-x1080x-batch-opened'),
+      false
+    );
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=301"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
+    assert.equal(dom.window.document.title, 'agaghhh 列表');
   } finally {
     dom.window.setTimeout = originalSetTimeout;
     dom.window.clearTimeout = originalClearTimeout;
@@ -92,6 +129,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
 
 test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台打开', async () => {
   const dom = new JSDOM(`
+    <title>HDBlog 标签</title>
     <main id="genesis-content">
       <div class="archive-description"><h1>FC2-PPV</h1></div>
       <article class="entry" id="post-983859"><header class="entry-header"><h2 class="entry-title">
@@ -115,12 +153,19 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     return 1;
   };
   dom.window.clearTimeout = () => {};
+  const stored = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history-limit', 2],
+    ['x1080x-ex:hdblog-batch-open-history-color', '#345678'],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:983856']],
+  ]);
   globalThis.GM_getValue = (key, fallback) => {
     if (key === 'x1080x-ex:domains') return 'agaghhh.cc';
     if (key === 'x1080x-ex:hdblog-batch-open-interval-min-ms') return 900;
     if (key === 'x1080x-ex:hdblog-batch-open-interval-max-ms') return 900;
-    return fallback;
+    return stored.has(key) ? stored.get(key) : fallback;
   };
+  globalThis.GM_setValue = (key, value) => stored.set(key, value);
   globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
 
   try {
@@ -134,8 +179,19 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
     assert.equal(dom.window.document.querySelector('#x1080x-ex-open-page-toolbar'), null);
     assert.equal(button.textContent, '后台顺序打开本页主题（2）');
+    assert.equal(
+      dom.window.document.querySelector('a[href^="/983856/"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
+    const historyStyle = dom.window.document.querySelector('#x1080x-ex-batch-open-history-style').textContent;
+    assert.match(historyStyle, /a:visited/);
+    assert.match(historyStyle, /#345678/);
 
     button.click();
+    assert.equal(dom.window.document.title, '↗ 批量打开中 · HDBlog 标签');
+    const hdblogBeforeUnload = new dom.window.Event('beforeunload', { cancelable: true });
+    assert.equal(dom.window.dispatchEvent(hdblogBeforeUnload), false);
+    assert.equal(hdblogBeforeUnload.defaultPrevented, true);
     await waitFor(() => opened.length === 2, 'all hdblog articles should open in order');
 
     assert.deepEqual(opened, [
@@ -146,6 +202,19 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
       options: { active: false, insert: false, setParent: true },
     })));
     assert.equal(delays.filter((delay) => delay === 900).length, 1);
+    assert.deepEqual(
+      stored.get('x1080x-ex:hdblog-batch-open-history'),
+      ['post:983859', 'post:983856']
+    );
+    assert.equal(
+      dom.window.document.querySelector('a[href^="/983859/"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
+    assert.equal(
+      dom.window.document.querySelector('a[href^="/983856/"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
+    );
+    assert.equal(dom.window.document.title, 'HDBlog 标签');
   } finally {
     dom.window.setTimeout = originalSetTimeout;
     dom.window.clearTimeout = originalClearTimeout;

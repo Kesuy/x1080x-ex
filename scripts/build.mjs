@@ -26,6 +26,7 @@ const metadata = `// ==UserScript==
 // @grant        GM_registerMenuCommand
 // @grant        GM_openInTab
 // @run-at       document-idle
+// @noframes
 // ==/UserScript==`;
 
 await build({

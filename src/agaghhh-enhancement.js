@@ -8,6 +8,12 @@ import {
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 export const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
 export const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interval-max-ms';
+export const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-history-enabled';
+export const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
+export const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
+export const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
+export const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5000;
+export const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
 export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS = 3500;
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
@@ -76,6 +82,33 @@ export function getAgaghhhBatchOpenInterval() {
     };
   }
   return { delayMin, delayMax };
+}
+
+export function isAgaghhhBatchOpenHistoryEnabled() {
+  if (typeof GM_getValue !== 'function') return false;
+  return GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, false) === true;
+}
+
+export function getAgaghhhBatchOpenHistoryLimit() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
+  const numeric = Number(GM_getValue(
+    AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
+    DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT
+  ));
+  return Number.isInteger(numeric) && numeric >= 1 && numeric <= 50000
+    ? numeric
+    : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
+}
+
+export function getAgaghhhBatchOpenHistoryColor() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
+  const value = String(GM_getValue(
+    AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
+    DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR
+  ) || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(value)
+    ? value.toLowerCase()
+    : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
 }
 
 export function isAgaghhhDownloadEnabled() {
@@ -463,8 +496,13 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   if (!document?.body) return null;
   closeX1080xSettingsPanel(document);
 
+  const host = document.createElement('div');
+  host.id = SETTINGS_PANEL_ID;
+  host.setAttribute('data-x1080x-settings-host', '1');
+  const root = typeof host.attachShadow === 'function'
+    ? host.attachShadow({ mode: 'open' })
+    : host;
   const overlay = document.createElement('div');
-  overlay.id = SETTINGS_PANEL_ID;
   Object.assign(overlay.style, {
     position: 'fixed', inset: '0', zIndex: '2147483646', display: 'flex',
     alignItems: 'center', justifyContent: 'center', padding: '20px',
@@ -497,6 +535,26 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
           <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">恢复默认</button>
         </div>
         <small style="display:block;margin-top:5px;color:#666">每个主题在该范围内随机等待；默认 1.8–3.5 秒。定期长停顿规则保持不变。</small>
+      </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
+        <input data-setting="batch-open-history" type="checkbox" style="margin-top:3px">
+        <span><strong>保存批量打开记录</strong><small style="display:block;margin-top:2px;color:#666">记录脚本批量打开过的主题并持久标记；手动访问过的链接也使用相同颜色显示。</small></span>
+      </label>
+      <div data-batch-open-history-row style="margin:0 0 13px 24px">
+        <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:600">最多保存</span>
+          <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="批量打开记录保存条数"
+            style="width:100px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>条</span>
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <span style="font-weight:600">访问标记颜色</span>
+          <input data-setting="batch-open-history-color" type="color" aria-label="批量打开记录标记颜色"
+            style="width:44px;height:32px;padding:2px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer">
+          <button type="button" data-action="reset-batch-open-history-color"
+            style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">还原默认紫色</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">默认 5000 条；超过上限后自动删除最旧记录。默认标记颜色为 #bd10e0。关闭此功能不会删除已经保存的记录。</small>
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
@@ -532,6 +590,10 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
   const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
   const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
+  const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
+  const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
+  const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
+  const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
   const downloadInput = panel.querySelector('[data-setting="download"]');
   const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
@@ -542,6 +604,9 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const batchInterval = getAgaghhhBatchOpenInterval();
   batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
   batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
+  batchHistoryInput.checked = isAgaghhhBatchOpenHistoryEnabled();
+  batchHistoryLimitInput.value = String(getAgaghhhBatchOpenHistoryLimit());
+  batchHistoryColorInput.value = getAgaghhhBatchOpenHistoryColor();
   downloadInput.checked = isAgaghhhDownloadEnabled();
   downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
   crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
@@ -555,17 +620,33 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     batchIntervalMaxInput.disabled = disabled;
     batchIntervalResetButton.disabled = disabled;
   };
+  const syncBatchHistoryFields = () => {
+    const detailsDisabled = !batchInput.checked || !batchHistoryInput.checked;
+    batchHistoryInput.disabled = !batchInput.checked;
+    batchHistoryLimitInput.disabled = detailsDisabled;
+    batchHistoryColorInput.disabled = false;
+    batchHistoryColorResetButton.disabled = false;
+  };
   const syncDownloadGuardField = () => {
     downloadGuardInput.disabled = !downloadInput.checked;
   };
   syncBatchIntervalFields();
+  syncBatchHistoryFields();
   syncDownloadGuardField();
-  batchInput.addEventListener('change', syncBatchIntervalFields);
+  batchInput.addEventListener('change', () => {
+    syncBatchIntervalFields();
+    syncBatchHistoryFields();
+  });
+  batchHistoryInput.addEventListener('change', syncBatchHistoryFields);
   downloadInput.addEventListener('change', syncDownloadGuardField);
   batchIntervalResetButton.addEventListener('click', () => {
     batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
     batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
     batchIntervalResetButton.blur();
+  });
+  batchHistoryColorResetButton.addEventListener('click', () => {
+    batchHistoryColorInput.value = DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
+    batchHistoryColorResetButton.blur();
   });
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeX1080xSettingsPanel(document));
@@ -587,12 +668,31 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       batchIntervalMinInput.focus();
       return;
     }
+    const batchHistoryLimit = Number(batchHistoryLimitInput.value);
+    if (
+      !Number.isInteger(batchHistoryLimit)
+      || batchHistoryLimit < 1
+      || batchHistoryLimit > 50000
+    ) {
+      document.defaultView?.alert('批量打开记录保存条数请输入 1–50000 的整数。');
+      batchHistoryLimitInput.focus();
+      return;
+    }
     const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1000);
     const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1000);
     if (typeof GM_setValue === 'function') {
       GM_setValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, batchInput.checked);
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
+      GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, batchHistoryInput.checked);
+      GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
+      GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
+      if (typeof GM_getValue === 'function') {
+        const existingHistory = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+        if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
+          GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, existingHistory.slice(-batchHistoryLimit));
+        }
+      }
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
@@ -606,7 +706,8 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   });
 
   overlay.append(panel);
-  document.body.append(overlay);
+  root.append(overlay);
+  document.body.append(host);
   return overlay;
 }
 
@@ -615,8 +716,17 @@ export function installX1080xSettingsMenu(
   locationObject = globalThis.location
 ) {
   if (!document || !isAgaghhhHost(locationObject)) return;
+  const view = document.defaultView;
+  if (view && view.top !== view) return;
   if (typeof GM_registerMenuCommand !== 'function') return;
-  GM_registerMenuCommand('⚙️ x1080x 设置', () => openX1080xSettingsPanel(document));
+  GM_registerMenuCommand('⚙️ x1080x 设置', () => {
+    try {
+      openX1080xSettingsPanel(document);
+    } catch (error) {
+      console.error('[x1080x-ex] failed to open agaghhh settings', error);
+      document.defaultView?.alert?.(`x1080x 设置打开失败：${error?.message || error}`);
+    }
+  });
 }
 
 export function installAgaghhhEnhancement(

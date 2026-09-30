@@ -16,6 +16,12 @@ export const HDBLOG_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-search-filter-
 export const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
 export const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
 export const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
+export const HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-history-enabled';
+export const HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:hdblog-batch-open-history-limit';
+export const HDBLOG_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:hdblog-batch-open-history';
+export const HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:hdblog-batch-open-history-color';
+export const DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT = 5000;
+export const DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 export const DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS = 800;
 export const DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS = 1600;
 export const DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
@@ -893,6 +899,33 @@ export function getHdblogBatchOpenInterval() {
   return { delayMin, delayMax };
 }
 
+export function isHdblogBatchOpenHistoryEnabled() {
+  if (typeof GM_getValue !== 'function') return false;
+  return GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY, false) === true;
+}
+
+export function getHdblogBatchOpenHistoryLimit() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
+  const numeric = Number(GM_getValue(
+    HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
+    DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT
+  ));
+  return Number.isInteger(numeric) && numeric >= 1 && numeric <= 50000
+    ? numeric
+    : DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
+}
+
+export function getHdblogBatchOpenHistoryColor() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
+  const value = String(GM_getValue(
+    HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
+    DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR
+  ) || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(value)
+    ? value.toLowerCase()
+    : DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
+}
+
 export function isHdblogPreviewExpansionEnabled() {
   if (typeof GM_getValue !== 'function') return true;
   return GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
@@ -1001,6 +1034,26 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         </div>
         <small style="display:block;margin-top:5px;color:#666">每个主题在该范围内随机等待；默认 0.8–1.6 秒。定期长停顿规则保持不变。</small>
       </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
+        <input data-setting="batch-open-history" type="checkbox" style="margin-top:3px">
+        <span><strong>保存批量打开记录</strong><small style="display:block;margin-top:2px;color:#666">记录脚本批量打开过的文章并持久标记；手动访问过的链接也使用相同颜色显示。</small></span>
+      </label>
+      <div data-batch-open-history-row style="margin:0 0 13px 24px">
+        <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:600">最多保存</span>
+          <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="批量打开记录保存条数"
+            style="width:100px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>条</span>
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <span style="font-weight:600">访问标记颜色</span>
+          <input data-setting="batch-open-history-color" type="color" aria-label="访问标记颜色"
+            style="width:44px;height:32px;padding:2px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer">
+          <button type="button" data-action="reset-batch-open-history-color"
+            style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">还原默认紫色</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">默认 5000 条，默认颜色 #bd10e0；超过上限自动删除最旧记录。</small>
+      </div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="search-filter" type="checkbox">
         启用搜索结果屏蔽与单结果自动跳转
@@ -1028,6 +1081,10 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
   const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
   const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
+  const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
+  const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
+  const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
+  const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
   const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
   const keywordsInput = panel.querySelector('[data-setting="keywords"]');
 
@@ -1042,6 +1099,9 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const batchInterval = getHdblogBatchOpenInterval();
   batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
   batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
+  batchHistoryInput.checked = isHdblogBatchOpenHistoryEnabled();
+  batchHistoryLimitInput.value = String(getHdblogBatchOpenHistoryLimit());
+  batchHistoryColorInput.value = getHdblogBatchOpenHistoryColor();
   searchFilterInput.checked = isHdblogSearchFilterEnabled();
   keywordsInput.value = readBlockedKeywordsText();
 
@@ -1053,16 +1113,23 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     batchIntervalMinInput.disabled = batchIntervalDisabled;
     batchIntervalMaxInput.disabled = batchIntervalDisabled;
     batchIntervalResetButton.disabled = batchIntervalDisabled;
+    batchHistoryInput.disabled = batchIntervalDisabled;
+    batchHistoryLimitInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
   };
   syncDependentFields();
   layoutInput.addEventListener('change', syncDependentFields);
   imageDownloadInput.addEventListener('change', syncDependentFields);
   searchFilterInput.addEventListener('change', syncDependentFields);
   batchOpenInput.addEventListener('change', syncDependentFields);
+  batchHistoryInput.addEventListener('change', syncDependentFields);
   batchIntervalResetButton.addEventListener('click', () => {
     batchIntervalMinInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
     batchIntervalMaxInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
     batchIntervalResetButton.blur();
+  });
+  batchHistoryColorResetButton.addEventListener('click', () => {
+    batchHistoryColorInput.value = DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
+    batchHistoryColorResetButton.blur();
   });
 
   panel.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeHdblogSettingsPanel(document));
@@ -1095,6 +1162,12 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       batchIntervalMinInput.focus();
       return;
     }
+    const batchHistoryLimit = Number(batchHistoryLimitInput.value);
+    if (!Number.isInteger(batchHistoryLimit) || batchHistoryLimit < 1 || batchHistoryLimit > 50000) {
+      document.defaultView?.alert('批量打开记录保存条数请输入 1–50000 的整数。');
+      batchHistoryLimitInput.focus();
+      return;
+    }
     const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1000);
     const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1000);
 
@@ -1109,6 +1182,15 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
       GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
+      GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY, batchHistoryInput.checked);
+      GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
+      GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
+      if (typeof GM_getValue === 'function') {
+        const existingHistory = GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_KEY, []);
+        if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
+          GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_KEY, existingHistory.slice(-batchHistoryLimit));
+        }
+      }
       GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, searchFilterInput.checked);
       GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
     }
@@ -1125,6 +1207,8 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
 
 function registerHdblogSettingsMenu(document, locationObject) {
   if (!isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== 'function') return;
+  const view = document?.defaultView;
+  if (view && view.top !== view) return;
   GM_registerMenuCommand('⚙️ hdblog 设置', () => openHdblogSettingsPanel(document));
 }
 
