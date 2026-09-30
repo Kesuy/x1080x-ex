@@ -496,8 +496,13 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   if (!document?.body) return null;
   closeX1080xSettingsPanel(document);
 
+  const host = document.createElement('div');
+  host.id = SETTINGS_PANEL_ID;
+  host.setAttribute('data-x1080x-settings-host', '1');
+  const root = typeof host.attachShadow === 'function'
+    ? host.attachShadow({ mode: 'open' })
+    : host;
   const overlay = document.createElement('div');
-  overlay.id = SETTINGS_PANEL_ID;
   Object.assign(overlay.style, {
     position: 'fixed', inset: '0', zIndex: '2147483646', display: 'flex',
     alignItems: 'center', justifyContent: 'center', padding: '20px',
@@ -701,7 +706,8 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   });
 
   overlay.append(panel);
-  document.body.append(overlay);
+  root.append(overlay);
+  document.body.append(host);
   return overlay;
 }
 
