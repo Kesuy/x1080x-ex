@@ -533,7 +533,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="batch-open-history" type="checkbox" style="margin-top:3px">
-        <span><strong>保存批量打开记录</strong><small style="display:block;margin-top:2px;color:#666">记录脚本批量打开过的主题，并在列表页以紫色标记；记录保存在 Tampermonkey 中，不依赖 Chrome 的 :visited。</small></span>
+        <span><strong>保存批量打开记录</strong><small style="display:block;margin-top:2px;color:#666">记录脚本批量打开过的主题并持久标记；手动访问过的链接也使用相同颜色显示。</small></span>
       </label>
       <div data-batch-open-history-row style="margin:0 0 13px 24px">
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -543,7 +543,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
           <span>条</span>
         </label>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <span style="font-weight:600">标记颜色</span>
+          <span style="font-weight:600">访问标记颜色</span>
           <input data-setting="batch-open-history-color" type="color" aria-label="批量打开记录标记颜色"
             style="width:44px;height:32px;padding:2px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer">
           <button type="button" data-action="reset-batch-open-history-color"
@@ -619,8 +619,8 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     const detailsDisabled = !batchInput.checked || !batchHistoryInput.checked;
     batchHistoryInput.disabled = !batchInput.checked;
     batchHistoryLimitInput.disabled = detailsDisabled;
-    batchHistoryColorInput.disabled = detailsDisabled;
-    batchHistoryColorResetButton.disabled = detailsDisabled;
+    batchHistoryColorInput.disabled = false;
+    batchHistoryColorResetButton.disabled = false;
   };
   const syncDownloadGuardField = () => {
     downloadGuardInput.disabled = !downloadInput.checked;
