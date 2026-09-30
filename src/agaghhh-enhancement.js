@@ -710,8 +710,17 @@ export function installX1080xSettingsMenu(
   locationObject = globalThis.location
 ) {
   if (!document || !isAgaghhhHost(locationObject)) return;
+  const view = document.defaultView;
+  if (view && view.top !== view) return;
   if (typeof GM_registerMenuCommand !== 'function') return;
-  GM_registerMenuCommand('⚙️ x1080x 设置', () => openX1080xSettingsPanel(document));
+  GM_registerMenuCommand('⚙️ x1080x 设置', () => {
+    try {
+      openX1080xSettingsPanel(document);
+    } catch (error) {
+      console.error('[x1080x-ex] failed to open agaghhh settings', error);
+      document.defaultView?.alert?.(`x1080x 设置打开失败：${error?.message || error}`);
+    }
+  });
 }
 
 export function installAgaghhhEnhancement(
