@@ -10,11 +10,15 @@ import {
   AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY,
   AGAGHHH_REAL_ACTRESS_ENABLED_KEY,
   installAgaghhhEnhancement,
+  installX1080xSettingsMenu,
   openX1080xSettingsPanel,
 } from '../src/agaghhh-enhancement.js';
 import {
   HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY,
   HDBLOG_BATCH_OPEN_ENABLED_KEY,
+  HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
+  HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY,
+  HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
   HDBLOG_SEARCH_FILTER_ENABLED_KEY,
   HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY,
   installHdblogArticleEnhancement,
@@ -116,8 +120,8 @@ test('batch-open history defaults off, enables its limit field, and saves the co
     assert.equal(limit.value, '5000');
     assert.equal(color.value, '#bd10e0');
     assert.equal(limit.disabled, true);
-    assert.equal(color.disabled, true);
-    assert.equal(resetColor.disabled, true);
+    assert.equal(color.disabled, false);
+    assert.equal(resetColor.disabled, false);
 
     enabled.click();
     assert.equal(limit.disabled, false);
@@ -139,6 +143,23 @@ test('batch-open history defaults off, enables its limit field, and saves the co
   });
 });
 
+test('x1080x settings menu callback opens the panel without throwing', () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
+  const oldRegister = globalThis.GM_registerMenuCommand;
+  const callbacks = new Map();
+  globalThis.GM_registerMenuCommand = (label, callback) => callbacks.set(label, callback);
+  try {
+    withGm(new Map(), () => installX1080xSettingsMenu(dom.window.document, dom.window.location));
+    const callback = callbacks.get('⚙️ x1080x 设置');
+    assert.equal(typeof callback, 'function');
+    assert.doesNotThrow(() => callback());
+    assert.ok(dom.window.document.getElementById('x1080x-ex-settings-panel'));
+  } finally {
+    if (oldRegister === undefined) delete globalThis.GM_registerMenuCommand;
+    else globalThis.GM_registerMenuCommand = oldRegister;
+  }
+});
+
 test('agaghhh cross-search remains available when download enhancement is off', () => {
   const dom = new JSDOM(`<!doctype html><body><div class="vwthd">
     <span id="thread_subject">SVMGM-050 Sample</span><button id="x1080x-ex-download">⬇</button>
@@ -158,10 +179,57 @@ test('hdblog settings exposes layout, cross-search, preview, batch-open and sear
   const dom = hdblogArticleDom();
   withGm(new Map(), () => {
     const panel = openHdblogSettingsPanel(dom.window.document);
-    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'batch-open', 'search-filter']) {
+    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'batch-open', 'batch-open-history', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });
+});
+
+test('hdblog batch-open history settings support limit, custom color and reset', () => {
+  const dom = hdblogArticleDom();
+  const values = new Map();
+  withGm(values, () => {
+    const panel = openHdblogSettingsPanel(dom.window.document);
+    const enabled = panel.querySelector('[data-setting="batch-open-history"]');
+    const limit = panel.querySelector('[data-setting="batch-open-history-limit"]');
+    const color = panel.querySelector('[data-setting="batch-open-history-color"]');
+    const resetColor = panel.querySelector('[data-action="reset-batch-open-history-color"]');
+    assert.equal(enabled.checked, false);
+    assert.equal(limit.value, '5000');
+    assert.equal(color.value, '#bd10e0');
+    assert.equal(limit.disabled, true);
+
+    enabled.click();
+    assert.equal(limit.disabled, false);
+    limit.value = '4321';
+    color.value = '#123456';
+    resetColor.click();
+    assert.equal(color.value, '#bd10e0');
+    color.value = '#abcdef';
+    panel.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+
+    assert.equal(values.get(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY), true);
+    assert.equal(values.get(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY), 4321);
+    assert.equal(values.get(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY), '#abcdef');
+  });
+});
+
+test('hdblog settings menu callback opens the panel without throwing', () => {
+  const dom = hdblogArticleDom();
+  const values = new Map();
+  const oldRegister = globalThis.GM_registerMenuCommand;
+  const callbacks = new Map();
+  globalThis.GM_registerMenuCommand = (label, callback) => callbacks.set(label, callback);
+  try {
+    withGm(values, () => installHdblogArticleEnhancement(dom.window.document, dom.window.location, () => {}));
+    const callback = callbacks.get('⚙️ hdblog 设置');
+    assert.equal(typeof callback, 'function');
+    assert.doesNotThrow(() => callback());
+    assert.ok(dom.window.document.getElementById('x1080x-ex-hdblog-settings-panel'));
+  } finally {
+    if (oldRegister === undefined) delete globalThis.GM_registerMenuCommand;
+    else globalThis.GM_registerMenuCommand = oldRegister;
+  }
 });
 
 test('hdblog cross-search and image-download buttons can be controlled independently', () => {
