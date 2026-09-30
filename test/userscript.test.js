@@ -61,6 +61,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
   const stored = new Map([
     ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
     ['x1080x-ex:agaghhh-batch-open-history-limit', 2],
+    ['x1080x-ex:agaghhh-batch-open-history-color', '#123456'],
     ['x1080x-ex:agaghhh-batch-open-history', ['tid:302']],
   ]);
   globalThis.GM_getValue = (key, fallback) => {
@@ -85,7 +86,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     );
     assert.match(
       dom.window.document.querySelector('#x1080x-ex-batch-open-history-style').textContent,
-      /#bd10e0/
+      /#123456/
     );
     button.click();
     await waitFor(() => opened.length === 3, 'all normal threads should open in order');
