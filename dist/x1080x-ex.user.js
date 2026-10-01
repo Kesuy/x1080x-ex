@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.9
+// @version      1.10.10
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -2277,6 +2277,46 @@ ${failures.join("\n")}
     applyHdblogSearchEnhancement(window);
   }
 
+  // src/hdblog-preview-variants.js
+  var FOUR_K_PREVIEW_TOKEN_PATTERN = /(?:^|[^a-z0-9])(?:4k(?:\d{2,3}fps)?|2160p|uhd)(?=$|[^a-z0-9])/i;
+  function searchablePreviewValue(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    try {
+      const url = new URL(raw, "https://example.invalid/");
+      return decodeURIComponent(url.pathname);
+    } catch {
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
+    }
+  }
+  function isFourKPreviewValue(value) {
+    return FOUR_K_PREVIEW_TOKEN_PATTERN.test(searchablePreviewValue(value));
+  }
+  function isFourKPreviewCandidate(candidate) {
+    if (typeof candidate === "string") return isFourKPreviewValue(candidate);
+    if (!candidate || typeof candidate !== "object") return false;
+    const values = [
+      candidate.href,
+      candidate.pixhostShowUrl,
+      candidate.directUrl,
+      candidate.thumbUrl,
+      ...Array.isArray(candidate.values) ? candidate.values : []
+    ];
+    return values.some(isFourKPreviewValue);
+  }
+  function partitionPreviewCandidates(candidates = []) {
+    const standard = [];
+    const fourK = [];
+    for (const candidate of candidates) {
+      (isFourKPreviewCandidate(candidate) ? fourK : standard).push(candidate);
+    }
+    return { standard, fourK };
+  }
+
   // src/hdblog-article.js
   var HDBLOG_ARTICLE_WIDTH_KEY = "x1080x-ex:hdblog-article-width";
   var HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY = "x1080x-ex:hdblog-article-layout-enabled";
@@ -2875,6 +2915,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       showStatus("\u65E0 Preview", "Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
       return;
     }
+    const { standard, fourK } = partitionPreviewCandidates(candidates);
+    const phases = standard.length ? [
+      { candidates: standard, label: "\u666E\u901A Preview", fallback: false },
+      ...fourK.length ? [{ candidates: fourK, label: "4K Preview", fallback: true }] : []
+    ] : [{ candidates: fourK, label: "4K Preview", fallback: false }];
     const endDownloadGuard = beginDownloadGuard(document2, {
       enabled: isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY)
     });
@@ -2882,51 +2927,80 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const failures = [];
     let skipped = 0;
     let downloaded = 0;
+    let usedFourKFallback = false;
     try {
-      button.textContent = "\u89E3\u6790 Preview\u2026";
-      const resolved = [];
-      const seen = /* @__PURE__ */ new Set();
-      for (const candidate of candidates) {
-        try {
-          const url = await resolveCandidateUrl(document2, candidate, gmRequest2);
-          if (!url) {
-            if (candidate.pixhostShowUrl) skipped += 1;
-            continue;
+      for (const [phaseIndex, phase] of phases.entries()) {
+        const hasFallbackPhase = phaseIndex < phases.length - 1;
+        button.textContent = phase.fallback ? "\u56DE\u9000\u89E3\u6790 4K Preview\u2026" : "\u89E3\u6790 Preview\u2026";
+        const phaseFailures = [];
+        let phaseSkipped = 0;
+        const resolved = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (const candidate of phase.candidates) {
+          try {
+            const url = await resolveCandidateUrl(document2, candidate, gmRequest2);
+            if (!url) {
+              if (candidate.pixhostShowUrl) phaseSkipped += 1;
+              continue;
+            }
+            if (!seen.has(url)) {
+              seen.add(url);
+              resolved.push({ url, candidate });
+            }
+          } catch (error) {
+            phaseFailures.push(error?.message || "Pixhost \u5927\u56FE\u5730\u5740\u89E3\u6790\u5931\u8D25");
           }
-          if (!seen.has(url)) {
-            seen.add(url);
-            resolved.push({ url, candidate });
-          }
-        } catch (error) {
-          failures.push(error?.message || "Pixhost \u5927\u56FE\u5730\u5740\u89E3\u6790\u5931\u8D25");
         }
+        if (!resolved.length) {
+          if (hasFallbackPhase) continue;
+          skipped += phaseSkipped;
+          failures.push(...phaseFailures);
+          break;
+        }
+        let phaseDownloaded = 0;
+        const downloadFailures = [];
+        let downloadSkipped = 0;
+        for (const [index, item] of resolved.entries()) {
+          const { url, candidate } = item;
+          button.textContent = phase.fallback ? `4K \u56DE\u9000\u4E0B\u8F7D ${index + 1}/${resolved.length}` : `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
+          try {
+            const blob = await requestImageBlob(url, locationObject?.href, gmRequest2);
+            const extension = extensionFromBlob(blob, url);
+            saveBlob2(
+              document2,
+              blob,
+              hdblogImageFilename(code, downloaded + phaseDownloaded, resolved.length, extension)
+            );
+            phaseDownloaded += 1;
+          } catch (error) {
+            const message = error?.message || "\u4E0B\u8F7D\u5931\u8D25";
+            const unavailable = Boolean(candidate?.pixhostShowUrl) && /HTTP\s+(?:404|410)\b/i.test(message);
+            if (unavailable) {
+              downloadSkipped += 1;
+              continue;
+            }
+            downloadFailures.push(`${index + 1}. ${message}`);
+          }
+        }
+        if (phaseDownloaded > 0) {
+          downloaded += phaseDownloaded;
+          skipped += phaseSkipped + downloadSkipped;
+          failures.push(...phaseFailures, ...downloadFailures);
+          usedFourKFallback = phase.fallback;
+          break;
+        }
+        if (hasFallbackPhase) continue;
+        skipped += phaseSkipped + downloadSkipped;
+        failures.push(...phaseFailures, ...downloadFailures);
+        break;
       }
-      if (!resolved.length) {
-        if (skipped && !failures.length) {
+      if (!downloaded && !failures.length) {
+        if (skipped) {
           showStatus("\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview", "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002");
           return;
         }
-        const detail = failures.length ? failures.join("\uFF1B") : "\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u4E0B\u8F7D\u7684 Pixhost Preview \u5927\u56FE\u3002";
-        showStatus("\u65E0\u53EF\u4E0B\u8F7D Preview", detail);
+        showStatus("\u65E0\u53EF\u4E0B\u8F7D Preview", "\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u4E0B\u8F7D\u7684 Pixhost Preview \u5927\u56FE\u3002");
         return;
-      }
-      for (const [index, item] of resolved.entries()) {
-        const { url, candidate } = item;
-        button.textContent = `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
-        try {
-          const blob = await requestImageBlob(url, locationObject?.href, gmRequest2);
-          const extension = extensionFromBlob(blob, url);
-          saveBlob2(document2, blob, hdblogImageFilename(code, downloaded, resolved.length, extension));
-          downloaded += 1;
-        } catch (error) {
-          const message = error?.message || "\u4E0B\u8F7D\u5931\u8D25";
-          const unavailable = Boolean(candidate?.pixhostShowUrl) && /HTTP\s+(?:404|410)\b/i.test(message);
-          if (unavailable) {
-            skipped += 1;
-            continue;
-          }
-          failures.push(`${index + 1}. ${message}`);
-        }
       }
     } catch (error) {
       failures.push(error?.message || "\u4E0B\u8F7D\u5931\u8D25");
@@ -2935,6 +3009,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         button.disabled = false;
         button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}\uFF09` : skipped ? downloaded ? `\u2713 \u5B8C\u6210\uFF08\u8DF3\u8FC7 ${skipped}\uFF09` : "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
         if (failures.length) button.title = failures.join("\uFF1B");
+        else if (usedFourKFallback) button.title = "\u666E\u901A Preview \u4E0D\u53EF\u7528\uFF0C\u5DF2\u81EA\u52A8\u56DE\u9000\u4E0B\u8F7D 4K Preview\u3002";
         else if (skipped) button.title = "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002";
         resetButton();
       }
@@ -4501,49 +4576,80 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest2) {
     const range = previewRange4(document2);
     if (!range) return [];
-    const urls = [];
-    const seen = /* @__PURE__ */ new Set();
     const handledImages = /* @__PURE__ */ new Set();
-    const add = (value) => {
-      const url = absoluteHttpUrl5(value, articleUrl);
-      if (!url) return;
-      const key = pixhostAssetIdentity(url, articleUrl) || url;
-      if (seen.has(key)) return;
-      seen.add(key);
-      urls.push(url);
-    };
+    const candidates = [];
     for (const anchor of [...range.content.querySelectorAll("a[href]")].filter((node) => inPreviewRange4(range, node))) {
-      let target = absoluteHttpUrl5(anchor.getAttribute("href"), document2.baseURI);
       const image = anchor.querySelector("img");
-      const thumbnail = previewThumbnailUrl2(document2, image);
-      if (isHdblogReferUrl(target, document2.baseURI)) {
-        target = await resolveHdblogReferTarget(document2, target, articleUrl, gmRequest2);
-      }
-      const pixhostShowTarget = target && isPixhostShowUrl(target, document2.baseURI);
-      if (pixhostShowTarget) {
-        target = await resolvePixhostShowUrl(document2, target, thumbnail, gmRequest2);
-        if (!target) {
-          if (image) handledImages.add(image);
-          continue;
-        }
-      }
-      if (target && (IMAGE_EXTENSION_PATTERN3.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
-        add(wordpressOriginalUrl2(target) || target);
-        if (image) handledImages.add(image);
-        continue;
-      }
-      if (image) {
-        const best = bestImageUrl(document2, image);
-        if (best) {
-          add(best);
-          handledImages.add(image);
-        }
-      }
+      if (image) handledImages.add(image);
+      candidates.push({
+        kind: "anchor",
+        anchor,
+        image,
+        href: absoluteHttpUrl5(anchor.getAttribute("href"), document2.baseURI),
+        thumbUrl: previewThumbnailUrl2(document2, image),
+        values: [
+          image?.getAttribute("src"),
+          image?.getAttribute("data-original"),
+          image?.getAttribute("data-lazy-src"),
+          image?.getAttribute("data-src")
+        ]
+      });
     }
     for (const image of [...range.content.querySelectorAll("img")].filter((node) => inPreviewRange4(range, node) && !handledImages.has(node))) {
-      add(bestImageUrl(document2, image));
+      candidates.push({
+        kind: "image",
+        image,
+        directUrl: bestImageUrl(document2, image),
+        values: [
+          image.currentSrc,
+          image.getAttribute("src"),
+          image.getAttribute("data-original"),
+          image.getAttribute("data-lazy-src"),
+          image.getAttribute("data-src")
+        ]
+      });
     }
-    return urls;
+    const resolveCandidates = async (items) => {
+      const urls = [];
+      const seen = /* @__PURE__ */ new Set();
+      const add = (value) => {
+        const url = absoluteHttpUrl5(value, articleUrl);
+        if (!url) return;
+        const key = pixhostAssetIdentity(url, articleUrl) || url;
+        if (seen.has(key)) return;
+        seen.add(key);
+        urls.push(url);
+      };
+      for (const candidate of items) {
+        if (candidate.kind === "image") {
+          add(candidate.directUrl || bestImageUrl(document2, candidate.image));
+          continue;
+        }
+        let target = candidate.href;
+        const image = candidate.image;
+        const thumbnail = candidate.thumbUrl;
+        if (isHdblogReferUrl(target, document2.baseURI)) {
+          target = await resolveHdblogReferTarget(document2, target, articleUrl, gmRequest2);
+        }
+        const pixhostShowTarget = target && isPixhostShowUrl(target, document2.baseURI);
+        if (pixhostShowTarget) {
+          target = await resolvePixhostShowUrl(document2, target, thumbnail, gmRequest2);
+          if (!target) continue;
+        }
+        if (target && (IMAGE_EXTENSION_PATTERN3.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
+          add(wordpressOriginalUrl2(target) || target);
+          continue;
+        }
+        if (image) add(bestImageUrl(document2, image));
+      }
+      return urls;
+    };
+    const { standard, fourK } = partitionPreviewCandidates(candidates);
+    if (standard.length) {
+      const standardUrls = await resolveCandidates(standard);
+      if (standardUrls.length) return standardUrls;
+    }
+    return fourK.length ? resolveCandidates(fourK) : [];
   }
   function hdblogSearchCodeForThreadCode(code) {
     const normalized = String(code || "").trim().toUpperCase();
