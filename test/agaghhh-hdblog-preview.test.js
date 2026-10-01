@@ -107,6 +107,153 @@ test('fetches hdblog Preview images including refer -> Pixhost resolution', asyn
   ]);
 });
 
+test('EBWH-365 prefers the normal 6M Preview over the 4K60fps variant for agaghhh display and downloads', async () => {
+  const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
+  const requested = [];
+  const normalShow = 'https://pixhost.to/show/5614/768440896_ebwh-365_6m-mp4.jpg';
+  const fourKShow = 'https://pixhost.to/show/6003/775026998_ebwh-365_4k60fps-mp4.jpg';
+  const normalImage = 'https://img4.pixhost.to/images/5614/768440896_ebwh-365_6m-mp4.jpg';
+
+  const gmRequest = (options) => {
+    requested.push(options.url);
+    if (options.url === 'https://hdblog.me/?s=EBWH-365') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<!doctype html><html><body><main id="genesis-content">
+          <article class="entry"><h2 class="entry-title">
+            <a href="https://hdblog.me/988344/ebwh-365/">[4K] EBWH-365 sample</a>
+          </h2></article>
+        </main></body></html>`,
+      });
+      return;
+    }
+    if (options.url === 'https://hdblog.me/988344/ebwh-365/') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<!doctype html><html><body><main id="genesis-content"><article class="entry"><div class="entry-content">
+          <p>Preview:<br>
+            <a href="${fourKShow}"><img src="data:image/jpeg;base64,AAAA" alt="ebwh-365_4k60fps-mp4.jpg"></a>
+            <a href="${normalShow}"><img src="data:image/jpeg;base64,BBBB" alt="ebwh-365_6m-mp4.jpg"></a>
+          </p>
+          <p>Filed Under:</p>
+        </div></article></main></body></html>`,
+      });
+      return;
+    }
+    if (options.url === normalShow) {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<!doctype html><body><img class="image-img" src="${normalImage}"></body>`,
+      });
+      return;
+    }
+    if (options.url === fourKShow) {
+      throw new Error('4K Preview must not be requested while the normal Preview is available');
+    }
+    throw new Error(`unexpected request: ${options.url}`);
+  };
+
+  const result = await withGmGetValue(() => (
+    fetchHdblogPreviewForCode('EBWH-365', gmRequest, browser.window.document)
+  ));
+
+  assert.deepEqual(result.imageUrls, [normalImage]);
+  assert.deepEqual(requested, [
+    'https://hdblog.me/?s=EBWH-365',
+    'https://hdblog.me/988344/ebwh-365/',
+    normalShow,
+  ]);
+
+  const forum = new JSDOM(`<!doctype html><html><head><title>EBWH-365 Sample</title></head><body>
+    <h1 id="thread_subject">EBWH-365 Sample</h1>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f">
+      <img src="https://agaghhh.cc/ebwh-365-cover.jpg" width="800" height="1200">
+    </div></div></div>
+  </body></html>`, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1063650' });
+
+  const section = renderAgaghhhHdblogPreview(forum.window.document, result);
+  assert.ok(section);
+  assert.deepEqual(
+    [...section.querySelectorAll('img')].map((image) => image.getAttribute('src')),
+    [normalImage]
+  );
+  assert.deepEqual(
+    buildDownloadJobs(forum.window.document).filter((job) => job.kind === 'image').map((job) => job.url),
+    ['https://agaghhh.cc/ebwh-365-cover.jpg', normalImage]
+  );
+
+  browser.window.close();
+  forum.window.close();
+});
+
+test('agaghhh falls back to the 4K Preview only when every normal Preview is unavailable', async () => {
+  const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
+  const requested = [];
+  const normalShow = 'https://pixhost.to/show/5615/fall-365_6m-mp4.jpg';
+  const fourKShow = 'https://pixhost.to/show/6004/fall-365_4k60fps-mp4.jpg';
+  const fourKImage = 'https://img4.pixhost.to/images/6004/fall-365_4k60fps-mp4.jpg';
+
+  const gmRequest = (options) => {
+    requested.push(options.url);
+    if (options.url === 'https://hdblog.me/?s=FALL-365') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://hdblog.me/999365/fall-365/">FALL-365</a></h2></article></main>',
+      });
+      return;
+    }
+    if (options.url === 'https://hdblog.me/999365/fall-365/') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<main id="genesis-content"><article class="entry"><div class="entry-content">
+          <p>Preview:<br>
+            <a href="${fourKShow}"><img src="https://t4.pixhost.to/thumbs/6004/fall-365_4k60fps-mp4.jpg"></a>
+            <a href="${normalShow}"><img src="https://t5.pixhost.to/thumbs/5615/fall-365_6m-mp4.jpg"></a>
+          </p>
+          <p>Filed Under:</p>
+        </div></article></main>`,
+      });
+      return;
+    }
+    if (options.url === normalShow) {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: '<html><head><title>Picture removed</title></head><body><strong>Picture removed</strong></body></html>',
+      });
+      return;
+    }
+    if (options.url === fourKShow) {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<html><body><img class="image-img" src="${fourKImage}"></body></html>`,
+      });
+      return;
+    }
+    throw new Error(`unexpected request: ${options.url}`);
+  };
+
+  const result = await withGmGetValue(() => (
+    fetchHdblogPreviewForCode('FALL-365', gmRequest, browser.window.document)
+  ));
+
+  assert.deepEqual(result.imageUrls, [fourKImage]);
+  assert.deepEqual(requested, [
+    'https://hdblog.me/?s=FALL-365',
+    'https://hdblog.me/999365/fall-365/',
+    normalShow,
+    fourKShow,
+  ]);
+
+  browser.window.close();
+});
+
 test('EBWH-319 removed Pixhost Preview is not injected or added to forum downloads', async () => {
   const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   const requested = [];

@@ -8,7 +8,7 @@
 - **下载保护**：下载进行中在浏览器标签标题显示“⬇ 下载中”，关闭标签页时弹出浏览器确认提示，完成后自动恢复。
 - **自动命名**：自动识别番号、清理标题并处理 Windows 非法字符，支持 FC2、1PON、CARIB 等规则。
 - **Preview 大图**：agaghhh 按番号从 hdblog 获取 Preview；hdblog 无结果时可使用 FANZA / MGStage 官方后备源。
-- **Pixhost 解析**：自动解析 Preview 原图，并对 `pixhost.to` / `pixhost.cc` 等同一资源进行去重。
+- **Pixhost 解析**：自动解析 Preview 原图，并对 `pixhost.to` / `pixhost.cc` 等同一资源进行去重；同一文章同时有普通版和 4K Preview 时优先普通版，仅在普通版不可用时回退 4K。
 - **跨站搜索**：agaghhh 与 hdblog 标题旁提供 `🔍`，可按番号直接搜索另一站。
 - **复制番号**：agaghhh 与 hdblog 标题旁提供 `📋`，一键把当前番号复制到剪切板。
 - **真实演员查询**：主楼演员信息为空时，可通过 av-wiki 查询并补充到下载文件名。
