@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.8
+// @version      1.10.9
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -14,6 +14,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_setClipboard
 // @grant        GM_registerMenuCommand
 // @grant        GM_openInTab
 // @run-at       document-idle
@@ -2036,7 +2037,7 @@ ${failures.join("\n")}
       float: "right",
       position: "relative",
       zIndex: "20",
-      margin: "0 8px 6px 12px",
+      margin: "0 8px 6px 6px",
       padding: "7px 13px",
       border: "1px solid #2878c8",
       borderRadius: "5px",
@@ -2118,6 +2119,61 @@ ${failures.join("\n")}
     if (isBatchOpenPage()) {
       applyBatchOpenHistory(document);
       if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
+    }
+  }
+
+  // src/clipboard.js
+  async function copyTextToClipboard(document2, value, gmSetClipboard = globalThis.GM_setClipboard) {
+    const text = String(value ?? "").trim();
+    if (!text) throw new Error("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
+    if (typeof gmSetClipboard === "function") {
+      await Promise.resolve(gmSetClipboard(text, "text"));
+      return text;
+    }
+    const clipboard = document2?.defaultView?.navigator?.clipboard;
+    if (clipboard?.writeText) {
+      await clipboard.writeText(text);
+      return text;
+    }
+    if (!document2?.body) throw new Error("\u5F53\u524D\u9875\u9762\u65E0\u6CD5\u8BBF\u95EE\u526A\u5207\u677F\u3002");
+    const textarea = document2.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    Object.assign(textarea.style, {
+      position: "fixed",
+      left: "-9999px",
+      top: "0",
+      opacity: "0"
+    });
+    document2.body.append(textarea);
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    const copied = typeof document2.execCommand === "function" && document2.execCommand("copy");
+    textarea.remove();
+    if (!copied) throw new Error("\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u81EA\u52A8\u590D\u5236\uFF0C\u8BF7\u624B\u52A8\u590D\u5236\u3002");
+    return text;
+  }
+  async function copyCodeWithButtonFeedback(button, document2, code) {
+    if (!button) return false;
+    const originalText = button.textContent || "\u{1F4CB}";
+    const originalTitle = button.title || "\u590D\u5236\u756A\u53F7\u5230\u526A\u5207\u677F";
+    button.disabled = true;
+    try {
+      const copied = await copyTextToClipboard(document2, code);
+      button.textContent = "\u2713";
+      button.title = `\u5DF2\u590D\u5236\uFF1A${copied}`;
+      return true;
+    } catch (error) {
+      button.textContent = "!";
+      button.title = error?.message || "\u590D\u5236\u756A\u53F7\u5931\u8D25";
+      document2?.defaultView?.alert?.(`\u590D\u5236\u756A\u53F7\u5931\u8D25\uFF1A${error?.message || error}`);
+      return false;
+    } finally {
+      document2?.defaultView?.setTimeout?.(() => {
+        button.disabled = false;
+        button.textContent = originalText;
+        button.title = originalTitle;
+      }, 1200);
     }
   }
 
@@ -2227,6 +2283,7 @@ ${failures.join("\n")}
   var HDBLOG_SHOW_DOWNLOAD_AREA_KEY = "x1080x-ex:hdblog-show-download-area";
   var HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY = "x1080x-ex:hdblog-show-image-download-button";
   var HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY = "x1080x-ex:hdblog-show-cross-search-button";
+  var HDBLOG_SHOW_COPY_CODE_BUTTON_KEY = "x1080x-ex:hdblog-show-copy-code-button";
   var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2 = "x1080x-ex:hdblog-expand-preview-images";
   var HDBLOG_BLOCKED_KEYWORDS_KEY = "x1080x-ex:hdblog-blocked-keywords";
   var HDBLOG_SEARCH_FILTER_ENABLED_KEY2 = "x1080x-ex:hdblog-search-filter-enabled";
@@ -2253,6 +2310,7 @@ ${failures.join("\n")}
   var LAYOUT_STYLE_ID = "x1080x-ex-hdblog-article-layout";
   var DOWNLOAD_BUTTON_ID = "x1080x-ex-hdblog-image-download";
   var SEARCH_BUTTON_ID = "x1080x-ex-hdblog-agaghhh-search";
+  var COPY_BUTTON_ID = "x1080x-ex-hdblog-copy-code";
   var ARTICLE_BODY_CLASS = "x1080x-hdblog-single";
   var REQUEST_TIMEOUT3 = 6e4;
   var PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
@@ -2898,7 +2956,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       display: "inline-flex",
       alignItems: "center",
       verticalAlign: "middle",
-      margin: "0 0 4px 12px",
+      margin: "0 0 4px 8px",
       padding: "5px 8px",
       minWidth: "34px",
       justifyContent: "center",
@@ -2967,7 +3025,51 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       }
       openSearchTab(document2, url);
     });
-    title.append(" ", searchButton);
+    title.append(searchButton);
+  }
+  function installCopyCodeButton(document2) {
+    if (document2.getElementById(COPY_BUTTON_ID)) return;
+    const code = extractHdblogArticleCode(document2);
+    if (!code) return;
+    const title = articleTitleElement(document2);
+    if (!title) return;
+    const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID);
+    const searchButton = document2.getElementById(SEARCH_BUTTON_ID);
+    const button = document2.createElement("button");
+    button.id = COPY_BUTTON_ID;
+    button.type = "button";
+    button.textContent = "\u{1F4CB}";
+    button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
+    button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      justifyContent: "center",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      if (!button.disabled) button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      if (!button.disabled) button.style.background = "#398bd4";
+    });
+    button.addEventListener("click", () => {
+      void copyCodeWithButtonFeedback(button, document2, extractHdblogArticleCode(document2));
+    });
+    if (downloadButton) downloadButton.insertAdjacentElement("afterend", button);
+    else if (searchButton) searchButton.insertAdjacentElement("beforebegin", button);
+    else title.append(button);
   }
   function rawStoredWidth() {
     if (typeof GM_getValue !== "function") return "";
@@ -2995,6 +3097,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function isHdblogCrossSearchEnabled() {
     if (typeof GM_getValue !== "function") return true;
     return GM_getValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, true) !== false;
+  }
+  function isHdblogCopyCodeEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, true) !== false;
   }
   function isHdblogSearchFilterEnabled() {
     if (typeof GM_getValue !== "function") return true;
@@ -3130,6 +3236,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <input data-setting="cross-search" type="checkbox">
         \u663E\u793A\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF0C\u641C\u7D22 agaghhh.cc\uFF09
       </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="copy-code" type="checkbox">
+        \u663E\u793A\u590D\u5236\u756A\u53F7\u6309\u94AE\uFF08\u{1F4CB}\uFF09
+      </label>
       <label style="display:flex;align-items:center;gap:9px">
         <input data-setting="expand-preview" type="checkbox">
         \u81EA\u52A8\u5C55\u5F00 Preview \u5927\u56FE\uFF08\u542B Pixhost / refer \u89E3\u6790\uFF09
@@ -3194,6 +3304,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
     const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
+    const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
     const previewInput = panel.querySelector('[data-setting="expand-preview"]');
     const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
     const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
@@ -3211,6 +3322,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     imageDownloadInput.checked = readImageDownloadButtonVisible();
     downloadGuardInput.checked = isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY);
     crossSearchInput.checked = isHdblogCrossSearchEnabled();
+    copyCodeInput.checked = isHdblogCopyCodeEnabled();
     previewInput.checked = isHdblogPreviewExpansionEnabled();
     batchOpenInput.checked = isHdblogBatchOpenEnabled();
     const batchInterval = getHdblogBatchOpenInterval();
@@ -3285,6 +3397,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
         GM_setValue(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
         GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
+        GM_setValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, copyCodeInput.checked);
         GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, previewInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, batchOpenInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2, batchIntervalMinMs);
@@ -3330,6 +3443,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     else document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
     if (isHdblogCrossSearchEnabled()) installAgaghhhSearchButton(document2);
     else document2.getElementById(SEARCH_BUTTON_ID)?.remove();
+    if (isHdblogCopyCodeEnabled()) installCopyCodeButton(document2);
+    else document2.getElementById(COPY_BUTTON_ID)?.remove();
   }
 
   // src/hdblog-preview.js
@@ -4561,6 +4676,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS = 3500;
   var AGAGHHH_DOWNLOAD_ENABLED_KEY = "x1080x-ex:agaghhh-download-enabled";
   var AGAGHHH_CROSS_SEARCH_ENABLED_KEY = "x1080x-ex:agaghhh-cross-search-enabled";
+  var AGAGHHH_COPY_CODE_ENABLED_KEY = "x1080x-ex:agaghhh-copy-code-enabled";
   var AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:agaghhh-search-auto-redirect-enabled";
   var AGAGHHH_REAL_ACTRESS_ENABLED_KEY = "x1080x-ex:agaghhh-real-actress-enabled";
   var AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = "x1080x-ex:agaghhh-hdblog-preview-enabled";
@@ -4568,6 +4684,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var SETTINGS_PANEL_ID = "x1080x-ex-settings-panel";
   var DOWNLOAD_BUTTON_ID2 = "x1080x-ex-download";
   var SEARCH_BUTTON_ID2 = "x1080x-ex-agaghhh-hdblog-search";
+  var COPY_BUTTON_ID2 = "x1080x-ex-agaghhh-copy-code";
   var BATCH_BUTTON_ID2 = "x1080x-ex-open-page";
   var BATCH_TOOLBAR_ID2 = "x1080x-ex-open-page-toolbar";
   var AV_WIKI_ORIGIN2 = "https://av-wiki.net";
@@ -4641,6 +4758,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function isAgaghhhCrossSearchEnabled() {
     return readBooleanSetting(AGAGHHH_CROSS_SEARCH_ENABLED_KEY);
+  }
+  function isAgaghhhCopyCodeEnabled() {
+    return readBooleanSetting(AGAGHHH_COPY_CODE_ENABLED_KEY);
   }
   function isAgaghhhSearchAutoRedirectEnabled() {
     return readBooleanSetting(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY);
@@ -4885,7 +5005,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       float: "right",
       position: "relative",
       zIndex: "20",
-      margin: "0 0 6px 4px",
+      margin: "0 0 6px 6px",
       padding: "7px 10px",
       minWidth: "38px",
       border: "1px solid #2878c8",
@@ -4911,6 +5031,49 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       openSearchTab2(document2, url);
     });
     if (downloadButton) downloadButton.insertAdjacentElement("afterend", button);
+    else host.prepend(button);
+  }
+  function installCopyCodeButton2(document2) {
+    if (document2.getElementById(COPY_BUTTON_ID2)) return;
+    const code = threadCode2(document2);
+    if (!code) return;
+    const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID2);
+    const searchButton = document2.getElementById(SEARCH_BUTTON_ID2);
+    const title = threadTitleElement(document2);
+    const host = downloadButton?.parentElement || searchButton?.parentElement || title?.closest(".vwthd, .ts") || title?.parentElement;
+    if (!host) return;
+    const button = document2.createElement("button");
+    button.id = COPY_BUTTON_ID2;
+    button.type = "button";
+    button.textContent = "\u{1F4CB}";
+    button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
+    button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
+    Object.assign(button.style, {
+      float: "right",
+      position: "relative",
+      zIndex: "20",
+      margin: "0 0 6px 6px",
+      padding: "7px 10px",
+      minWidth: "38px",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "14px",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      if (!button.disabled) button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      if (!button.disabled) button.style.background = "#398bd4";
+    });
+    button.addEventListener("click", () => {
+      void copyCodeWithButtonFeedback(button, document2, threadCode2(document2));
+    });
+    if (downloadButton) downloadButton.insertAdjacentElement("afterend", button);
+    else if (searchButton) searchButton.insertAdjacentElement("afterend", button);
     else host.prepend(button);
   }
   function bindRealActressDownload(document2, gmRequest2) {
@@ -5036,9 +5199,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
         <span><strong>\u4E0B\u8F7D\u65F6\u4FDD\u62A4\u6807\u7B7E\u9875</strong><small style="display:block;margin-top:2px;color:#666">\u4E0B\u8F7D\u4E2D\u5728\u6807\u7B7E\u6807\u9898\u663E\u793A\u201C\u2B07 \u4E0B\u8F7D\u4E2D\u201D\uFF0C\u5173\u95ED\u6807\u7B7E\u9875\u65F6\u7531\u6D4F\u89C8\u5668\u5F39\u51FA\u786E\u8BA4\u63D0\u793A\u3002</small></span>
       </label>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="cross-search" type="checkbox" style="margin-top:3px">
         <span><strong>\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u6807\u9898\u65C1\u663E\u793A\u641C\u7D22\u6309\u94AE\uFF0C\u8BC6\u522B\u756A\u53F7\u540E\u76F4\u63A5\u6253\u5F00 hdblog \u641C\u7D22\uFF1B\u53EF\u72EC\u7ACB\u4E8E\u4E0B\u8F7D\u589E\u5F3A\u4F7F\u7528\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
+        <span><strong>\u590D\u5236\u756A\u53F7\u6309\u94AE\uFF08\u{1F4CB}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u641C\u7D22\u4E0E\u4E0B\u8F7D\u6309\u94AE\u4E4B\u95F4\u663E\u793A\u590D\u5236\u6309\u94AE\uFF0C\u4E00\u952E\u590D\u5236\u5F53\u524D\u5E16\u5B50\u756A\u53F7\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
@@ -5068,6 +5235,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const downloadInput = panel.querySelector('[data-setting="download"]');
     const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
+    const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
     const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
     const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
     const actressInput = panel.querySelector('[data-setting="real-actress"]');
@@ -5081,6 +5249,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     downloadInput.checked = isAgaghhhDownloadEnabled();
     downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
     crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
+    copyCodeInput.checked = isAgaghhhCopyCodeEnabled();
     searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
     previewInput.checked = isAgaghhhHdblogPreviewEnabled();
     actressInput.checked = isAgaghhhRealActressEnabled();
@@ -5155,6 +5324,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
         GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
         GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
+        GM_setValue(AGAGHHH_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
         GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
         GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
         GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
@@ -5196,6 +5366,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (!downloadEnabled) document2.getElementById(DOWNLOAD_BUTTON_ID2)?.remove();
     if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document2);
     else document2.getElementById(SEARCH_BUTTON_ID2)?.remove();
+    if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton2(document2);
+    else document2.getElementById(COPY_BUTTON_ID2)?.remove();
     if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
   }
 
