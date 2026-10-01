@@ -68,6 +68,8 @@ test('agaghhh inserts copy-code button between search and download and copies th
     assert.equal(download.nextElementSibling, copy);
     assert.equal(copy.nextElementSibling, search);
     assert.equal(copy.textContent, '📋');
+    assert.equal(search.style.margin, '0px 0px 6px 6px');
+    assert.equal(copy.style.margin, '0px 0px 6px 6px');
 
     copy.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -109,6 +111,9 @@ test('hdblog inserts copy-code button between download and search and copies the
     assert.ok(search);
     assert.equal(download.nextElementSibling, copy);
     assert.equal(copy.nextElementSibling, search);
+    assert.equal(download.style.margin, '0px 0px 4px 8px');
+    assert.equal(copy.style.margin, '0px 0px 4px 8px');
+    assert.equal(search.style.margin, '0px 0px 4px 8px');
 
     copy.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
