@@ -1,5 +1,6 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
+import { partitionPreviewCandidates } from './hdblog-preview-variants.js';
 import {
   HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY,
   beginDownloadGuard,
@@ -683,6 +684,14 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
     return;
   }
 
+  const { standard, fourK } = partitionPreviewCandidates(candidates);
+  const phases = standard.length
+    ? [
+        { candidates: standard, label: '普通 Preview', fallback: false },
+        ...(fourK.length ? [{ candidates: fourK, label: '4K Preview', fallback: true }] : []),
+      ]
+    : [{ candidates: fourK, label: '4K Preview', fallback: false }];
+
   const endDownloadGuard = beginDownloadGuard(document, {
     enabled: isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY),
   });
@@ -690,56 +699,93 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
   const failures = [];
   let skipped = 0;
   let downloaded = 0;
+  let usedFourKFallback = false;
+
   try {
-    button.textContent = '解析 Preview…';
-    const resolved = [];
-    const seen = new Set();
-    for (const candidate of candidates) {
-      try {
-        const url = await resolveCandidateUrl(document, candidate, gmRequest);
-        if (!url) {
-          if (candidate.pixhostShowUrl) skipped += 1;
-          continue;
+    for (const [phaseIndex, phase] of phases.entries()) {
+      const hasFallbackPhase = phaseIndex < phases.length - 1;
+      button.textContent = phase.fallback ? '回退解析 4K Preview…' : '解析 Preview…';
+
+      const phaseFailures = [];
+      let phaseSkipped = 0;
+      const resolved = [];
+      const seen = new Set();
+
+      for (const candidate of phase.candidates) {
+        try {
+          const url = await resolveCandidateUrl(document, candidate, gmRequest);
+          if (!url) {
+            if (candidate.pixhostShowUrl) phaseSkipped += 1;
+            continue;
+          }
+          if (!seen.has(url)) {
+            seen.add(url);
+            resolved.push({ url, candidate });
+          }
+        } catch (error) {
+          phaseFailures.push(error?.message || 'Pixhost 大图地址解析失败');
         }
-        if (!seen.has(url)) {
-          seen.add(url);
-          resolved.push({ url, candidate });
-        }
-      } catch (error) {
-        failures.push(error?.message || 'Pixhost 大图地址解析失败');
       }
+
+      if (!resolved.length) {
+        if (hasFallbackPhase) continue;
+        skipped += phaseSkipped;
+        failures.push(...phaseFailures);
+        break;
+      }
+
+      let phaseDownloaded = 0;
+      const downloadFailures = [];
+      let downloadSkipped = 0;
+
+      for (const [index, item] of resolved.entries()) {
+        const { url, candidate } = item;
+        button.textContent = phase.fallback
+          ? `4K 回退下载 ${index + 1}/${resolved.length}`
+          : `下载 ${index + 1}/${resolved.length}`;
+        try {
+          const blob = await requestImageBlob(url, locationObject?.href, gmRequest);
+          const extension = extensionFromBlob(blob, url);
+          saveBlob(
+            document,
+            blob,
+            hdblogImageFilename(code, downloaded + phaseDownloaded, resolved.length, extension)
+          );
+          phaseDownloaded += 1;
+        } catch (error) {
+          const message = error?.message || '下载失败';
+          const unavailable = Boolean(candidate?.pixhostShowUrl)
+            && /HTTP\s+(?:404|410)\b/i.test(message);
+          if (unavailable) {
+            downloadSkipped += 1;
+            continue;
+          }
+          downloadFailures.push(`${index + 1}. ${message}`);
+        }
+      }
+
+      if (phaseDownloaded > 0) {
+        downloaded += phaseDownloaded;
+        skipped += phaseSkipped + downloadSkipped;
+        failures.push(...phaseFailures, ...downloadFailures);
+        usedFourKFallback = phase.fallback;
+        break;
+      }
+
+      if (hasFallbackPhase) continue;
+
+      skipped += phaseSkipped + downloadSkipped;
+      failures.push(...phaseFailures, ...downloadFailures);
+      break;
     }
 
-    if (!resolved.length) {
-      if (skipped && !failures.length) {
+    if (!downloaded && !failures.length) {
+      if (skipped) {
         showStatus('已跳过失效 Preview', 'Pixhost Preview 已失效，未下载占位图。');
         return;
       }
-      const detail = failures.length
-        ? failures.join('；')
-        : '没有解析到可下载的 Pixhost Preview 大图。';
-      showStatus('无可下载 Preview', detail);
+      showStatus('无可下载 Preview', '没有解析到可下载的 Pixhost Preview 大图。');
       return;
-    }
-
-    for (const [index, item] of resolved.entries()) {
-      const { url, candidate } = item;
-      button.textContent = `下载 ${index + 1}/${resolved.length}`;
-      try {
-        const blob = await requestImageBlob(url, locationObject?.href, gmRequest);
-        const extension = extensionFromBlob(blob, url);
-        saveBlob(document, blob, hdblogImageFilename(code, downloaded, resolved.length, extension));
-        downloaded += 1;
-      } catch (error) {
-        const message = error?.message || '下载失败';
-        const unavailable = Boolean(candidate?.pixhostShowUrl)
-          && /HTTP\s+(?:404|410)\b/i.test(message);
-        if (unavailable) {
-          skipped += 1;
-          continue;
-        }
-        failures.push(`${index + 1}. ${message}`);
-      }
     }
   } catch (error) {
     failures.push(error?.message || '下载失败');
@@ -752,6 +798,7 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
           ? (downloaded ? `✓ 完成（跳过 ${skipped}）` : '已跳过失效 Preview')
           : '✓ 下载完成';
       if (failures.length) button.title = failures.join('；');
+      else if (usedFourKFallback) button.title = '普通 Preview 不可用，已自动回退下载 4K Preview。';
       else if (skipped) button.title = 'Pixhost Preview 已失效，未下载占位图。';
       resetButton();
     }
