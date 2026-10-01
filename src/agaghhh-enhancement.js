@@ -426,7 +426,7 @@ function installHdblogSearchButton(document) {
   button.title = '按当前番号在 hdblog 搜索';
   button.setAttribute('aria-label', '在 hdblog 搜索当前番号');
   Object.assign(button.style, {
-    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 4px',
+    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
     padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
     borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
     fontSize: '14px', lineHeight: '20px',
@@ -465,7 +465,7 @@ function installCopyCodeButton(document) {
   button.title = '复制当前番号到剪切板';
   button.setAttribute('aria-label', '复制当前番号到剪切板');
   Object.assign(button.style, {
-    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 4px',
+    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
     padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
     borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
     fontSize: '14px', lineHeight: '20px',
