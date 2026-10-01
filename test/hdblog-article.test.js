@@ -209,6 +209,79 @@ test('Pixhost Preview 大图返回 404 时按失效图跳过，不显示失败�
   dom.window.close();
 });
 
+test('hdblog download prefers standard Preview and falls back to 4K only when the standard image cannot be downloaded', async () => {
+  const dom = articleDom({
+    title: 'FALL-001 sample',
+    url: 'https://hdblog.me/999001/fall-001/',
+    content: `
+      <p>Preview:</p>
+      <p>
+        <a href="https://pixhost.to/show/6003/fall-001_4k60fps-mp4.jpg">
+          <img src="https://t3.pixhost.to/thumbs/6003/fall-001_4k60fps-mp4.jpg">
+        </a>
+        <a href="https://pixhost.to/show/5614/fall-001_6m-mp4.jpg">
+          <img src="https://t4.pixhost.to/thumbs/5614/fall-001_6m-mp4.jpg">
+        </a>
+      </p>
+      <p>Filed Under:</p>
+    `,
+  });
+
+  const requests = [];
+  const gmRequest = (details) => {
+    requests.push({ url: details.url, responseType: details.responseType });
+    if (details.url === 'https://pixhost.to/show/5614/fall-001_6m-mp4.jpg') {
+      queueMicrotask(() => details.onload({
+        status: 200,
+        finalUrl: details.url,
+        responseText: '<html><body><img class="image-img" src="https://img4.pixhost.to/images/5614/fall-001_6m-mp4.jpg"></body></html>',
+      }));
+      return;
+    }
+    if (details.url === 'https://img4.pixhost.to/images/5614/fall-001_6m-mp4.jpg') {
+      queueMicrotask(() => details.onload({
+        status: 404,
+        finalUrl: details.url,
+        response: null,
+      }));
+      return;
+    }
+    if (details.url === 'https://pixhost.to/show/6003/fall-001_4k60fps-mp4.jpg') {
+      queueMicrotask(() => details.onload({
+        status: 200,
+        finalUrl: details.url,
+        responseText: '<html><body><img class="image-img" src="https://img3.pixhost.to/images/6003/fall-001_4k60fps-mp4.jpg"></body></html>',
+      }));
+      return;
+    }
+    if (details.url === 'https://img3.pixhost.to/images/6003/fall-001_4k60fps-mp4.jpg') {
+      queueMicrotask(() => details.onload({
+        status: 404,
+        finalUrl: details.url,
+        response: null,
+      }));
+      return;
+    }
+    throw new Error(`unexpected request: ${details.url}`);
+  };
+
+  installHdblogArticleEnhancement(dom.window.document, dom.window.location, gmRequest);
+  const button = dom.window.document.querySelector('#x1080x-ex-hdblog-image-download');
+  button.click();
+  for (let index = 0; index < 8; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  assert.deepEqual(requests.map((request) => request.url), [
+    'https://pixhost.to/show/5614/fall-001_6m-mp4.jpg',
+    'https://img4.pixhost.to/images/5614/fall-001_6m-mp4.jpg',
+    'https://pixhost.to/show/6003/fall-001_4k60fps-mp4.jpg',
+    'https://img3.pixhost.to/images/6003/fall-001_4k60fps-mp4.jpg',
+  ]);
+  assert.equal(button.textContent, '已跳过失效 Preview');
+  dom.window.close();
+});
+
 test('custom article width is bounded, and clearing it restores the site default layout', () => {
   assert.equal(normalizeHdblogArticleWidth('', null), null);
   assert.equal(normalizeHdblogArticleWidth('   ', null), null);
