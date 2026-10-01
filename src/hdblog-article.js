@@ -777,7 +777,7 @@ function installDownloadButton(document, locationObject, gmRequest) {
     display: 'inline-flex',
     alignItems: 'center',
     verticalAlign: 'middle',
-    margin: '0 0 4px 12px',
+    margin: '0 0 4px 8px',
     padding: '5px 8px',
     minWidth: '34px',
     justifyContent: 'center',
@@ -830,7 +830,7 @@ function installAgaghhhSearchButton(document) {
     }
     openSearchTab(document, url);
   });
-  title.append(' ', searchButton);
+  title.append(searchButton);
 }
 
 function installCopyCodeButton(document) {
@@ -867,7 +867,7 @@ function installCopyCodeButton(document) {
 
   if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
   else if (searchButton) searchButton.insertAdjacentElement('beforebegin', button);
-  else title.append(' ', button);
+  else title.append(button);
 }
 
 function rawStoredWidth() {
