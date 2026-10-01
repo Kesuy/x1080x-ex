@@ -1,4 +1,5 @@
 import { parseThreadTitle } from './core.js';
+import { copyCodeWithButtonFeedback } from './clipboard.js';
 import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
 import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
@@ -18,6 +19,7 @@ export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
 export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS = 3500;
 export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
 export const AGAGHHH_CROSS_SEARCH_ENABLED_KEY = 'x1080x-ex:agaghhh-cross-search-enabled';
+export const AGAGHHH_COPY_CODE_ENABLED_KEY = 'x1080x-ex:agaghhh-copy-code-enabled';
 export const AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = 'x1080x-ex:agaghhh-search-auto-redirect-enabled';
 export const AGAGHHH_REAL_ACTRESS_ENABLED_KEY = 'x1080x-ex:agaghhh-real-actress-enabled';
 export const AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = 'x1080x-ex:agaghhh-hdblog-preview-enabled';
@@ -26,6 +28,7 @@ const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-en
 const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-download';
 const SEARCH_BUTTON_ID = 'x1080x-ex-agaghhh-hdblog-search';
+const COPY_BUTTON_ID = 'x1080x-ex-agaghhh-copy-code';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
 const AV_WIKI_ORIGIN = 'https://av-wiki.net';
@@ -117,6 +120,10 @@ export function isAgaghhhDownloadEnabled() {
 
 export function isAgaghhhCrossSearchEnabled() {
   return readBooleanSetting(AGAGHHH_CROSS_SEARCH_ENABLED_KEY);
+}
+
+export function isAgaghhhCopyCodeEnabled() {
+  return readBooleanSetting(AGAGHHH_COPY_CODE_ENABLED_KEY);
 }
 
 export function isAgaghhhSearchAutoRedirectEnabled() {
@@ -419,7 +426,7 @@ function installHdblogSearchButton(document) {
   button.title = '按当前番号在 hdblog 搜索';
   button.setAttribute('aria-label', '在 hdblog 搜索当前番号');
   Object.assign(button.style, {
-    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 4px',
+    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
     padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
     borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
     fontSize: '14px', lineHeight: '20px',
@@ -435,6 +442,46 @@ function installHdblogSearchButton(document) {
     openSearchTab(document, url);
   });
   if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
+  else host.prepend(button);
+}
+
+function installCopyCodeButton(document) {
+  if (document.getElementById(COPY_BUTTON_ID)) return;
+  const code = threadCode(document);
+  if (!code) return;
+  const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
+  const searchButton = document.getElementById(SEARCH_BUTTON_ID);
+  const title = threadTitleElement(document);
+  const host = downloadButton?.parentElement
+    || searchButton?.parentElement
+    || title?.closest('.vwthd, .ts')
+    || title?.parentElement;
+  if (!host) return;
+
+  const button = document.createElement('button');
+  button.id = COPY_BUTTON_ID;
+  button.type = 'button';
+  button.textContent = '📋';
+  button.title = '复制当前番号到剪切板';
+  button.setAttribute('aria-label', '复制当前番号到剪切板');
+  Object.assign(button.style, {
+    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
+    padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
+    borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
+    fontSize: '14px', lineHeight: '20px',
+  });
+  button.addEventListener('mouseenter', () => {
+    if (!button.disabled) button.style.background = '#246eaf';
+  });
+  button.addEventListener('mouseleave', () => {
+    if (!button.disabled) button.style.background = '#398bd4';
+  });
+  button.addEventListener('click', () => {
+    void copyCodeWithButtonFeedback(button, document, threadCode(document));
+  });
+
+  if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
+  else if (searchButton) searchButton.insertAdjacentElement('afterend', button);
   else host.prepend(button);
 }
 
@@ -564,9 +611,13 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
         <span><strong>下载时保护标签页</strong><small style="display:block;margin-top:2px;color:#666">下载中在标签标题显示“⬇ 下载中”，关闭标签页时由浏览器弹出确认提示。</small></span>
       </label>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="cross-search" type="checkbox" style="margin-top:3px">
         <span><strong>跨站搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">在帖子标题旁显示搜索按钮，识别番号后直接打开 hdblog 搜索；可独立于下载增强使用。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+        <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
+        <span><strong>复制番号按钮（📋）</strong><small style="display:block;margin-top:2px;color:#666">在搜索与下载按钮之间显示复制按钮，一键复制当前帖子番号。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
@@ -597,6 +648,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const downloadInput = panel.querySelector('[data-setting="download"]');
   const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
+  const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
   const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
   const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
   const actressInput = panel.querySelector('[data-setting="real-actress"]');
@@ -610,6 +662,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   downloadInput.checked = isAgaghhhDownloadEnabled();
   downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
   crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
+  copyCodeInput.checked = isAgaghhhCopyCodeEnabled();
   searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
   previewInput.checked = isAgaghhhHdblogPreviewEnabled();
   actressInput.checked = isAgaghhhRealActressEnabled();
@@ -696,6 +749,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
+      GM_setValue(AGAGHHH_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
       GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
       GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
       GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
@@ -752,6 +806,9 @@ export function installAgaghhhEnhancement(
 
   if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document);
   else document.getElementById(SEARCH_BUTTON_ID)?.remove();
+
+  if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton(document);
+  else document.getElementById(COPY_BUTTON_ID)?.remove();
 
   if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
 }

@@ -1,4 +1,5 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
+import { copyCodeWithButtonFeedback } from './clipboard.js';
 import {
   HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY,
   beginDownloadGuard,
@@ -10,6 +11,7 @@ export const HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY = 'x1080x-ex:hdblog-article-layou
 export const HDBLOG_SHOW_DOWNLOAD_AREA_KEY = 'x1080x-ex:hdblog-show-download-area';
 export const HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY = 'x1080x-ex:hdblog-show-image-download-button';
 export const HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY = 'x1080x-ex:hdblog-show-cross-search-button';
+export const HDBLOG_SHOW_COPY_CODE_BUTTON_KEY = 'x1080x-ex:hdblog-show-copy-code-button';
 export const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
 export const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 export const HDBLOG_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-search-filter-enabled';
@@ -36,6 +38,7 @@ const MAX_HDBLOG_ARTICLE_WIDTH = 3000;
 const LAYOUT_STYLE_ID = 'x1080x-ex-hdblog-article-layout';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-hdblog-image-download';
 const SEARCH_BUTTON_ID = 'x1080x-ex-hdblog-agaghhh-search';
+const COPY_BUTTON_ID = 'x1080x-ex-hdblog-copy-code';
 const ARTICLE_BODY_CLASS = 'x1080x-hdblog-single';
 const REQUEST_TIMEOUT = 60000;
 const PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
@@ -774,7 +777,7 @@ function installDownloadButton(document, locationObject, gmRequest) {
     display: 'inline-flex',
     alignItems: 'center',
     verticalAlign: 'middle',
-    margin: '0 0 4px 12px',
+    margin: '0 0 4px 8px',
     padding: '5px 8px',
     minWidth: '34px',
     justifyContent: 'center',
@@ -827,7 +830,44 @@ function installAgaghhhSearchButton(document) {
     }
     openSearchTab(document, url);
   });
-  title.append(' ', searchButton);
+  title.append(searchButton);
+}
+
+function installCopyCodeButton(document) {
+  if (document.getElementById(COPY_BUTTON_ID)) return;
+  const code = extractHdblogArticleCode(document);
+  if (!code) return;
+  const title = articleTitleElement(document);
+  if (!title) return;
+  const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
+  const searchButton = document.getElementById(SEARCH_BUTTON_ID);
+
+  const button = document.createElement('button');
+  button.id = COPY_BUTTON_ID;
+  button.type = 'button';
+  button.textContent = '📋';
+  button.title = '复制当前番号到剪切板';
+  button.setAttribute('aria-label', '复制当前番号到剪切板');
+  Object.assign(button.style, {
+    display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle',
+    margin: '0 0 4px 8px', padding: '5px 8px', minWidth: '34px',
+    justifyContent: 'center', border: '1px solid #2878c8', borderRadius: '5px',
+    color: '#fff', background: '#398bd4', cursor: 'pointer', fontSize: '13px',
+    fontWeight: '600', lineHeight: '20px',
+  });
+  button.addEventListener('mouseenter', () => {
+    if (!button.disabled) button.style.background = '#246eaf';
+  });
+  button.addEventListener('mouseleave', () => {
+    if (!button.disabled) button.style.background = '#398bd4';
+  });
+  button.addEventListener('click', () => {
+    void copyCodeWithButtonFeedback(button, document, extractHdblogArticleCode(document));
+  });
+
+  if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
+  else if (searchButton) searchButton.insertAdjacentElement('beforebegin', button);
+  else title.append(button);
 }
 
 function rawStoredWidth() {
@@ -861,6 +901,11 @@ function readImageDownloadButtonVisible() {
 export function isHdblogCrossSearchEnabled() {
   if (typeof GM_getValue !== 'function') return true;
   return GM_getValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, true) !== false;
+}
+
+export function isHdblogCopyCodeEnabled() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, true) !== false;
 }
 
 export function isHdblogSearchFilterEnabled() {
@@ -1011,6 +1056,10 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <input data-setting="cross-search" type="checkbox">
         显示跨站搜索按钮（🔍，搜索 agaghhh.cc）
       </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="copy-code" type="checkbox">
+        显示复制番号按钮（📋）
+      </label>
       <label style="display:flex;align-items:center;gap:9px">
         <input data-setting="expand-preview" type="checkbox">
         自动展开 Preview 大图（含 Pixhost / refer 解析）
@@ -1076,6 +1125,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
   const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
+  const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
   const previewInput = panel.querySelector('[data-setting="expand-preview"]');
   const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
   const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
@@ -1094,6 +1144,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   imageDownloadInput.checked = readImageDownloadButtonVisible();
   downloadGuardInput.checked = isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY);
   crossSearchInput.checked = isHdblogCrossSearchEnabled();
+  copyCodeInput.checked = isHdblogCopyCodeEnabled();
   previewInput.checked = isHdblogPreviewExpansionEnabled();
   batchOpenInput.checked = isHdblogBatchOpenEnabled();
   const batchInterval = getHdblogBatchOpenInterval();
@@ -1178,6 +1229,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
       GM_setValue(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
+      GM_setValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, copyCodeInput.checked);
       GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, previewInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
@@ -1231,4 +1283,6 @@ export function installHdblogArticleEnhancement(
   else document.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
   if (isHdblogCrossSearchEnabled()) installAgaghhhSearchButton(document);
   else document.getElementById(SEARCH_BUTTON_ID)?.remove();
+  if (isHdblogCopyCodeEnabled()) installCopyCodeButton(document);
+  else document.getElementById(COPY_BUTTON_ID)?.remove();
 }

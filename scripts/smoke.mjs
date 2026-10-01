@@ -83,6 +83,7 @@ dom.window.prompt = () => null;
 dom.window.eval(artifact);
 const button = dom.window.document.querySelector('#x1080x-ex-download');
 assert.ok(button, '构建产物应在 Discuz 帖子页插入下载按钮');
+assert.equal(button.style.margin, '0px 8px 6px 6px', '下载按钮应与相邻操作按钮保持统一 6px 间距');
 button.click();
 for (let attempt = 0; attempt < 100 && (saved.length < 3 || revoked.length < 3); attempt += 1) {
   await new Promise((resolve) => setTimeout(resolve, 0));
