@@ -5,6 +5,7 @@ import {
   parseBlockedKeywords,
 } from './hdblog-search.js';
 import { isHdblogReferUrl } from './hdblog-refer.js';
+import { partitionPreviewCandidates } from './hdblog-preview-variants.js';
 import {
   isPixhostShowUrl,
   resolvePixhostShowUrl,
@@ -316,52 +317,92 @@ function inPreviewRange(range, node) {
 export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequest) {
   const range = previewRange(document);
   if (!range) return [];
-  const urls = [];
-  const seen = new Set();
+
   const handledImages = new Set();
-  const add = (value) => {
-    const url = absoluteHttpUrl(value, articleUrl);
-    if (!url) return;
-    const key = pixhostAssetIdentity(url, articleUrl) || url;
-    if (seen.has(key)) return;
-    seen.add(key);
-    urls.push(url);
-  };
+  const candidates = [];
 
   for (const anchor of [...range.content.querySelectorAll('a[href]')].filter((node) => inPreviewRange(range, node))) {
-    let target = absoluteHttpUrl(anchor.getAttribute('href'), document.baseURI);
     const image = anchor.querySelector('img');
-    const thumbnail = previewThumbnailUrl(document, image);
-    if (isHdblogReferUrl(target, document.baseURI)) {
-      target = await resolveHdblogReferTarget(document, target, articleUrl, gmRequest);
-    }
-    const pixhostShowTarget = target && isPixhostShowUrl(target, document.baseURI);
-    if (pixhostShowTarget) {
-      target = await resolvePixhostShowUrl(document, target, thumbnail, gmRequest);
-      if (!target) {
-        if (image) handledImages.add(image);
-        continue;
-      }
-    }
-    if (target && (IMAGE_EXTENSION_PATTERN.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
-      add(wordpressOriginalUrl(target) || target);
-      if (image) handledImages.add(image);
-      continue;
-    }
-    if (image) {
-      const best = bestImageUrl(document, image);
-      if (best) {
-        add(best);
-        handledImages.add(image);
-      }
-    }
+    if (image) handledImages.add(image);
+    candidates.push({
+      kind: 'anchor',
+      anchor,
+      image,
+      href: absoluteHttpUrl(anchor.getAttribute('href'), document.baseURI),
+      thumbUrl: previewThumbnailUrl(document, image),
+      values: [
+        image?.getAttribute('src'),
+        image?.getAttribute('data-original'),
+        image?.getAttribute('data-lazy-src'),
+        image?.getAttribute('data-src'),
+      ],
+    });
   }
 
   for (const image of [...range.content.querySelectorAll('img')]
     .filter((node) => inPreviewRange(range, node) && !handledImages.has(node))) {
-    add(bestImageUrl(document, image));
+    candidates.push({
+      kind: 'image',
+      image,
+      directUrl: bestImageUrl(document, image),
+      values: [
+        image.currentSrc,
+        image.getAttribute('src'),
+        image.getAttribute('data-original'),
+        image.getAttribute('data-lazy-src'),
+        image.getAttribute('data-src'),
+      ],
+    });
   }
-  return urls;
+
+  const resolveCandidates = async (items) => {
+    const urls = [];
+    const seen = new Set();
+    const add = (value) => {
+      const url = absoluteHttpUrl(value, articleUrl);
+      if (!url) return;
+      const key = pixhostAssetIdentity(url, articleUrl) || url;
+      if (seen.has(key)) return;
+      seen.add(key);
+      urls.push(url);
+    };
+
+    for (const candidate of items) {
+      if (candidate.kind === 'image') {
+        add(candidate.directUrl || bestImageUrl(document, candidate.image));
+        continue;
+      }
+
+      let target = candidate.href;
+      const image = candidate.image;
+      const thumbnail = candidate.thumbUrl;
+      if (isHdblogReferUrl(target, document.baseURI)) {
+        target = await resolveHdblogReferTarget(document, target, articleUrl, gmRequest);
+      }
+
+      const pixhostShowTarget = target && isPixhostShowUrl(target, document.baseURI);
+      if (pixhostShowTarget) {
+        target = await resolvePixhostShowUrl(document, target, thumbnail, gmRequest);
+        if (!target) continue;
+      }
+
+      if (target && (IMAGE_EXTENSION_PATTERN.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
+        add(wordpressOriginalUrl(target) || target);
+        continue;
+      }
+
+      if (image) add(bestImageUrl(document, image));
+    }
+
+    return urls;
+  };
+
+  const { standard, fourK } = partitionPreviewCandidates(candidates);
+  if (standard.length) {
+    const standardUrls = await resolveCandidates(standard);
+    if (standardUrls.length) return standardUrls;
+  }
+  return fourK.length ? resolveCandidates(fourK) : [];
 }
 
 export function hdblogSearchCodeForThreadCode(code) {
