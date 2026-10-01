@@ -897,7 +897,7 @@ function addDownloadButton() {
     float: 'right',
     position: 'relative',
     zIndex: '20',
-    margin: '0 8px 6px 12px',
+    margin: '0 8px 6px 6px',
     padding: '7px 13px',
     border: '1px solid #2878c8',
     borderRadius: '5px',
