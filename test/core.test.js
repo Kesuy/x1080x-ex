@@ -69,6 +69,22 @@ test('清理编号后的发布参数并保留正文中的括号', () => {
   });
 });
 
+test('保留数字后尾随字母的番号后缀', () => {
+  const direct = parseThreadTitle('OLM-331E お色気が限界突破の熟おねえさん');
+  assert.deepEqual(direct, {
+    code: 'OLM-331E',
+    cleanTitle: 'OLM-331E お色気が限界突破の熟おねえさん',
+    hasExternalSubtitle: false,
+  });
+
+  const grouped = parseThreadTitle('(HD1080P)(OLM-301E)完璧ボディのイケイケお姉さん');
+  assert.deepEqual(grouped, {
+    code: 'OLM-301E',
+    cleanTitle: 'OLM-301E 完璧ボディのイケイケお姉さん',
+    hasExternalSubtitle: false,
+  });
+});
+
 test('中文字幕附件使用清理后的标题并追加外挂字幕标记', () => {
   const parsed = parseThreadTitle(
     'MFYD-080 [中文外掛字幕](HD1080P_60fps)(溜池ゴロー)(mfyd00080)近所に住むタダマン妻 郊外のラブホテルサービスタイムで濃厚不倫 夢実かなえ'
