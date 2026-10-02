@@ -1,4 +1,4 @@
-const CODE_PATTERN = /^([A-Z0-9]+-\d+)\s*/i;
+const CODE_PATTERN = /^([A-Z0-9]+-\d+[A-Z]?)\b\s*/i;
 const SUBTITLE_TAG_PATTERN = /^\[(?:中文)?(?:外掛|外挂)字幕\]\s*/i;
 const DIRECT_FC2_PATTERN = /^FC2-(?:PPV-)?(\d+)\b\s*/i;
 const FC2_PPV_PATTERN = /^FC2-PPV-\d+\b/i;
@@ -141,7 +141,7 @@ export function parseThreadTitle(rawTitle) {
       };
     }
 
-    const groupedCodeMatch = groupText.match(/^([A-Z0-9]+-\d+)$/i);
+    const groupedCodeMatch = groupText.match(/^([A-Z0-9]+-\d+[A-Z]?)$/i);
     if (groupedCodeMatch) {
       const code = groupedCodeMatch[1].toUpperCase();
       return {
@@ -429,7 +429,7 @@ export function extractThreadResources(document) {
 export function buildTorrentFilename(value) {
   const raw = String(value ?? '').replace(/\s+/g, ' ').trim();
   const normalized = raw.replace(
-    /^([A-Z0-9]+-\d+)\s+\[BT\]\s*(?:\([^)]*\)\s*)*/i,
+    /^([A-Z0-9]+-\d+[A-Z]?)\s+\[BT\]\s*(?:\([^)]*\)\s*)*/i,
     '$1 '
   );
   return `${sanitizeFilename(normalized)}.torrent`;
