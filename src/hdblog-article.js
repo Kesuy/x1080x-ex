@@ -314,7 +314,7 @@ export function extractHdblogVideoCode(value) {
   const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
   if (fc2) return `FC2${fc2[1] ? '-PPV' : ''}-${fc2[2]}`;
 
-  const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8})\b/i);
+  const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)\b/i);
   if (!standard) return '';
   const prefix = standard[1];
   if (['HTTP', 'HTTPS', 'IMG', 'IMAGE', 'JPG', 'JPEG', 'PNG', 'WEBP'].includes(prefix)) return '';
