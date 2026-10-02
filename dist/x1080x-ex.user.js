@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.10
+// @version      1.10.11
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -22,7 +22,7 @@
 // ==/UserScript==
 (() => {
   // src/core.js
-  var CODE_PATTERN = /^([A-Z0-9]+-\d+)\s*/i;
+  var CODE_PATTERN = /^([A-Z0-9]+-\d+[A-Z]?)\b\s*/i;
   var SUBTITLE_TAG_PATTERN = /^\[(?:中文)?(?:外掛|外挂)字幕\]\s*/i;
   var DIRECT_FC2_PATTERN = /^FC2-(?:PPV-)?(\d+)\b\s*/i;
   var FC2_PPV_PATTERN = /^FC2-PPV-\d+\b/i;
@@ -135,7 +135,7 @@
           hasExternalSubtitle: groupedHasExternalSubtitle
         };
       }
-      const groupedCodeMatch = groupText.match(/^([A-Z0-9]+-\d+)$/i);
+      const groupedCodeMatch = groupText.match(/^([A-Z0-9]+-\d+[A-Z]?)$/i);
       if (groupedCodeMatch) {
         const code2 = groupedCodeMatch[1].toUpperCase();
         return {
@@ -368,7 +368,7 @@
   function buildTorrentFilename(value) {
     const raw = String(value ?? "").replace(/\s+/g, " ").trim();
     const normalized = raw.replace(
-      /^([A-Z0-9]+-\d+)\s+\[BT\]\s*(?:\([^)]*\)\s*)*/i,
+      /^([A-Z0-9]+-\d+[A-Z]?)\s+\[BT\]\s*(?:\([^)]*\)\s*)*/i,
       "$1 "
     );
     return `${sanitizeFilename(normalized)}.torrent`;
@@ -2601,7 +2601,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const text = source.toUpperCase();
     const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
     if (fc2) return `FC2${fc2[1] ? "-PPV" : ""}-${fc2[2]}`;
-    const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8})\b/i);
+    const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)\b/i);
     if (!standard) return "";
     const prefix = standard[1];
     if (["HTTP", "HTTPS", "IMG", "IMAGE", "JPG", "JPEG", "PNG", "WEBP"].includes(prefix)) return "";
