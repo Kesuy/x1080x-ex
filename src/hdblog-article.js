@@ -327,11 +327,22 @@ export function extractHdblogVideoCode(value) {
   const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)\b/i);
   if (!standard) return '';
   const prefix = standard[1];
-  if (['HTTP', 'HTTPS', 'IMG', 'IMAGE', 'JPG', 'JPEG', 'PNG', 'WEBP'].includes(prefix)) return '';
+  if (['HTTP', 'HTTPS', 'IMG', 'IMAGE', 'JPG', 'JPEG', 'PNG', 'WEBP', 'ERROR'].includes(prefix)) return '';
   return `${prefix}-${standard[2]}`;
 }
 
 export function extractHdblogArticleCode(document) {
+  // HDblog 文章 URL 通常是 /数字ID/番号/。404 页面会把标题改成 ERROR-404，
+  // 因此先从 URL slug 取番号，避免搜索/复制等功能拿到错误页标题。
+  try {
+    const slug = new URL(document?.location?.href || document?.baseURI || '')
+      .pathname.split('/').filter(Boolean).at(-1) || '';
+    const fromSlug = extractHdblogVideoCode(slug);
+    if (fromSlug) return fromSlug;
+  } catch {
+    // URL 不可用时继续按页面内容解析。
+  }
+
   const titleText = normalizeText(articleTitleElement(document)?.textContent || document?.title);
   const fromTitle = extractHdblogVideoCode(titleText);
   if (fromTitle) return fromTitle;
