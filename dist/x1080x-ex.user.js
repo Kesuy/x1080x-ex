@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.11
+// @version      1.10.12
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1275,10 +1275,12 @@ ${settings.password}`;
   var AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = "x1080x-ex:agaghhh-batch-open-history-limit";
   var AGAGHHH_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:agaghhh-batch-open-history";
   var AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = "x1080x-ex:agaghhh-batch-open-history-color";
+  var AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:agaghhh-batch-open-unopened-only";
   var HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-history-enabled";
   var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = "x1080x-ex:hdblog-batch-open-history-limit";
   var HDBLOG_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:hdblog-batch-open-history";
   var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = "x1080x-ex:hdblog-batch-open-history-color";
+  var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:hdblog-batch-open-unopened-only";
   var DEFAULT_BATCH_OPEN_HISTORY_LIMIT = 5e3;
   var DEFAULT_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
   var BATCH_OPEN_HISTORY_ATTR = "data-x1080x-batch-opened";
@@ -1377,6 +1379,7 @@ ${domains.join("\n")}
         limitKey: AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
         historyKey: AGAGHHH_BATCH_OPEN_HISTORY_KEY,
         colorKey: AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
+        unopenedOnlyKey: AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY,
         kind: "agaghhh"
       };
     }
@@ -1386,6 +1389,7 @@ ${domains.join("\n")}
         limitKey: HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
         historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY,
         colorKey: HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
+        unopenedOnlyKey: HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY,
         kind: "hdblog"
       };
     }
@@ -1395,6 +1399,11 @@ ${domains.join("\n")}
     const config = batchOpenHistoryConfig();
     if (!config || typeof GM_getValue !== "function") return false;
     return GM_getValue(config.enabledKey, false) === true;
+  }
+  function isBatchOpenUnopenedOnlyEnabled() {
+    const config = batchOpenHistoryConfig();
+    if (!config || typeof GM_getValue !== "function" || !isBatchOpenHistoryEnabled()) return false;
+    return GM_getValue(config.unopenedOnlyKey, false) === true;
   }
   function batchOpenHistoryLimit() {
     const config = batchOpenHistoryConfig();
@@ -1432,6 +1441,15 @@ ${domains.join("\n")}
     const stored = GM_getValue(config.historyKey, []);
     const values = Array.isArray(stored) ? stored : [];
     return [...new Set(values.filter((value) => typeof value === "string" && (/^(?:tid|post):\d+$/.test(value) || /^url:\//.test(value))))];
+  }
+  function collectBatchOpenThreads(document2) {
+    const threads = collectForumThreadLinks(document2);
+    if (!isBatchOpenUnopenedOnlyEnabled()) return threads;
+    const history = new Set(readBatchOpenHistory());
+    return threads.filter((thread) => {
+      const id = batchOpenHistoryId(thread.url);
+      return !id || !history.has(id);
+    });
   }
   function rememberBatchOpenedThread(url) {
     const config = batchOpenHistoryConfig();
@@ -1647,8 +1665,9 @@ ${domains.join("\n")}
     batchOpenState.finishDelay = null;
   }
   function setBatchButtonIdle(button, count) {
-    button.textContent = `\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\uFF08${count}\uFF09`;
-    button.title = "\u6309\u9875\u9762\u987A\u5E8F\u5728\u540E\u53F0\u9010\u4E2A\u6253\u5F00\u666E\u901A\u4E3B\u9898\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62";
+    const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
+    button.textContent = unopenedOnly ? `\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672A\u6253\u5F00\u4E3B\u9898\uFF08${count}\uFF09` : `\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\uFF08${count}\uFF09`;
+    button.title = unopenedOnly ? "\u6309\u9875\u9762\u987A\u5E8F\u4EC5\u540E\u53F0\u6253\u5F00\u672A\u8BB0\u5F55\u4E3A\u5DF2\u6253\u5F00\u7684\u4E3B\u9898\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62" : "\u6309\u9875\u9762\u987A\u5E8F\u5728\u540E\u53F0\u9010\u4E2A\u6253\u5F00\u666E\u901A\u4E3B\u9898\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62";
     button.style.background = "#398bd4";
   }
   async function openCurrentPageThreads(button) {
@@ -1656,9 +1675,9 @@ ${domains.join("\n")}
       cancelBatchOpen();
       return;
     }
-    const threads = collectForumThreadLinks(document);
+    const threads = collectBatchOpenThreads(document);
     if (!threads.length) {
-      window.alert("\u5F53\u524D\u9875\u9762\u6CA1\u6709\u627E\u5230\u53EF\u6253\u5F00\u7684\u666E\u901A\u4E3B\u9898\u3002");
+      window.alert(isBatchOpenUnopenedOnlyEnabled() ? "\u5F53\u524D\u9875\u9762\u6CA1\u6709\u672A\u6253\u5F00\u7684\u4E3B\u9898\u3002" : "\u5F53\u524D\u9875\u9762\u6CA1\u6709\u627E\u5230\u53EF\u6253\u5F00\u7684\u666E\u901A\u4E3B\u9898\u3002");
       return;
     }
     const state = {
@@ -1706,7 +1725,7 @@ ${domains.join("\n")}
       button.style.background = failures.length ? "#b36b22" : "#398bd4";
       window.setTimeout(() => {
         if (!batchOpenState) {
-          setBatchButtonIdle(button, collectForumThreadLinks(document).length);
+          setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
         }
       }, 3e3);
     }
@@ -2096,7 +2115,7 @@ ${failures.join("\n")}
       fontSize: "14px",
       lineHeight: "20px"
     });
-    setBatchButtonIdle(button, threads.length);
+    setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
     button.addEventListener("mouseenter", () => {
       if (!batchOpenState) button.style.background = "#246eaf";
     });
@@ -2334,6 +2353,7 @@ ${failures.join("\n")}
   var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2 = "x1080x-ex:hdblog-batch-open-history-limit";
   var HDBLOG_BATCH_OPEN_HISTORY_KEY2 = "x1080x-ex:hdblog-batch-open-history";
   var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2 = "x1080x-ex:hdblog-batch-open-history-color";
+  var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2 = "x1080x-ex:hdblog-batch-open-unopened-only";
   var DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT = 5e3;
   var DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
   var DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS = 800;
@@ -3211,6 +3231,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (typeof GM_getValue !== "function") return false;
     return GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2, false) === true;
   }
+  function isHdblogBatchOpenUnopenedOnlyEnabled() {
+    if (typeof GM_getValue !== "function") return false;
+    return GM_getValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2, false) === true;
+  }
   function getHdblogBatchOpenHistoryLimit() {
     if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
     const numeric = Number(GM_getValue(
@@ -3343,6 +3367,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <span><strong>\u4FDD\u5B58\u6279\u91CF\u6253\u5F00\u8BB0\u5F55</strong><small style="display:block;margin-top:2px;color:#666">\u8BB0\u5F55\u811A\u672C\u6279\u91CF\u6253\u5F00\u8FC7\u7684\u6587\u7AE0\u5E76\u6301\u4E45\u6807\u8BB0\uFF1B\u624B\u52A8\u8BBF\u95EE\u8FC7\u7684\u94FE\u63A5\u4E5F\u4F7F\u7528\u76F8\u540C\u989C\u8272\u663E\u793A\u3002</small></span>
       </label>
       <div data-batch-open-history-row style="margin:0 0 13px 24px">
+        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+          <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
+          <span><strong>\u53EA\u6253\u5F00\u672A\u6253\u5F00\u7684\u4E3B\u9898</strong><small style="display:block;margin-top:2px;color:#666">\u6279\u91CF\u6253\u5F00\u65F6\u8DF3\u8FC7\u5DF2\u7ECF\u4FDD\u5B58\u5728\u201C\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u4E2D\u7684\u6587\u7AE0\u3002</small></span>
+        </label>
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">\u6700\u591A\u4FDD\u5B58</span>
           <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u4FDD\u5B58\u6761\u6570"
@@ -3386,6 +3414,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
     const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
     const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
+    const batchUnopenedOnlyInput = panel.querySelector('[data-setting="batch-open-unopened-only"]');
     const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
     const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
     const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
@@ -3404,6 +3433,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
     batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
     batchHistoryInput.checked = isHdblogBatchOpenHistoryEnabled();
+    batchUnopenedOnlyInput.checked = isHdblogBatchOpenUnopenedOnlyEnabled();
     batchHistoryLimitInput.value = String(getHdblogBatchOpenHistoryLimit());
     batchHistoryColorInput.value = getHdblogBatchOpenHistoryColor();
     searchFilterInput.checked = isHdblogSearchFilterEnabled();
@@ -3417,6 +3447,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       batchIntervalMaxInput.disabled = batchIntervalDisabled;
       batchIntervalResetButton.disabled = batchIntervalDisabled;
       batchHistoryInput.disabled = batchIntervalDisabled;
+      batchUnopenedOnlyInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
       batchHistoryLimitInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
     };
     syncDependentFields();
@@ -3478,6 +3509,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2, batchIntervalMinMs);
         GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
         GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2, batchHistoryInput.checked);
+        GM_setValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2, batchUnopenedOnlyInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2, batchHistoryLimit);
         GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2, batchHistoryColorInput.value);
         if (typeof GM_getValue === "function") {
@@ -4776,6 +4808,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY2 = "x1080x-ex:agaghhh-batch-open-history-limit";
   var AGAGHHH_BATCH_OPEN_HISTORY_KEY2 = "x1080x-ex:agaghhh-batch-open-history";
   var AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY2 = "x1080x-ex:agaghhh-batch-open-history-color";
+  var AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY2 = "x1080x-ex:agaghhh-batch-open-unopened-only";
   var DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5e3;
   var DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
   var DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
@@ -4842,6 +4875,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function isAgaghhhBatchOpenHistoryEnabled() {
     if (typeof GM_getValue !== "function") return false;
     return GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY2, false) === true;
+  }
+  function isAgaghhhBatchOpenUnopenedOnlyEnabled() {
+    if (typeof GM_getValue !== "function") return false;
+    return GM_getValue(AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY2, false) === true;
   }
   function getAgaghhhBatchOpenHistoryLimit() {
     if (typeof GM_getValue !== "function") return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
@@ -5282,6 +5319,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <span><strong>\u4FDD\u5B58\u6279\u91CF\u6253\u5F00\u8BB0\u5F55</strong><small style="display:block;margin-top:2px;color:#666">\u8BB0\u5F55\u811A\u672C\u6279\u91CF\u6253\u5F00\u8FC7\u7684\u4E3B\u9898\u5E76\u6301\u4E45\u6807\u8BB0\uFF1B\u624B\u52A8\u8BBF\u95EE\u8FC7\u7684\u94FE\u63A5\u4E5F\u4F7F\u7528\u76F8\u540C\u989C\u8272\u663E\u793A\u3002</small></span>
       </label>
       <div data-batch-open-history-row style="margin:0 0 13px 24px">
+        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+          <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
+          <span><strong>\u53EA\u6253\u5F00\u672A\u6253\u5F00\u7684\u4E3B\u9898</strong><small style="display:block;margin-top:2px;color:#666">\u6279\u91CF\u6253\u5F00\u65F6\u8DF3\u8FC7\u5DF2\u7ECF\u4FDD\u5B58\u5728\u201C\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u4E2D\u7684\u4E3B\u9898\u3002</small></span>
+        </label>
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">\u6700\u591A\u4FDD\u5B58</span>
           <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u4FDD\u5B58\u6761\u6570"
@@ -5335,6 +5376,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
     const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
     const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
+    const batchUnopenedOnlyInput = panel.querySelector('[data-setting="batch-open-unopened-only"]');
     const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
     const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
     const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
@@ -5350,6 +5392,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
     batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
     batchHistoryInput.checked = isAgaghhhBatchOpenHistoryEnabled();
+    batchUnopenedOnlyInput.checked = isAgaghhhBatchOpenUnopenedOnlyEnabled();
     batchHistoryLimitInput.value = String(getAgaghhhBatchOpenHistoryLimit());
     batchHistoryColorInput.value = getAgaghhhBatchOpenHistoryColor();
     downloadInput.checked = isAgaghhhDownloadEnabled();
@@ -5368,6 +5411,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const syncBatchHistoryFields = () => {
       const detailsDisabled = !batchInput.checked || !batchHistoryInput.checked;
       batchHistoryInput.disabled = !batchInput.checked;
+      batchUnopenedOnlyInput.disabled = detailsDisabled;
       batchHistoryLimitInput.disabled = detailsDisabled;
       batchHistoryColorInput.disabled = false;
       batchHistoryColorResetButton.disabled = false;
@@ -5419,6 +5463,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY2, batchIntervalMinMs);
         GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY2, batchHistoryInput.checked);
+        GM_setValue(AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY2, batchUnopenedOnlyInput.checked);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY2, batchHistoryLimit);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY2, batchHistoryColorInput.value);
         if (typeof GM_getValue === "function") {
