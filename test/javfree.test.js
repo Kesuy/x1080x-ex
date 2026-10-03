@@ -4,6 +4,7 @@ import { JSDOM } from 'jsdom';
 import {
   HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY,
   JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY,
+  JAVFREE_COPY_CODE_ENABLED_KEY,
   JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY,
   JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY,
   buildJavfreeAgaghhhSearchUrl,
@@ -283,21 +284,23 @@ test('HDblog without usable Preview injects JavFree second image as fallback', a
   }
 });
 
-test('JavFree settings expose independent redirect, agaghhh-search and Preview-download switches', () => {
+test('JavFree settings expose independent redirect, search, copy and Preview-download switches', () => {
   const dom = sanArticleDom();
   const values = new Map();
   withGm(values, () => {
     const panel = openJavfreeSettingsPanel(dom.window.document);
     const redirect = panel.querySelector('[data-setting="search-auto-redirect"]');
     const agaghhhSearch = panel.querySelector('[data-setting="agaghhh-search"]');
+    const copyCode = panel.querySelector('[data-setting="copy-code"]');
     const download = panel.querySelector('[data-setting="preview-download"]');
     assert.equal(redirect.checked, true);
     assert.equal(agaghhhSearch.checked, true);
+    assert.equal(copyCode.checked, true);
     assert.equal(download.checked, true);
   });
 });
 
-test('JavFree switches can independently disable redirect, agaghhh search and download button', () => {
+test('JavFree switches can independently disable redirect, search, copy and download buttons', () => {
   const search = new JSDOM(`<!doctype html><body><main id="main">
     <article><h2 class="entry-title"><a href="/436747/san-437">SAN-437</a></h2></article>
   </main></body>`, { url: 'https://javfree.me/search/SAN-437' });
@@ -316,6 +319,20 @@ test('JavFree switches can independently disable redirect, agaghhh search and do
     assert.equal(result.searchButton, null);
     assert.equal(
       noSearch.window.document.getElementById('x1080x-ex-javfree-agaghhh-search'),
+      null
+    );
+  });
+
+  const noCopy = sanArticleDom();
+  withGm(new Map([[JAVFREE_COPY_CODE_ENABLED_KEY, false]]), () => {
+    const result = installJavfreeEnhancement(
+      noCopy.window.document,
+      noCopy.window.location,
+      () => {}
+    );
+    assert.equal(result.copyButton, null);
+    assert.equal(
+      noCopy.window.document.getElementById('x1080x-ex-javfree-copy-code'),
       null
     );
   });
@@ -354,6 +371,62 @@ test('JavFree detail search button recognizes code and opens agaghhh forum searc
     else globalThis.GM_getValue = oldGet;
     if (oldOpen === undefined) delete globalThis.GM_openInTab;
     else globalThis.GM_openInTab = oldOpen;
+    dom.window.close();
+  }
+});
+
+test('JavFree copy-code button copies the recognized code like HDblog', async () => {
+  const dom = sanArticleDom();
+  const oldGet = globalThis.GM_getValue;
+  const oldClipboard = globalThis.GM_setClipboard;
+  const copied = [];
+  globalThis.GM_getValue = (_key, fallback) => fallback;
+  globalThis.GM_setClipboard = (value, type) => copied.push({ value, type });
+  try {
+    const result = installJavfreeEnhancement(dom.window.document, dom.window.location, () => {});
+    assert.ok(result.copyButton);
+    assert.equal(result.copyButton.textContent, '📋');
+    result.copyButton.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(copied, [{ value: 'SAN-437', type: 'text' }]);
+    assert.equal(result.copyButton.textContent, '✓');
+    assert.equal(result.copyButton.title, '已复制：SAN-437');
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+    if (oldClipboard === undefined) delete globalThis.GM_setClipboard;
+    else globalThis.GM_setClipboard = oldClipboard;
+    dom.window.close();
+  }
+});
+
+test('JavFree action buttons use one consistent 8px margin without spacer text nodes', () => {
+  const dom = sanArticleDom();
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (_key, fallback) => fallback;
+  try {
+    const result = installJavfreeEnhancement(dom.window.document, dom.window.location, () => {});
+    assert.ok(result.button);
+    assert.ok(result.copyButton);
+    assert.ok(result.searchButton);
+
+    const title = dom.window.document.querySelector('h1.entry-title');
+    const buttons = [...title.querySelectorAll('button')];
+    assert.deepEqual(buttons.map((button) => button.id), [
+      'x1080x-ex-javfree-preview-download',
+      'x1080x-ex-javfree-copy-code',
+      'x1080x-ex-javfree-agaghhh-search',
+    ]);
+    assert.deepEqual(buttons.map((button) => button.style.margin), [
+      '0px 0px 4px 8px',
+      '0px 0px 4px 8px',
+      '0px 0px 4px 8px',
+    ]);
+    assert.equal(result.button.nextSibling, result.copyButton);
+    assert.equal(result.copyButton.nextSibling, result.searchButton);
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
     dom.window.close();
   }
 });
