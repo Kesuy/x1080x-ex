@@ -14,6 +14,19 @@ import {
   normalizeHdblogArticleWidth,
   openHdblogSettingsPanel,
 } from '../src/hdblog-article.js';
+import { HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY } from '../src/javfree.js';
+
+function disableJavfreePreviewFallback() {
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => {
+    if (key === HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY) return false;
+    return typeof oldGet === 'function' ? oldGet(key, fallback) : fallback;
+  };
+  return () => {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+  };
+}
 
 function articleDom({
   url = 'https://hdblog.me/986480/mond-308/',
@@ -125,7 +138,8 @@ test('multiple image names use 番号-1 / 番号-2 and preserve the real image e
   assert.equal(hdblogImageFilename('FC2-PPV-1234567', 1, 3, 'png'), 'FC2-PPV-1234567-2.png');
 });
 
-test('removed Pixhost Preview is resolved only once and never downloaded as an image blob', async () => {
+test('removed Pixhost Preview is resolved only once and never downloaded as an image blob', async (t) => {
+  t.after(disableJavfreePreviewFallback());
   const dom = articleDom({
     title: 'EBWH-319 sample',
     url: 'https://hdblog.me/900669/ebwh-319/',
@@ -172,7 +186,8 @@ test('removed Pixhost Preview is resolved only once and never downloaded as an i
   dom.window.close();
 });
 
-test('Pixhost Preview 大图返回 404 时按失效图跳过，不显示失败状态', async () => {
+test('Pixhost Preview 大图返回 404 时按失效图跳过，不显示失败状态', async (t) => {
+  t.after(disableJavfreePreviewFallback());
   const dom = articleDom({
     title: 'EBWH-319 sample',
     url: 'https://hdblog.me/900669/ebwh-319/',
@@ -217,7 +232,8 @@ test('Pixhost Preview 大图返回 404 时按失效图跳过，不显示失败�
   dom.window.close();
 });
 
-test('hdblog download prefers standard Preview and falls back to 4K only when the standard image cannot be downloaded', async () => {
+test('hdblog download prefers standard Preview and falls back to 4K only when the standard image cannot be downloaded', async (t) => {
+  t.after(disableJavfreePreviewFallback());
   const dom = articleDom({
     title: 'FALL-001 sample',
     url: 'https://hdblog.me/999001/fall-001/',
