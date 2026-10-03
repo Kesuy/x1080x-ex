@@ -1,5 +1,6 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { isHdblogPreviewExpansionEnabled } from './hdblog-article.js';
+import { makePreviewGestureFriendly } from './preview-gesture.js';
 
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
 const PREVIEW_BOUNDARY_PATTERN = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
@@ -252,6 +253,7 @@ function styleExpandedImage(image, fullUrl) {
     image.style.setProperty('transform', 'translateX(-50%)', 'important');
     image.style.setProperty('margin', '14px 0', 'important');
   }
+  makePreviewGestureFriendly(image);
   return true;
 }
 
