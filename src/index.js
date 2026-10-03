@@ -9,6 +9,7 @@ import { installHdblogPreviewImages } from './hdblog-preview.js';
 import { installHdblogReferResolver } from './hdblog-refer.js';
 import { installHdblogSearchEnhancement } from './hdblog-search.js';
 import { installQbittorrentSettings } from './qbittorrent-settings.js';
+import { installHdblogJavfreeFallback, installJavfreeEnhancement } from './javfree.js';
 
 installX1080xSettingsMenu();
 installAgaghhhEnhancement();
@@ -17,4 +18,6 @@ installHdblogImageHostSettings();
 installHdblogReferResolver();
 installHdblogArticleEnhancement();
 installHdblogPreviewImages();
+void installHdblogJavfreeFallback();
 installHdblogSearchEnhancement();
+installJavfreeEnhancement();
