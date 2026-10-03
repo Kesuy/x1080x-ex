@@ -7,7 +7,7 @@
 - **一键下载**：下载 agaghhh 主楼附件、图片、Preview 大图，并将磁力链转换为 `.torrent`。
 - **下载保护**：下载进行中在浏览器标签标题显示“⬇ 下载中”，关闭标签页时弹出浏览器确认提示，完成后自动恢复。
 - **自动命名**：自动识别番号、清理标题并处理 Windows 非法字符，支持 FC2、1PON、CARIB 等规则。
-- **Preview 大图**：agaghhh 按番号从 hdblog 获取 Preview；hdblog 无结果时可使用 FANZA / MGStage 官方后备源。
+- **Preview 大图**：agaghhh 按番号优先从 hdblog 获取 Preview；hdblog 无结果或 Preview 失效时可回退到 JavFree，再回退 FANZA / MGStage 官方源。HDblog 文章页自身无可用 Preview 时也可从 JavFree 补图。
 - **Pixhost 解析**：自动解析 Preview 原图，并对 `pixhost.to` / `pixhost.cc` 等同一资源进行去重；同一文章同时有普通版和 4K Preview 时优先普通版，仅在普通版不可用时回退 4K。
 - **跨站搜索**：agaghhh 与 hdblog 标题旁提供 `🔍`，可按番号直接搜索另一站。
 - **复制番号**：agaghhh 与 hdblog 标题旁提供 `📋`，一键把当前番号复制到剪切板。
@@ -43,7 +43,8 @@
 - 下载增强
 - 下载时保护标签页（默认开启）
 - Preview 大图
-- 官方 Preview 后备源
+- JavFree Preview 后备源（默认开启，hdblog 无可用 Preview 时启用）
+- 官方 Preview 后备源（在 hdblog / JavFree 都不可用时启用）
 - 跨站搜索
 - 复制番号按钮（默认开启）
 - 搜索单结果自动跳转
@@ -59,6 +60,8 @@
 
 - 文章宽度
 - Preview 大图展开
+- JavFree Preview 后备源（默认开启；当前文章无可用 Preview 时按番号补第 2 张 Preview）
+- 已删除文章自动搜索 JavFree（默认开启；打开 HDblog 404 历史文章时新开 JavFree 搜索页）
 - 图片下载按钮
 - 下载时标记标签页并在关闭时提醒（默认开启）
 - 跨站搜索
@@ -69,12 +72,20 @@
 - 只打开未打开的主题（默认关闭；依赖“保存批量打开记录”，开启后批量打开会跳过已有记录的文章）
 - 额外图床域名
 
+### javfree.me
+
+通过 **⚙️ JavFree 设置** 可独立控制：
+
+- 搜索单结果自动跳转（默认开启）
+- Preview 下载按钮（默认开启；详情页只下载封面后的第 1 张 Preview，并按番号保存，例如 `SAN-437.jpg`）
+
 ## 域名
 
 默认支持：
 
 - `agaghhh.cc`
 - `hdblog.me`
+- `javfree.me`
 
 Tampermonkey 菜单可使用 **设置匹配域名 / 添加当前域名 / 重置默认域名** 管理站点域名。
 
