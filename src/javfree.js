@@ -321,7 +321,23 @@ function openJavfreeAgaghhhSearch(document, code) {
 }
 
 function styleJavfreeActionButton(button) {
-  styleJavfreeActionButton(button);
+  Object.assign(button.style, {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    verticalAlign: 'middle',
+    margin: '0 0 4px 8px',
+    padding: '5px 8px',
+    minWidth: '34px',
+    border: '1px solid #2878c8',
+    borderRadius: '5px',
+    color: '#fff',
+    background: '#398bd4',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '600',
+    lineHeight: '20px',
+  });
   button.addEventListener('mouseenter', () => {
     if (!button.disabled) button.style.background = '#246eaf';
   });
