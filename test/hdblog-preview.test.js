@@ -73,6 +73,10 @@ test('hdblog 文章页将 Preview 缩略图和图片链接直接展开为大图'
     assert.equal(first.hasAttribute('height'), false);
     assert.equal(first.loading, 'eager');
     assert.equal(first.dataset.x1080xPreviewExpanded, '1');
+    assert.equal(first.draggable, false);
+    assert.equal(first.closest('a')?.draggable, false);
+    assert.equal(first.style.getPropertyValue('-webkit-user-drag'), 'none');
+    assert.equal(first.closest('a')?.style.getPropertyValue('-webkit-user-drag'), 'none');
     assert.equal(first.style.getPropertyValue('width'), '100%');
     assert.equal(first.style.getPropertyPriority('width'), 'important');
     assert.equal(first.style.getPropertyValue('height'), 'auto');
