@@ -22,10 +22,12 @@ const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-his
 const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
 const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
 const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
+const AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:agaghhh-batch-open-unopened-only';
 const HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-history-enabled';
 const HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:hdblog-batch-open-history-limit';
 const HDBLOG_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:hdblog-batch-open-history';
 const HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:hdblog-batch-open-history-color';
+const HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:hdblog-batch-open-unopened-only';
 const DEFAULT_BATCH_OPEN_HISTORY_LIMIT = 5000;
 const DEFAULT_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
@@ -129,6 +131,7 @@ function batchOpenHistoryConfig() {
       limitKey: AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
       historyKey: AGAGHHH_BATCH_OPEN_HISTORY_KEY,
       colorKey: AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
+      unopenedOnlyKey: AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY,
       kind: 'agaghhh',
     };
   }
@@ -138,6 +141,7 @@ function batchOpenHistoryConfig() {
       limitKey: HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
       historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY,
       colorKey: HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
+      unopenedOnlyKey: HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY,
       kind: 'hdblog',
     };
   }
@@ -148,6 +152,12 @@ function isBatchOpenHistoryEnabled() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function') return false;
   return GM_getValue(config.enabledKey, false) === true;
+}
+
+function isBatchOpenUnopenedOnlyEnabled() {
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_getValue !== 'function' || !isBatchOpenHistoryEnabled()) return false;
+  return GM_getValue(config.unopenedOnlyKey, false) === true;
 }
 
 function batchOpenHistoryLimit() {
@@ -198,6 +208,16 @@ function readBatchOpenHistory() {
     typeof value === 'string'
     && (/^(?:tid|post):\d+$/.test(value) || /^url:\//.test(value))
   )))];
+}
+
+function collectBatchOpenThreads(document) {
+  const threads = collectForumThreadLinks(document);
+  if (!isBatchOpenUnopenedOnlyEnabled()) return threads;
+  const history = new Set(readBatchOpenHistory());
+  return threads.filter((thread) => {
+    const id = batchOpenHistoryId(thread.url);
+    return !id || !history.has(id);
+  });
 }
 
 function rememberBatchOpenedThread(url) {
@@ -452,8 +472,13 @@ function cancelBatchOpen() {
 }
 
 function setBatchButtonIdle(button, count) {
-  button.textContent = `后台顺序打开本页主题（${count}）`;
-  button.title = '按页面顺序在后台逐个打开普通主题；间隔随机，并定期停顿；再次点击可停止';
+  const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
+  button.textContent = unopenedOnly
+    ? `后台顺序打开未打开主题（${count}）`
+    : `后台顺序打开本页主题（${count}）`;
+  button.title = unopenedOnly
+    ? '按页面顺序仅后台打开未记录为已打开的主题；间隔随机，并定期停顿；再次点击可停止'
+    : '按页面顺序在后台逐个打开普通主题；间隔随机，并定期停顿；再次点击可停止';
   button.style.background = '#398bd4';
 }
 
@@ -463,9 +488,11 @@ async function openCurrentPageThreads(button) {
     return;
   }
 
-  const threads = collectForumThreadLinks(document);
+  const threads = collectBatchOpenThreads(document);
   if (!threads.length) {
-    window.alert('当前页面没有找到可打开的普通主题。');
+    window.alert(isBatchOpenUnopenedOnlyEnabled()
+      ? '当前页面没有未打开的主题。'
+      : '当前页面没有找到可打开的普通主题。');
     return;
   }
 
@@ -523,7 +550,7 @@ async function openCurrentPageThreads(button) {
     button.style.background = failures.length ? '#b36b22' : '#398bd4';
     window.setTimeout(() => {
       if (!batchOpenState) {
-        setBatchButtonIdle(button, collectForumThreadLinks(document).length);
+        setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
       }
     }, 3000);
   }
@@ -956,7 +983,7 @@ function addBatchOpenButton() {
     fontSize: '14px',
     lineHeight: '20px',
   });
-  setBatchButtonIdle(button, threads.length);
+  setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
   button.addEventListener('mouseenter', () => {
     if (!batchOpenState) button.style.background = '#246eaf';
   });
