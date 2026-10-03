@@ -311,6 +311,7 @@ test('JavFree Preview download saves the second image as code.jpg', async () => 
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     assert.deepEqual(saved, [{ name: 'SAN-437.jpg', href: 'blob:javfree-preview' }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.deepEqual(revoked, ['blob:javfree-preview']);
   } finally {
     dom.window.HTMLAnchorElement.prototype.click = originalClick;
