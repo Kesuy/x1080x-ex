@@ -180,6 +180,10 @@ test('EBWH-365 prefers the normal 6M Preview over the 4K60fps variant for agaghh
     [...section.querySelectorAll('img')].map((image) => image.getAttribute('src')),
     [normalImage]
   );
+  const previewImage = section.querySelector('img');
+  assert.equal(previewImage?.draggable, false);
+  assert.equal(previewImage?.closest('a')?.draggable, false);
+  assert.equal(previewImage?.style.getPropertyValue('-webkit-user-drag'), 'none');
   assert.deepEqual(
     buildDownloadJobs(forum.window.document).filter((job) => job.kind === 'image').map((job) => job.url),
     ['https://agaghhh.cc/ebwh-365-cover.jpg', normalImage]
