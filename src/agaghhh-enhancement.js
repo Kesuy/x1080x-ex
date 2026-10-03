@@ -26,6 +26,9 @@ export const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled'
 export const AGAGHHH_CROSS_SEARCH_ENABLED_KEY = 'x1080x-ex:agaghhh-cross-search-enabled';
 export const AGAGHHH_COPY_CODE_ENABLED_KEY = 'x1080x-ex:agaghhh-copy-code-enabled';
 export const AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = 'x1080x-ex:agaghhh-search-auto-redirect-enabled';
+export const AGAGHHH_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:agaghhh-search-filter-enabled';
+export const AGAGHHH_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:agaghhh-blocked-keywords';
+export const DEFAULT_AGAGHHH_BLOCKED_KEYWORDS = '无码破解\n無碼破解';
 export const AGAGHHH_REAL_ACTRESS_ENABLED_KEY = 'x1080x-ex:agaghhh-real-actress-enabled';
 export const AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = 'x1080x-ex:agaghhh-hdblog-preview-enabled';
 const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-enabled';
@@ -140,6 +143,47 @@ export function isAgaghhhSearchAutoRedirectEnabled() {
   return readBooleanSetting(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY);
 }
 
+export function isAgaghhhSearchFilterEnabled() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(AGAGHHH_SEARCH_FILTER_ENABLED_KEY, true) !== false;
+}
+
+function normalizeSearchFilterText(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase();
+}
+
+export function parseAgaghhhBlockedKeywords(value) {
+  const seen = new Set();
+  const keywords = [];
+  String(value ?? '')
+    .split(/[\r\n,;，；]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .forEach((entry) => {
+      const normalized = normalizeSearchFilterText(entry);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      keywords.push(entry);
+    });
+  return keywords;
+}
+
+export function getAgaghhhBlockedKeywordsText() {
+  if (typeof GM_getValue !== 'function') return DEFAULT_AGAGHHH_BLOCKED_KEYWORDS;
+  const stored = GM_getValue(AGAGHHH_BLOCKED_KEYWORDS_KEY, null);
+  return stored === null || stored === undefined
+    ? DEFAULT_AGAGHHH_BLOCKED_KEYWORDS
+    : String(stored);
+}
+
+function normalizeAgaghhhBlockedKeywordsText(value) {
+  return parseAgaghhhBlockedKeywords(value).join('\n');
+}
+
 export function isAgaghhhRealActressEnabled() {
   return readBooleanSetting(AGAGHHH_REAL_ACTRESS_ENABLED_KEY);
 }
@@ -172,6 +216,62 @@ function isAgaghhhThreadResultUrl(value, baseUrl) {
   } catch {
     return false;
   }
+}
+
+export function collectAgaghhhSearchResults(document) {
+  if (!document) return [];
+  const baseUrl = document.baseURI || 'https://agaghhh.cc/';
+  return [...document.querySelectorAll('#ct .slst li.pbw')]
+    .map((element) => {
+      const link = element.querySelector(
+        'h3.xs3 a[href*="mod=viewthread"][href*="tid="], h3 a[href*="viewthread"], a[href*="mod=viewthread"][href*="tid="]'
+      );
+      if (!link) return null;
+      let url = '';
+      try {
+        url = new URL(link.getAttribute('href'), baseUrl).href;
+      } catch {
+        return null;
+      }
+      if (!isAgaghhhThreadResultUrl(url, baseUrl)) return null;
+      const forumLink = element.querySelector(
+        'a[href*="mod=forumdisplay"][href*="fid="]'
+      );
+      return {
+        element,
+        link,
+        url,
+        title: normalizeText(link.textContent),
+        forum: normalizeText(forumLink?.textContent),
+        text: normalizeText(element.textContent),
+      };
+    })
+    .filter(Boolean);
+}
+
+function isAgaghhhSearchResultBlocked(candidate, keywords) {
+  const haystack = normalizeSearchFilterText(
+    [candidate?.title, candidate?.forum, candidate?.text].filter(Boolean).join(' ')
+  );
+  return (keywords || []).some((keyword) => {
+    const normalizedKeyword = normalizeSearchFilterText(keyword);
+    return normalizedKeyword && haystack.includes(normalizedKeyword);
+  });
+}
+
+export function filterAgaghhhSearchResults(document, keywords) {
+  const candidates = collectAgaghhhSearchResults(document);
+  const blocked = [];
+  const remaining = [];
+  for (const candidate of candidates) {
+    (isAgaghhhSearchResultBlocked(candidate, keywords) ? blocked : remaining).push(candidate);
+  }
+  blocked.forEach(({ element }) => element.remove());
+  return { blocked, remaining };
+}
+
+function getAgaghhhBlockedKeywords() {
+  return parseAgaghhhBlockedKeywords(getAgaghhhBlockedKeywordsText());
 }
 
 export function collectAgaghhhSearchResultUrls(document) {
@@ -618,6 +718,16 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         <small style="display:block;margin-top:5px;color:#666">默认 5000 条；超过上限后自动删除最旧记录。默认标记颜色为 #bd10e0。关闭此功能不会删除已经保存的记录。</small>
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
+        <input data-setting="search-filter" type="checkbox" style="margin-top:3px">
+        <span><strong>搜索结果屏蔽</strong><small style="display:block;margin-top:2px;color:#666">在论坛搜索页按关键词隐藏结果；匹配标题、摘要或所属版块。</small></span>
+      </label>
+      <label data-search-filter-keywords-row style="display:block;margin:0 0 13px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">搜索结果屏蔽关键词</span>
+        <textarea data-setting="blocked-keywords" rows="4" placeholder="每行一个关键词，也支持逗号分隔"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
+        <small style="display:block;margin-top:5px;color:#666">默认屏蔽“无码破解 / 無碼破解”；可自行增删。关闭上方开关后不做任何屏蔽。</small>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
         <span><strong>下载增强</strong><small style="display:block;margin-top:2px;color:#666">在帖子页显示下载按钮，并使用现有附件、图片、种子下载与自动命名逻辑。</small></span>
       </label>
@@ -668,6 +778,8 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
+  const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
+  const blockedKeywordsInput = panel.querySelector('[data-setting="blocked-keywords"]');
   const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
   const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
   const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
@@ -684,6 +796,8 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
   crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
   copyCodeInput.checked = isAgaghhhCopyCodeEnabled();
+  searchFilterInput.checked = isAgaghhhSearchFilterEnabled();
+  blockedKeywordsInput.value = getAgaghhhBlockedKeywordsText();
   searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
   previewInput.checked = isAgaghhhHdblogPreviewEnabled();
   javfreePreviewInput.checked = isAgaghhhJavfreePreviewFallbackEnabled();
@@ -709,10 +823,14 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const syncPreviewFallbackFields = () => {
     javfreePreviewInput.disabled = !previewInput.checked;
   };
+  const syncSearchFilterFields = () => {
+    blockedKeywordsInput.disabled = !searchFilterInput.checked;
+  };
   syncBatchIntervalFields();
   syncBatchHistoryFields();
   syncDownloadGuardField();
   syncPreviewFallbackFields();
+  syncSearchFilterFields();
   batchInput.addEventListener('change', () => {
     syncBatchIntervalFields();
     syncBatchHistoryFields();
@@ -720,6 +838,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   batchHistoryInput.addEventListener('change', syncBatchHistoryFields);
   downloadInput.addEventListener('change', syncDownloadGuardField);
   previewInput.addEventListener('change', syncPreviewFallbackFields);
+  searchFilterInput.addEventListener('change', syncSearchFilterFields);
   batchIntervalResetButton.addEventListener('click', () => {
     batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
     batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
@@ -779,6 +898,11 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
       GM_setValue(AGAGHHH_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
+      GM_setValue(AGAGHHH_SEARCH_FILTER_ENABLED_KEY, searchFilterInput.checked);
+      GM_setValue(
+        AGAGHHH_BLOCKED_KEYWORDS_KEY,
+        normalizeAgaghhhBlockedKeywordsText(blockedKeywordsInput.value)
+      );
       GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
       GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
       GM_setValue(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
@@ -820,6 +944,9 @@ export function installAgaghhhEnhancement(
 ) {
   if (!document || !isAgaghhhHost(locationObject)) return;
 
+  if (isAgaghhhForumSearchPage(locationObject) && isAgaghhhSearchFilterEnabled()) {
+    filterAgaghhhSearchResults(document, getAgaghhhBlockedKeywords());
+  }
   if (installAgaghhhSearchAutoRedirect(document, locationObject)) return;
 
   if (!isAgaghhhBatchOpenEnabled()) {
