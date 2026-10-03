@@ -213,7 +213,10 @@ function styleViewportBleed(element) {
 
 function styleExpandedImage(image, fullUrl) {
   if (!fullUrl) return false;
-  if (image.dataset.x1080xPreviewLarge === '1' && image.src === fullUrl) return false;
+  if (image.dataset.x1080xPreviewLarge === '1' && image.src === fullUrl) {
+    makePreviewGestureFriendly(image);
+    return false;
+  }
 
   image.src = fullUrl;
   [
