@@ -13,6 +13,7 @@ export const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-o
 export const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
 export const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
 export const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
+export const AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:agaghhh-batch-open-unopened-only';
 export const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5000;
 export const DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 export const DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
@@ -90,6 +91,11 @@ export function getAgaghhhBatchOpenInterval() {
 export function isAgaghhhBatchOpenHistoryEnabled() {
   if (typeof GM_getValue !== 'function') return false;
   return GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, false) === true;
+}
+
+export function isAgaghhhBatchOpenUnopenedOnlyEnabled() {
+  if (typeof GM_getValue !== 'function') return false;
+  return GM_getValue(AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY, false) === true;
 }
 
 export function getAgaghhhBatchOpenHistoryLimit() {
@@ -588,6 +594,10 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         <span><strong>保存批量打开记录</strong><small style="display:block;margin-top:2px;color:#666">记录脚本批量打开过的主题并持久标记；手动访问过的链接也使用相同颜色显示。</small></span>
       </label>
       <div data-batch-open-history-row style="margin:0 0 13px 24px">
+        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+          <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
+          <span><strong>只打开未打开的主题</strong><small style="display:block;margin-top:2px;color:#666">批量打开时跳过已经保存在“批量打开记录”中的主题。</small></span>
+        </label>
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">最多保存</span>
           <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="批量打开记录保存条数"
@@ -642,6 +652,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
   const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
   const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
+  const batchUnopenedOnlyInput = panel.querySelector('[data-setting="batch-open-unopened-only"]');
   const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
   const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
   const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
@@ -657,6 +668,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
   batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
   batchHistoryInput.checked = isAgaghhhBatchOpenHistoryEnabled();
+  batchUnopenedOnlyInput.checked = isAgaghhhBatchOpenUnopenedOnlyEnabled();
   batchHistoryLimitInput.value = String(getAgaghhhBatchOpenHistoryLimit());
   batchHistoryColorInput.value = getAgaghhhBatchOpenHistoryColor();
   downloadInput.checked = isAgaghhhDownloadEnabled();
@@ -676,6 +688,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const syncBatchHistoryFields = () => {
     const detailsDisabled = !batchInput.checked || !batchHistoryInput.checked;
     batchHistoryInput.disabled = !batchInput.checked;
+    batchUnopenedOnlyInput.disabled = detailsDisabled;
     batchHistoryLimitInput.disabled = detailsDisabled;
     batchHistoryColorInput.disabled = false;
     batchHistoryColorResetButton.disabled = false;
@@ -738,6 +751,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
       GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY, batchHistoryInput.checked);
+      GM_setValue(AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY, batchUnopenedOnlyInput.checked);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
       if (typeof GM_getValue === 'function') {
