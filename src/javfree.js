@@ -552,17 +552,21 @@ export function installJavfreeEnhancement(
 }
 
 function hdblogCodeFromLocation(document, locationObject) {
-  const titleCode = extractJavfreeVideoCode(
-    document?.querySelector('h1.entry-title, #genesis-content h1, h1')?.textContent || ''
-  );
-  if (titleCode) return titleCode;
+  // HDblog 404 页面会把标题/主标题改成 ERROR-404，因此优先从原始 URL slug
+  // 提取番号；正常文章的 slug 本身也就是番号，这比错误页标题更可靠。
   try {
     const slug = new URL(locationObject?.href || document?.baseURI || '')
       .pathname.split('/').filter(Boolean).at(-1) || '';
-    return extractJavfreeVideoCode(slug);
+    const slugCode = extractJavfreeVideoCode(slug);
+    if (slugCode && !/^ERROR-?404$/i.test(slugCode)) return slugCode;
   } catch {
-    return '';
+    // 再回退到页面标题。
   }
+
+  const titleCode = extractJavfreeVideoCode(
+    document?.querySelector('h1.entry-title, #genesis-content h1, h1')?.textContent || ''
+  );
+  return /^ERROR-?404$/i.test(titleCode) ? '' : titleCode;
 }
 
 export function isDeletedHdblogArticlePage(document, locationObject = document?.location) {
@@ -574,17 +578,22 @@ export function isDeletedHdblogArticlePage(document, locationObject = document?.
     return false;
   }
   if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return false;
-  if (document.querySelector('main#genesis-content article.entry .entry-content, article.entry .entry-content')) {
-    return false;
-  }
 
   const bodyClass = String(document.body?.className || '');
   const signalText = normalizeText([
     document.title,
     document.querySelector('h1, .entry-title, .page-title')?.textContent,
   ].filter(Boolean).join(' '));
-  return /(?:^|\s)(?:error404|error-404|not-found)(?:\s|$)/i.test(bodyClass)
-    || /(?:\b404\b|page\s+not\s+found|not\s+found)/i.test(signalText);
+  const has404Signal =
+    /(?:^|\s)(?:error404|error-404|not-found)(?:\s|$)/i.test(bodyClass)
+    || /(?:\berror[-\s]?404\b|\b404\b|page\s+not\s+found|not\s+found)/i.test(signalText);
+  if (has404Signal) return true;
+
+  // 某些主题/缓存会保留 article.entry / .entry-content 外壳，
+  // 所以不能仅凭“存在正文容器”判断文章仍有效。
+  return !document.querySelector(
+    'main#genesis-content article.entry h1.entry-title, article.entry h1.entry-title'
+  );
 }
 
 function openJavfreeSearchTab(document, code) {
@@ -599,11 +608,18 @@ function openJavfreeSearchTab(document, code) {
   }
 
   if (typeof GM_openInTab === 'function') {
-    GM_openInTab(url, { active: true, insert: true, setParent: true });
-    return true;
+    try {
+      GM_openInTab(url, { active: true, insert: true, setParent: true });
+      return true;
+    } catch (error) {
+      console.warn('[x1080x-ex] GM_openInTab failed, fallback to window.open', {
+        url,
+        error: error?.message || String(error),
+      });
+    }
   }
-  document.defaultView?.open?.(url, '_blank', 'noopener');
-  return true;
+  const opened = document.defaultView?.open?.(url, '_blank');
+  return Boolean(opened);
 }
 
 function textNodesUnder(root) {
