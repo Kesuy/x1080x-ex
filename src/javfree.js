@@ -1,5 +1,6 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
+import { makePreviewGestureFriendly } from './preview-gesture.js';
 
 const JAVFREE_ORIGIN = 'https://javfree.me';
 const REQUEST_TIMEOUT = 30000;
@@ -904,6 +905,7 @@ export function renderHdblogJavfreePreview(document, result) {
     'display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain';
 
   anchor.append(image);
+  makePreviewGestureFriendly(image);
   section.append(heading, anchor);
   content.append(section);
   return section;
