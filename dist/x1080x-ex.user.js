@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.14
+// @version      1.10.15
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -5706,6 +5706,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var AGAGHHH_CROSS_SEARCH_ENABLED_KEY = "x1080x-ex:agaghhh-cross-search-enabled";
   var AGAGHHH_COPY_CODE_ENABLED_KEY = "x1080x-ex:agaghhh-copy-code-enabled";
   var AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:agaghhh-search-auto-redirect-enabled";
+  var AGAGHHH_SEARCH_FILTER_ENABLED_KEY = "x1080x-ex:agaghhh-search-filter-enabled";
+  var AGAGHHH_BLOCKED_KEYWORDS_KEY = "x1080x-ex:agaghhh-blocked-keywords";
+  var DEFAULT_AGAGHHH_BLOCKED_KEYWORDS = "\u65E0\u7801\u7834\u89E3\n\u7121\u78BC\u7834\u89E3";
   var AGAGHHH_REAL_ACTRESS_ENABLED_KEY = "x1080x-ex:agaghhh-real-actress-enabled";
   var AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = "x1080x-ex:agaghhh-hdblog-preview-enabled";
   var LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = "x1080x-ex:agaghhh-enhancement-enabled";
@@ -5797,6 +5800,32 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function isAgaghhhSearchAutoRedirectEnabled() {
     return readBooleanSetting(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY);
   }
+  function isAgaghhhSearchFilterEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(AGAGHHH_SEARCH_FILTER_ENABLED_KEY, true) !== false;
+  }
+  function normalizeSearchFilterText(value) {
+    return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  }
+  function parseAgaghhhBlockedKeywords(value) {
+    const seen = /* @__PURE__ */ new Set();
+    const keywords = [];
+    String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).forEach((entry) => {
+      const normalized = normalizeSearchFilterText(entry);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      keywords.push(entry);
+    });
+    return keywords;
+  }
+  function getAgaghhhBlockedKeywordsText() {
+    if (typeof GM_getValue !== "function") return DEFAULT_AGAGHHH_BLOCKED_KEYWORDS;
+    const stored = GM_getValue(AGAGHHH_BLOCKED_KEYWORDS_KEY, null);
+    return stored === null || stored === void 0 ? DEFAULT_AGAGHHH_BLOCKED_KEYWORDS : String(stored);
+  }
+  function normalizeAgaghhhBlockedKeywordsText(value) {
+    return parseAgaghhhBlockedKeywords(value).join("\n");
+  }
   function isAgaghhhRealActressEnabled() {
     return readBooleanSetting(AGAGHHH_REAL_ACTRESS_ENABLED_KEY);
   }
@@ -5825,6 +5854,56 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     } catch {
       return false;
     }
+  }
+  function collectAgaghhhSearchResults(document2) {
+    if (!document2) return [];
+    const baseUrl = document2.baseURI || "https://agaghhh.cc/";
+    return [...document2.querySelectorAll("#ct .slst li.pbw")].map((element) => {
+      const link = element.querySelector(
+        'h3.xs3 a[href*="mod=viewthread"][href*="tid="], h3 a[href*="viewthread"], a[href*="mod=viewthread"][href*="tid="]'
+      );
+      if (!link) return null;
+      let url = "";
+      try {
+        url = new URL(link.getAttribute("href"), baseUrl).href;
+      } catch {
+        return null;
+      }
+      if (!isAgaghhhThreadResultUrl(url, baseUrl)) return null;
+      const forumLink = element.querySelector(
+        'a[href*="mod=forumdisplay"][href*="fid="]'
+      );
+      return {
+        element,
+        link,
+        url,
+        title: normalizeText7(link.textContent),
+        forum: normalizeText7(forumLink?.textContent),
+        text: normalizeText7(element.textContent)
+      };
+    }).filter(Boolean);
+  }
+  function isAgaghhhSearchResultBlocked(candidate, keywords) {
+    const haystack = normalizeSearchFilterText(
+      [candidate?.title, candidate?.forum, candidate?.text].filter(Boolean).join(" ")
+    );
+    return (keywords || []).some((keyword) => {
+      const normalizedKeyword = normalizeSearchFilterText(keyword);
+      return normalizedKeyword && haystack.includes(normalizedKeyword);
+    });
+  }
+  function filterAgaghhhSearchResults(document2, keywords) {
+    const candidates = collectAgaghhhSearchResults(document2);
+    const blocked = [];
+    const remaining = [];
+    for (const candidate of candidates) {
+      (isAgaghhhSearchResultBlocked(candidate, keywords) ? blocked : remaining).push(candidate);
+    }
+    blocked.forEach(({ element }) => element.remove());
+    return { blocked, remaining };
+  }
+  function getAgaghhhBlockedKeywords() {
+    return parseAgaghhhBlockedKeywords(getAgaghhhBlockedKeywordsText());
   }
   function collectAgaghhhSearchResultUrls(document2) {
     if (!document2) return [];
@@ -6228,6 +6307,16 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <small style="display:block;margin-top:5px;color:#666">\u9ED8\u8BA4 5000 \u6761\uFF1B\u8D85\u8FC7\u4E0A\u9650\u540E\u81EA\u52A8\u5220\u9664\u6700\u65E7\u8BB0\u5F55\u3002\u9ED8\u8BA4\u6807\u8BB0\u989C\u8272\u4E3A #bd10e0\u3002\u5173\u95ED\u6B64\u529F\u80FD\u4E0D\u4F1A\u5220\u9664\u5DF2\u7ECF\u4FDD\u5B58\u7684\u8BB0\u5F55\u3002</small>
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
+        <input data-setting="search-filter" type="checkbox" style="margin-top:3px">
+        <span><strong>\u641C\u7D22\u7ED3\u679C\u5C4F\u853D</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u8BBA\u575B\u641C\u7D22\u9875\u6309\u5173\u952E\u8BCD\u9690\u85CF\u7ED3\u679C\uFF1B\u5339\u914D\u6807\u9898\u3001\u6458\u8981\u6216\u6240\u5C5E\u7248\u5757\u3002</small></span>
+      </label>
+      <label data-search-filter-keywords-row style="display:block;margin:0 0 13px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD</span>
+        <textarea data-setting="blocked-keywords" rows="4" placeholder="\u6BCF\u884C\u4E00\u4E2A\u5173\u952E\u8BCD\uFF0C\u4E5F\u652F\u6301\u9017\u53F7\u5206\u9694"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
+        <small style="display:block;margin-top:5px;color:#666">\u9ED8\u8BA4\u5C4F\u853D\u201C\u65E0\u7801\u7834\u89E3 / \u7121\u78BC\u7834\u89E3\u201D\uFF1B\u53EF\u81EA\u884C\u589E\u5220\u3002\u5173\u95ED\u4E0A\u65B9\u5F00\u5173\u540E\u4E0D\u505A\u4EFB\u4F55\u5C4F\u853D\u3002</small>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:6px">
         <input data-setting="download" type="checkbox" style="margin-top:3px">
         <span><strong>\u4E0B\u8F7D\u589E\u5F3A</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u9875\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u5E76\u4F7F\u7528\u73B0\u6709\u9644\u4EF6\u3001\u56FE\u7247\u3001\u79CD\u5B50\u4E0B\u8F7D\u4E0E\u81EA\u52A8\u547D\u540D\u903B\u8F91\u3002</small></span>
       </label>
@@ -6277,6 +6366,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
     const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
+    const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
+    const blockedKeywordsInput = panel.querySelector('[data-setting="blocked-keywords"]');
     const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
     const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
     const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
@@ -6293,6 +6384,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     downloadGuardInput.checked = isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY);
     crossSearchInput.checked = isAgaghhhCrossSearchEnabled();
     copyCodeInput.checked = isAgaghhhCopyCodeEnabled();
+    searchFilterInput.checked = isAgaghhhSearchFilterEnabled();
+    blockedKeywordsInput.value = getAgaghhhBlockedKeywordsText();
     searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
     previewInput.checked = isAgaghhhHdblogPreviewEnabled();
     javfreePreviewInput.checked = isAgaghhhJavfreePreviewFallbackEnabled();
@@ -6317,10 +6410,14 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const syncPreviewFallbackFields = () => {
       javfreePreviewInput.disabled = !previewInput.checked;
     };
+    const syncSearchFilterFields = () => {
+      blockedKeywordsInput.disabled = !searchFilterInput.checked;
+    };
     syncBatchIntervalFields();
     syncBatchHistoryFields();
     syncDownloadGuardField();
     syncPreviewFallbackFields();
+    syncSearchFilterFields();
     batchInput.addEventListener("change", () => {
       syncBatchIntervalFields();
       syncBatchHistoryFields();
@@ -6328,6 +6425,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     batchHistoryInput.addEventListener("change", syncBatchHistoryFields);
     downloadInput.addEventListener("change", syncDownloadGuardField);
     previewInput.addEventListener("change", syncPreviewFallbackFields);
+    searchFilterInput.addEventListener("change", syncSearchFilterFields);
     batchIntervalResetButton.addEventListener("click", () => {
       batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1e3);
       batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1e3);
@@ -6376,6 +6474,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
         GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
         GM_setValue(AGAGHHH_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
+        GM_setValue(AGAGHHH_SEARCH_FILTER_ENABLED_KEY, searchFilterInput.checked);
+        GM_setValue(
+          AGAGHHH_BLOCKED_KEYWORDS_KEY,
+          normalizeAgaghhhBlockedKeywordsText(blockedKeywordsInput.value)
+        );
         GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
         GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
         GM_setValue(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
@@ -6406,6 +6509,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2 || !isAgaghhhHost2(locationObject)) return;
+    if (isAgaghhhForumSearchPage(locationObject) && isAgaghhhSearchFilterEnabled()) {
+      filterAgaghhhSearchResults(document2, getAgaghhhBlockedKeywords());
+    }
     if (installAgaghhhSearchAutoRedirect(document2, locationObject)) return;
     if (!isAgaghhhBatchOpenEnabled()) {
       document2.getElementById(BATCH_BUTTON_ID2)?.remove();
