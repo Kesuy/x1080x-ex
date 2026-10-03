@@ -63,6 +63,8 @@ test('recognizes normal and FC2 codes in common hdblog title formats', () => {
   assert.equal(extractHdblogVideoCode('FC2-1234567 sample'), 'FC2-1234567');
   assert.equal(extractHdblogVideoCode('OLM-331E sample'), 'OLM-331E');
   assert.equal(extractHdblogVideoCode('olm301e sample'), 'OLM-301E');
+  assert.equal(extractHdblogVideoCode('T38-042 sample'), 'T38-042');
+  assert.equal(extractHdblogVideoCode('T38-038 sample'), 'T38-038');
 });
 
 test('detects a single article page but not an hdblog search result page', () => {
@@ -86,6 +88,18 @@ test('extracts the article code from title and falls back to the 品番 field', 
     title: 'OLM-331E お色気が限界突破の熟おねえさん',
   });
   assert.equal(extractHdblogArticleCode(trailingLetter.window.document), 'OLM-331E');
+
+  const numericPrefix042 = articleDom({
+    url: 'https://hdblog.me/815219/t38-042/',
+    title: 'T38-042 sample',
+  });
+  assert.equal(extractHdblogArticleCode(numericPrefix042.window.document), 'T38-042');
+
+  const numericPrefix038 = articleDom({
+    url: 'https://hdblog.me/790947/t38-038/',
+    title: 'T38-038 sample',
+  });
+  assert.equal(extractHdblogArticleCode(numericPrefix038.window.document), 'T38-038');
 
   const labelled = articleDom({
     title: '憧れの女上司と 妃ひかり',
