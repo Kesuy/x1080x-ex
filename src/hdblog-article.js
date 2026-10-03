@@ -324,7 +324,11 @@ export function extractHdblogVideoCode(value) {
   const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
   if (fc2) return `FC2${fc2[1] ? '-PPV' : ''}-${fc2[2]}`;
 
-  const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)\b/i);
+  // 数字也可能属于厂牌前缀，例如 T38-042。优先识别“字母开头的字母数字前缀 + 连字符”，
+  // 再保留原有的纯字母前缀兼容（MOND-308 / mond308 / OLM-331E）。
+  const alphanumericPrefix = text.match(/\b([A-Z][A-Z0-9]{1,11})-(\d{2,8}[A-Z]?)\b/i);
+  const standard = alphanumericPrefix
+    || text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)\b/i);
   if (!standard) return '';
   const prefix = standard[1];
   if (['HTTP', 'HTTPS', 'IMG', 'IMAGE', 'JPG', 'JPEG', 'PNG', 'WEBP', 'ERROR'].includes(prefix)) return '';
