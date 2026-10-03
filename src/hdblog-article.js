@@ -6,6 +6,15 @@ import {
   beginDownloadGuard,
   isDownloadGuardEnabled,
 } from './download-guard.js';
+import {
+  HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY,
+  HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY,
+  JAVFREE_PREVIEW_ATTR,
+  PREVIEW_REFERER_ATTR,
+  fetchJavfreePreviewForCode,
+  isHdblogDeletedJavfreeSearchEnabled,
+  isHdblogJavfreePreviewFallbackEnabled,
+} from './javfree.js';
 
 export const HDBLOG_ARTICLE_WIDTH_KEY = 'x1080x-ex:hdblog-article-width';
 export const HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY = 'x1080x-ex:hdblog-article-layout-enabled';
@@ -548,26 +557,49 @@ export function collectHdblogPixhostPreviewImages(document) {
   const content = articleContentElement(document);
   if (!content) return [];
   const range = previewRange(content);
-  if (!range) return [];
   const seen = new Set();
+  const candidates = [];
 
-  return [...content.querySelectorAll('a[href]')]
-    .filter((anchor) => inPreviewRange(range, anchor))
-    .map((anchor) => {
-      const image = anchor.querySelector('img');
-      if (!image) return null;
-      const href = absoluteHttpUrl(document, anchor.getAttribute('href'));
-      const pixhostShowUrl = isPixhostShowUrl(href, document.baseURI) ? href : '';
-      const directUrl = displayedPixhostImageUrl(document, image);
-      if (!pixhostShowUrl && !directUrl) return null;
-      return {
-        image,
-        pixhostShowUrl,
-        thumbUrl: thumbnailUrl(document, image),
-        directUrl,
-      };
-    })
-    .filter(Boolean)
+  if (range) {
+    candidates.push(
+      ...[...content.querySelectorAll('a[href]')]
+        .filter((anchor) => inPreviewRange(range, anchor))
+        .map((anchor) => {
+          const image = anchor.querySelector('img');
+          if (!image) return null;
+          const href = absoluteHttpUrl(document, anchor.getAttribute('href'));
+          const pixhostShowUrl = isPixhostShowUrl(href, document.baseURI) ? href : '';
+          const directUrl = displayedPixhostImageUrl(document, image);
+          if (!pixhostShowUrl && !directUrl) return null;
+          return {
+            image,
+            pixhostShowUrl,
+            thumbUrl: thumbnailUrl(document, image),
+            directUrl,
+            referer: document.baseURI,
+          };
+        })
+        .filter(Boolean)
+    );
+  }
+
+  candidates.push(
+    ...[...content.querySelectorAll('img[' + JAVFREE_PREVIEW_ATTR + ']')]
+      .map((image) => {
+        const directUrl = absoluteHttpUrl(document, image.getAttribute(JAVFREE_PREVIEW_ATTR));
+        if (!directUrl) return null;
+        return {
+          image,
+          pixhostShowUrl: '',
+          thumbUrl: directUrl,
+          directUrl,
+          referer: image.getAttribute(PREVIEW_REFERER_ATTR) || 'https://javfree.me/',
+        };
+      })
+      .filter(Boolean)
+  );
+
+  return candidates
     .filter((candidate) => {
       const key = candidate.pixhostShowUrl || candidate.directUrl;
       return !seen.has(key) && seen.add(key);
@@ -677,9 +709,13 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
     return;
   }
 
-  const candidates = initialCandidates.length
-    ? initialCandidates
-    : collectHdblogPixhostPreviewImages(document);
+  const liveCandidates = collectHdblogPixhostPreviewImages(document);
+  const candidateMap = new Map();
+  [...initialCandidates, ...liveCandidates].forEach((candidate) => {
+    const key = candidate?.pixhostShowUrl || candidate?.directUrl || candidate?.thumbUrl;
+    if (key && !candidateMap.has(key)) candidateMap.set(key, candidate);
+  });
+  const candidates = [...candidateMap.values()];
   if (!candidates.length) {
     showStatus('无 Preview', 'Preview 区没有找到 Pixhost show 图片。');
     return;
@@ -745,7 +781,11 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
           ? `4K 回退下载 ${index + 1}/${resolved.length}`
           : `下载 ${index + 1}/${resolved.length}`;
         try {
-          const blob = await requestImageBlob(url, locationObject?.href, gmRequest);
+          const blob = await requestImageBlob(
+            url,
+            candidate?.referer || locationObject?.href,
+            gmRequest
+          );
           const extension = extensionFromBlob(blob, url);
           saveBlob(
             document,
@@ -780,12 +820,34 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
       break;
     }
 
+    if (!downloaded && isHdblogJavfreePreviewFallbackEnabled()) {
+      try {
+        button.textContent = '尝试 JavFree Preview…';
+        const javfree = await fetchJavfreePreviewForCode(code, gmRequest, document);
+        const javfreeUrl = javfree.imageUrls?.[0] || '';
+        if (javfreeUrl) {
+          const blob = await requestImageBlob(
+            javfreeUrl,
+            javfree.referer || javfree.articleUrl || 'https://javfree.me/',
+            gmRequest
+          );
+          const extension = extensionFromBlob(blob, javfreeUrl);
+          saveBlob(document, blob, hdblogImageFilename(code, 0, 1, extension));
+          downloaded = 1;
+          failures.length = 0;
+          skipped = 0;
+        }
+      } catch (error) {
+        failures.push('JavFree：' + (error?.message || 'Preview 下载失败'));
+      }
+    }
+
     if (!downloaded && !failures.length) {
       if (skipped) {
         showStatus('已跳过失效 Preview', 'Pixhost Preview 已失效，未下载占位图。');
         return;
       }
-      showStatus('无可下载 Preview', '没有解析到可下载的 Pixhost Preview 大图。');
+      showStatus('无可下载 Preview', 'HDblog 与 JavFree 都没有可下载的 Preview。');
       return;
     }
   } catch (error) {
@@ -1113,9 +1175,17 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <input data-setting="copy-code" type="checkbox">
         显示复制番号按钮（📋）
       </label>
-      <label style="display:flex;align-items:center;gap:9px">
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="expand-preview" type="checkbox">
         自动展开 Preview 大图（含 Pixhost / refer 解析）
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
+        <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
+        <span>JavFree Preview 后备源<small style="display:block;margin-top:2px;color:#666">当前文章没有可用 Preview 或 Pixhost 已失效时，按番号从 javfree.me 补充第 2 张 Preview。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px">
+        <input data-setting="deleted-javfree-search" type="checkbox" style="margin-top:3px">
+        <span>已删除文章自动搜索 JavFree<small style="display:block;margin-top:2px;color:#666">访问 HDblog 已删除的历史文章时，自动新开标签搜索同番号的 javfree.me。</small></span>
       </label>
     </div>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
@@ -1184,6 +1254,8 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
   const previewInput = panel.querySelector('[data-setting="expand-preview"]');
+  const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
+  const deletedJavfreeSearchInput = panel.querySelector('[data-setting="deleted-javfree-search"]');
   const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
   const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
   const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
@@ -1204,6 +1276,8 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   crossSearchInput.checked = isHdblogCrossSearchEnabled();
   copyCodeInput.checked = isHdblogCopyCodeEnabled();
   previewInput.checked = isHdblogPreviewExpansionEnabled();
+  javfreePreviewInput.checked = isHdblogJavfreePreviewFallbackEnabled();
+  deletedJavfreeSearchInput.checked = isHdblogDeletedJavfreeSearchEnabled();
   batchOpenInput.checked = isHdblogBatchOpenEnabled();
   const batchInterval = getHdblogBatchOpenInterval();
   batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
@@ -1219,6 +1293,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     widthInput.disabled = !layoutInput.checked;
     downloadGuardInput.disabled = !imageDownloadInput.checked;
     keywordsInput.disabled = !searchFilterInput.checked;
+    javfreePreviewInput.disabled = !previewInput.checked;
     const batchIntervalDisabled = !batchOpenInput.checked;
     batchIntervalMinInput.disabled = batchIntervalDisabled;
     batchIntervalMaxInput.disabled = batchIntervalDisabled;
@@ -1231,6 +1306,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   layoutInput.addEventListener('change', syncDependentFields);
   imageDownloadInput.addEventListener('change', syncDependentFields);
   searchFilterInput.addEventListener('change', syncDependentFields);
+  previewInput.addEventListener('change', syncDependentFields);
   batchOpenInput.addEventListener('change', syncDependentFields);
   batchHistoryInput.addEventListener('change', syncDependentFields);
   batchIntervalResetButton.addEventListener('click', () => {
@@ -1291,6 +1367,8 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
       GM_setValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, copyCodeInput.checked);
       GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, previewInput.checked);
+      GM_setValue(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
+      GM_setValue(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, deletedJavfreeSearchInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
       GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
