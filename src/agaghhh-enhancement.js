@@ -5,6 +5,10 @@ import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
   isDownloadGuardEnabled,
 } from './download-guard.js';
+import {
+  AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY,
+  isAgaghhhJavfreePreviewFallbackEnabled,
+} from './javfree.js';
 
 export const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
 export const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
@@ -637,6 +641,10 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
         <span><strong>显示 hdblog 大预览图</strong><small style="display:block;margin-top:2px;color:#666">按帖子番号搜索 hdblog，沿用 hdblog 的“搜索结果屏蔽关键词”，并把匹配文章的 Preview 大图显示到主楼。</small></span>
       </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin:-5px 0 13px 24px">
+        <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
+        <span><strong>JavFree Preview 后备源</strong><small style="display:block;margin-top:2px;color:#666">hdblog 没有可用 Preview 时，再搜索 javfree.me，并只取封面后的第 1 张 Preview。</small></span>
+      </label>
       <label style="display:flex;align-items:flex-start;gap:9px">
         <input data-setting="real-actress" type="checkbox" style="margin-top:3px">
         <span><strong>查真实演员信息</strong><small style="display:block;margin-top:2px;color:#666">仅当帖子“出演者”为空且启用了下载增强时，通过 av-wiki 查询演员并追加到附件文件名。</small></span>
@@ -662,6 +670,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
   const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
   const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
+  const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
   const actressInput = panel.querySelector('[data-setting="real-actress"]');
   batchInput.checked = isAgaghhhBatchOpenEnabled();
   const batchInterval = getAgaghhhBatchOpenInterval();
@@ -677,6 +686,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   copyCodeInput.checked = isAgaghhhCopyCodeEnabled();
   searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
   previewInput.checked = isAgaghhhHdblogPreviewEnabled();
+  javfreePreviewInput.checked = isAgaghhhJavfreePreviewFallbackEnabled();
   actressInput.checked = isAgaghhhRealActressEnabled();
 
   const syncBatchIntervalFields = () => {
@@ -696,15 +706,20 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   const syncDownloadGuardField = () => {
     downloadGuardInput.disabled = !downloadInput.checked;
   };
+  const syncPreviewFallbackFields = () => {
+    javfreePreviewInput.disabled = !previewInput.checked;
+  };
   syncBatchIntervalFields();
   syncBatchHistoryFields();
   syncDownloadGuardField();
+  syncPreviewFallbackFields();
   batchInput.addEventListener('change', () => {
     syncBatchIntervalFields();
     syncBatchHistoryFields();
   });
   batchHistoryInput.addEventListener('change', syncBatchHistoryFields);
   downloadInput.addEventListener('change', syncDownloadGuardField);
+  previewInput.addEventListener('change', syncPreviewFallbackFields);
   batchIntervalResetButton.addEventListener('click', () => {
     batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
     batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
@@ -766,6 +781,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
       GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
       GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
+      GM_setValue(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
       GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
     }
     closeX1080xSettingsPanel(document);

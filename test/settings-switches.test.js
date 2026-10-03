@@ -31,6 +31,11 @@ import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
   HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY,
 } from '../src/download-guard.js';
+import {
+  AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY,
+  HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY,
+  HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY,
+} from '../src/javfree.js';
 
 function withGm(values, callback) {
   const oldGet = globalThis.GM_getValue;
@@ -57,7 +62,7 @@ test('x1080x settings exposes every independent agaghhh feature switch', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   withGm(new Map(), () => {
     const panel = openX1080xSettingsPanel(dom.window.document);
-    for (const key of ['batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'real-actress']) {
+    for (const key of ['batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'javfree-preview-fallback', 'real-actress']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });
@@ -151,6 +156,50 @@ test('batch-open history defaults off, enables its limit field, and saves the co
   });
 });
 
+test('JavFree fallback switches default on, follow their dependencies, and save independently', () => {
+  const agaghhhDom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
+  const agaghhhValues = new Map();
+  withGm(agaghhhValues, () => {
+    const panel = openX1080xSettingsPanel(agaghhhDom.window.document);
+    const master = panel.querySelector('[data-setting="hdblog-preview"]');
+    const javfree = panel.querySelector('[data-setting="javfree-preview-fallback"]');
+    assert.equal(javfree.checked, true);
+    assert.equal(javfree.disabled, false);
+    master.click();
+    assert.equal(javfree.disabled, true);
+    master.click();
+    javfree.click();
+    panel.querySelector('form')?.dispatchEvent(new agaghhhDom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }));
+    assert.equal(agaghhhValues.get(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY), false);
+  });
+
+  const hdblogDom = hdblogArticleDom();
+  const hdblogValues = new Map();
+  withGm(hdblogValues, () => {
+    const panel = openHdblogSettingsPanel(hdblogDom.window.document);
+    const master = panel.querySelector('[data-setting="expand-preview"]');
+    const javfree = panel.querySelector('[data-setting="javfree-preview-fallback"]');
+    const deleted = panel.querySelector('[data-setting="deleted-javfree-search"]');
+    assert.equal(javfree.checked, true);
+    assert.equal(deleted.checked, true);
+    assert.equal(javfree.disabled, false);
+    master.click();
+    assert.equal(javfree.disabled, true);
+    master.click();
+    javfree.click();
+    deleted.click();
+    panel.querySelector('form')?.dispatchEvent(new hdblogDom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }));
+    assert.equal(hdblogValues.get(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY), false);
+    assert.equal(hdblogValues.get(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY), false);
+  });
+});
+
 test('x1080x settings menu callback opens the panel without throwing', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
   const oldRegister = globalThis.GM_registerMenuCommand;
@@ -190,7 +239,7 @@ test('hdblog settings exposes layout, cross-search, preview, batch-open and sear
   const dom = hdblogArticleDom();
   withGm(new Map(), () => {
     const panel = openHdblogSettingsPanel(dom.window.document);
-    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter']) {
+    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'javfree-preview-fallback', 'deleted-javfree-search', 'batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });

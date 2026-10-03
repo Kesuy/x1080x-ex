@@ -313,7 +313,7 @@ export function injectOfficialPreviewFallbackSetting(document = globalThis.docum
   const strong = masterLabel?.querySelector('strong');
   const small = masterLabel?.querySelector('small');
   if (strong) strong.textContent = '显示大预览图';
-  if (small) small.textContent = '优先按番号搜索 hdblog；hdblog 没有匹配大图时，可继续使用官方后备源。';
+  if (small) small.textContent = '优先按番号搜索 hdblog；没有可用 Preview 时依次尝试 JavFree，再尝试官方后备源。';
 
   let input = form.querySelector('[data-setting="official-preview-fallback"]');
   if (!input) {
@@ -321,8 +321,9 @@ export function injectOfficialPreviewFallbackSetting(document = globalThis.docum
     label.style.cssText = 'display:flex;align-items:flex-start;gap:9px;margin:-3px 0 13px 24px';
     label.innerHTML = `
       <input data-setting="official-preview-fallback" type="checkbox" style="margin-top:3px">
-      <span><strong>官方后备预览图（FANZA / MGStage）</strong><small style="display:block;margin-top:2px;color:#666">仅在 hdblog 没找到 Preview 时启用，顺序为 FANZA 官方图片 CDN → MGStage 官方商品页。</small></span>`;
-    masterLabel?.after(label);
+      <span><strong>官方后备预览图（FANZA / MGStage）</strong><small style="display:block;margin-top:2px;color:#666">仅在 hdblog 和 JavFree 都没有可用 Preview 时启用，顺序为 FANZA 官方图片 CDN → MGStage 官方商品页。</small></span>`;
+    const javfreeLabel = form.querySelector('[data-setting="javfree-preview-fallback"]')?.closest('label');
+    (javfreeLabel || masterLabel)?.after(label);
     input = label.querySelector('[data-setting="official-preview-fallback"]');
   }
   input.checked = isOfficialPreviewFallbackEnabled();

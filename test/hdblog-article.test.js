@@ -14,6 +14,19 @@ import {
   normalizeHdblogArticleWidth,
   openHdblogSettingsPanel,
 } from '../src/hdblog-article.js';
+import { HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY } from '../src/javfree.js';
+
+function disableJavfreePreviewFallback() {
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => {
+    if (key === HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY) return false;
+    return typeof oldGet === 'function' ? oldGet(key, fallback) : fallback;
+  };
+  return () => {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+  };
+}
 
 function articleDom({
   url = 'https://hdblog.me/986480/mond-308/',
@@ -81,6 +94,36 @@ test('extracts the article code from title and falls back to the 品番 field', 
   assert.equal(extractHdblogArticleCode(labelled.window.document), 'MOND-308');
 });
 
+test('ERROR-404 page uses URL slug code for agaghhh search instead of ERROR-404', () => {
+  const dom = articleDom({
+    url: 'https://hdblog.me/768141/pjam-034/',
+    title: 'ERROR-404',
+    content: '<p>The page you requested could not be found.</p>',
+  });
+  dom.window.document.body.className = 'error404';
+
+  assert.equal(extractHdblogArticleCode(dom.window.document), 'PJAM-034');
+  assert.equal(extractHdblogVideoCode('ERROR-404'), '');
+
+  const oldOpen = globalThis.GM_openInTab;
+  const opened = [];
+  globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
+  try {
+    installHdblogArticleEnhancement(dom.window.document, dom.window.location, () => {});
+    const button = dom.window.document.querySelector('#x1080x-ex-hdblog-agaghhh-search');
+    assert.ok(button);
+    button.click();
+    assert.deepEqual(opened, [{
+      url: 'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=PJAM-034&orderby=lastpost&ascdesc=desc',
+      options: { active: true, insert: true, setParent: true },
+    }]);
+  } finally {
+    if (oldOpen === undefined) delete globalThis.GM_openInTab;
+    else globalThis.GM_openInTab = oldOpen;
+    dom.window.close();
+  }
+});
+
 test('downloads only Pixhost show images inside the Preview section', () => {
   const dom = articleDom({
     content: `
@@ -125,7 +168,8 @@ test('multiple image names use 番号-1 / 番号-2 and preserve the real image e
   assert.equal(hdblogImageFilename('FC2-PPV-1234567', 1, 3, 'png'), 'FC2-PPV-1234567-2.png');
 });
 
-test('removed Pixhost Preview is resolved only once and never downloaded as an image blob', async () => {
+test('removed Pixhost Preview is resolved only once and never downloaded as an image blob', async (t) => {
+  t.after(disableJavfreePreviewFallback());
   const dom = articleDom({
     title: 'EBWH-319 sample',
     url: 'https://hdblog.me/900669/ebwh-319/',
@@ -172,7 +216,8 @@ test('removed Pixhost Preview is resolved only once and never downloaded as an i
   dom.window.close();
 });
 
-test('Pixhost Preview 大图返回 404 时按失效图跳过，不显示失败状态', async () => {
+test('Pixhost Preview 大图返回 404 时按失效图跳过，不显示失败状态', async (t) => {
+  t.after(disableJavfreePreviewFallback());
   const dom = articleDom({
     title: 'EBWH-319 sample',
     url: 'https://hdblog.me/900669/ebwh-319/',
@@ -217,7 +262,8 @@ test('Pixhost Preview 大图返回 404 时按失效图跳过，不显示失败�
   dom.window.close();
 });
 
-test('hdblog download prefers standard Preview and falls back to 4K only when the standard image cannot be downloaded', async () => {
+test('hdblog download prefers standard Preview and falls back to 4K only when the standard image cannot be downloaded', async (t) => {
+  t.after(disableJavfreePreviewFallback());
   const dom = articleDom({
     title: 'FALL-001 sample',
     url: 'https://hdblog.me/999001/fall-001/',

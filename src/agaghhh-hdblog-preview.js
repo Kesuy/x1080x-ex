@@ -15,6 +15,10 @@ import {
   installOfficialPreviewFallbackSetting,
   isOfficialPreviewFallbackEnabled,
 } from './agaghhh-preview-official.js';
+import {
+  fetchJavfreePreviewForCode,
+  isAgaghhhJavfreePreviewFallbackEnabled,
+} from './javfree.js';
 
 installOfficialPreviewFallbackSetting();
 
@@ -537,6 +541,17 @@ export async function installAgaghhhHdblogPreview(
       code,
       error: error?.message || String(error),
     });
+  }
+
+  if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
+    try {
+      result = await fetchJavfreePreviewForCode(code, gmRequest, document);
+    } catch (error) {
+      console.warn('[x1080x-ex] JavFree preview fallback failed', {
+        code,
+        error: error?.message || String(error),
+      });
+    }
   }
 
   if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
