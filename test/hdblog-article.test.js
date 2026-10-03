@@ -94,6 +94,36 @@ test('extracts the article code from title and falls back to the 品番 field', 
   assert.equal(extractHdblogArticleCode(labelled.window.document), 'MOND-308');
 });
 
+test('ERROR-404 page uses URL slug code for agaghhh search instead of ERROR-404', () => {
+  const dom = articleDom({
+    url: 'https://hdblog.me/768141/pjam-034/',
+    title: 'ERROR-404',
+    content: '<p>The page you requested could not be found.</p>',
+  });
+  dom.window.document.body.className = 'error404';
+
+  assert.equal(extractHdblogArticleCode(dom.window.document), 'PJAM-034');
+  assert.equal(extractHdblogVideoCode('ERROR-404'), '');
+
+  const oldOpen = globalThis.GM_openInTab;
+  const opened = [];
+  globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
+  try {
+    installHdblogArticleEnhancement(dom.window.document, dom.window.location, () => {});
+    const button = dom.window.document.querySelector('#x1080x-ex-hdblog-agaghhh-search');
+    assert.ok(button);
+    button.click();
+    assert.deepEqual(opened, [{
+      url: 'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=PJAM-034&orderby=lastpost&ascdesc=desc',
+      options: { active: true, insert: true, setParent: true },
+    }]);
+  } finally {
+    if (oldOpen === undefined) delete globalThis.GM_openInTab;
+    else globalThis.GM_openInTab = oldOpen;
+    dom.window.close();
+  }
+});
+
 test('downloads only Pixhost show images inside the Preview section', () => {
   const dom = articleDom({
     content: `
