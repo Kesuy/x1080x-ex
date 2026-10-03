@@ -3,8 +3,10 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import {
   HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY,
+  JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY,
   JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY,
   JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY,
+  buildJavfreeAgaghhhSearchUrl,
   collectJavfreeArticleImages,
   fetchJavfreePreviewForCode,
   installHdblogJavfreeFallback,
@@ -281,19 +283,21 @@ test('HDblog without usable Preview injects JavFree second image as fallback', a
   }
 });
 
-test('JavFree settings expose independent redirect and Preview-download switches', () => {
+test('JavFree settings expose independent redirect, agaghhh-search and Preview-download switches', () => {
   const dom = sanArticleDom();
   const values = new Map();
   withGm(values, () => {
     const panel = openJavfreeSettingsPanel(dom.window.document);
     const redirect = panel.querySelector('[data-setting="search-auto-redirect"]');
+    const agaghhhSearch = panel.querySelector('[data-setting="agaghhh-search"]');
     const download = panel.querySelector('[data-setting="preview-download"]');
     assert.equal(redirect.checked, true);
+    assert.equal(agaghhhSearch.checked, true);
     assert.equal(download.checked, true);
   });
 });
 
-test('JavFree switches can independently disable redirect and download button', () => {
+test('JavFree switches can independently disable redirect, agaghhh search and download button', () => {
   const search = new JSDOM(`<!doctype html><body><main id="main">
     <article><h2 class="entry-title"><a href="/436747/san-437">SAN-437</a></h2></article>
   </main></body>`, { url: 'https://javfree.me/search/SAN-437' });
@@ -302,12 +306,56 @@ test('JavFree switches can independently disable redirect and download button', 
     assert.equal(result.redirectTarget, '');
   });
 
+  const noSearch = sanArticleDom();
+  withGm(new Map([[JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, false]]), () => {
+    const result = installJavfreeEnhancement(
+      noSearch.window.document,
+      noSearch.window.location,
+      () => {}
+    );
+    assert.equal(result.searchButton, null);
+    assert.equal(
+      noSearch.window.document.getElementById('x1080x-ex-javfree-agaghhh-search'),
+      null
+    );
+  });
+
   const article = sanArticleDom();
   withGm(new Map([[JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, false]]), () => {
     const result = installJavfreeEnhancement(article.window.document, article.window.location, () => {});
     assert.equal(result.button, null);
     assert.equal(article.window.document.getElementById('x1080x-ex-javfree-preview-download'), null);
   });
+});
+
+test('JavFree detail search button recognizes code and opens agaghhh forum search', () => {
+  assert.equal(
+    buildJavfreeAgaghhhSearchUrl('SAN-437'),
+    'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=SAN-437&orderby=lastpost&ascdesc=desc'
+  );
+
+  const dom = sanArticleDom();
+  const oldGet = globalThis.GM_getValue;
+  const oldOpen = globalThis.GM_openInTab;
+  const opened = [];
+  globalThis.GM_getValue = (_key, fallback) => fallback;
+  globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
+  try {
+    const result = installJavfreeEnhancement(dom.window.document, dom.window.location, () => {});
+    assert.ok(result.searchButton);
+    assert.equal(result.searchButton.textContent, '🔍');
+    result.searchButton.click();
+    assert.deepEqual(opened, [{
+      url: 'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=SAN-437&orderby=lastpost&ascdesc=desc',
+      options: { active: true, insert: true, setParent: true },
+    }]);
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+    if (oldOpen === undefined) delete globalThis.GM_openInTab;
+    else globalThis.GM_openInTab = oldOpen;
+    dom.window.close();
+  }
 });
 
 test('JavFree Preview download saves the second image as code.jpg', async () => {
