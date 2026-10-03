@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.13
+// @version      1.10.14
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -2343,6 +2343,7 @@ ${failures.join("\n")}
   var JAVFREE_SETTINGS_PANEL_ID = "x1080x-ex-javfree-settings-panel";
   var JAVFREE_DOWNLOAD_BUTTON_ID = "x1080x-ex-javfree-preview-download";
   var JAVFREE_AGAGHHH_SEARCH_BUTTON_ID = "x1080x-ex-javfree-agaghhh-search";
+  var JAVFREE_COPY_CODE_BUTTON_ID = "x1080x-ex-javfree-copy-code";
   var JAVFREE_PREVIEW_ATTR = "data-x1080x-javfree-preview-url";
   var PREVIEW_REFERER_ATTR2 = "data-x1080x-preview-referer";
   var AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:agaghhh-javfree-preview-fallback-enabled";
@@ -2351,6 +2352,7 @@ ${failures.join("\n")}
   var JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:javfree-search-auto-redirect-enabled";
   var JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY = "x1080x-ex:javfree-preview-download-enabled";
   var JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY = "x1080x-ex:javfree-agaghhh-search-enabled";
+  var JAVFREE_COPY_CODE_ENABLED_KEY = "x1080x-ex:javfree-copy-code-enabled";
   var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
   var HDBLOG_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
   function normalizeText(value) {
@@ -2449,6 +2451,9 @@ ${failures.join("\n")}
   }
   function isJavfreeAgaghhhSearchEnabled() {
     return readEnabled(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, true);
+  }
+  function isJavfreeCopyCodeEnabled() {
+    return readEnabled(JAVFREE_COPY_CODE_ENABLED_KEY, true);
   }
   function isJavfreeHost(locationObject = globalThis.location) {
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
@@ -2599,6 +2604,31 @@ ${failures.join("\n")}
     }
     return Boolean(document2.defaultView?.open?.(url, "_blank"));
   }
+  function styleJavfreeActionButton(button) {
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      if (!button.disabled) button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      if (!button.disabled) button.style.background = "#398bd4";
+    });
+  }
   function installJavfreeAgaghhhSearchButton(document2, locationObject) {
     if (!isJavfreeAgaghhhSearchEnabled() || document2.getElementById(JAVFREE_AGAGHHH_SEARCH_BUTTON_ID)) {
       return null;
@@ -2621,33 +2651,44 @@ ${failures.join("\n")}
     button.textContent = "\u{1F50D}";
     button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 agaghhh.cc \u641C\u7D22";
     button.setAttribute("aria-label", "\u5728 agaghhh.cc \u641C\u7D22\u5F53\u524D\u756A\u53F7");
-    Object.assign(button.style, {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      verticalAlign: "middle",
-      margin: "0 0 4px 8px",
-      padding: "5px 8px",
-      minWidth: "34px",
-      border: "1px solid #2878c8",
-      borderRadius: "5px",
-      color: "#fff",
-      background: "#398bd4",
-      cursor: "pointer",
-      fontSize: "13px",
-      fontWeight: "600",
-      lineHeight: "20px"
-    });
-    button.addEventListener("mouseenter", () => {
-      button.style.background = "#246eaf";
-    });
-    button.addEventListener("mouseleave", () => {
-      button.style.background = "#398bd4";
-    });
+    styleJavfreeActionButton(button);
     button.addEventListener("click", () => {
       openJavfreeAgaghhhSearch(document2, javfreeCodeFromDocument(document2, locationObject));
     });
-    title.append(" ", button);
+    title.append(button);
+    return button;
+  }
+  function installJavfreeCopyCodeButton(document2, locationObject) {
+    if (!isJavfreeCopyCodeEnabled() || document2.getElementById(JAVFREE_COPY_CODE_BUTTON_ID)) {
+      return null;
+    }
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return null;
+    }
+    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
+    const title = document2.querySelector(
+      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
+    );
+    const code = javfreeCodeFromDocument(document2, locationObject);
+    if (!title || !code) return null;
+    const button = document2.createElement("button");
+    button.id = JAVFREE_COPY_CODE_BUTTON_ID;
+    button.type = "button";
+    button.textContent = "\u{1F4CB}";
+    button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
+    button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
+    styleJavfreeActionButton(button);
+    button.addEventListener("click", () => {
+      void copyCodeWithButtonFeedback(
+        button,
+        document2,
+        javfreeCodeFromDocument(document2, locationObject)
+      );
+    });
+    title.append(button);
     return button;
   }
   async function fetchJavfreePreviewForCode(code, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
@@ -2798,7 +2839,7 @@ ${failures.join("\n")}
       locationObject,
       request
     ));
-    title.append(" ", button);
+    title.append(button);
     return button;
   }
   function closeJavfreeSettingsPanel(document2) {
@@ -2841,6 +2882,10 @@ ${failures.join("\n")}
       <input data-setting="agaghhh-search" type="checkbox" style="margin-top:3px">
       <span><strong>agaghhh.cc \u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u8BC6\u522B\u5F53\u524D\u756A\u53F7\uFF0C\u5E76\u5728 agaghhh.cc \u8BBA\u575B\u4E2D\u641C\u7D22\u3002</small></span>
     </label>
+    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
+      <span><strong>\u590D\u5236\u756A\u53F7\u6309\u94AE\uFF08\u{1F4CB}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u6807\u9898\u65C1\u663E\u793A\u590D\u5236\u6309\u94AE\uFF0C\u884C\u4E3A\u4E0E HDblog \u4E00\u81F4\u3002</small></span>
+    </label>
     <label style="display:flex;align-items:flex-start;gap:9px">
       <input data-setting="preview-download" type="checkbox" style="margin-top:3px">
       <span><strong>Preview \u4E0B\u8F7D\u6309\u94AE</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u6807\u9898\u65C1\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u53EA\u4E0B\u8F7D\u5C01\u9762\u540E\u7684 Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D\u3002</small></span>
@@ -2851,9 +2896,11 @@ ${failures.join("\n")}
     </div>`;
     const redirectInput = form.querySelector('[data-setting="search-auto-redirect"]');
     const agaghhhSearchInput = form.querySelector('[data-setting="agaghhh-search"]');
+    const copyCodeInput = form.querySelector('[data-setting="copy-code"]');
     const downloadInput = form.querySelector('[data-setting="preview-download"]');
     redirectInput.checked = isJavfreeSearchAutoRedirectEnabled();
     agaghhhSearchInput.checked = isJavfreeAgaghhhSearchEnabled();
+    copyCodeInput.checked = isJavfreeCopyCodeEnabled();
     downloadInput.checked = isJavfreePreviewDownloadEnabled();
     form.querySelector('[data-action="cancel"]')?.addEventListener(
       "click",
@@ -2867,6 +2914,7 @@ ${failures.join("\n")}
       if (typeof GM_setValue === "function") {
         GM_setValue(JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY, redirectInput.checked);
         GM_setValue(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, agaghhhSearchInput.checked);
+        GM_setValue(JAVFREE_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
         GM_setValue(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       }
       closeJavfreeSettingsPanel(document2);
@@ -2892,10 +2940,14 @@ ${failures.join("\n")}
         return { redirectTarget: target, button: null };
       }
     }
+    const downloadButton = installJavfreePreviewDownloadButton(document2, locationObject, request);
+    const copyButton = installJavfreeCopyCodeButton(document2, locationObject);
+    const searchButton = installJavfreeAgaghhhSearchButton(document2, locationObject);
     return {
       redirectTarget: "",
-      searchButton: installJavfreeAgaghhhSearchButton(document2, locationObject),
-      button: installJavfreePreviewDownloadButton(document2, locationObject, request)
+      searchButton,
+      copyButton,
+      button: downloadButton
     };
   }
   function hdblogCodeFromLocation(document2, locationObject) {
