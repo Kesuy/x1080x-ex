@@ -9,6 +9,7 @@ import {
   JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY,
   buildJavfreeAgaghhhSearchUrl,
   collectJavfreeArticleImages,
+  extractJavfreeVideoCode,
   fetchJavfreePreviewForCode,
   installHdblogJavfreeFallback,
   installJavfreeEnhancement,
@@ -49,6 +50,12 @@ function sanArticleDom(url = 'https://javfree.me/436747/san-437') {
     </article></main>
   </body></html>`, { url });
 }
+
+test('JavFree recognizes codes whose prefix contains digits', () => {
+  assert.equal(extractJavfreeVideoCode('[T38-042] Sample'), 'T38-042');
+  assert.equal(extractJavfreeVideoCode('T38-038 Sample'), 'T38-038');
+  assert.equal(extractJavfreeVideoCode('[SAN-437] Sample'), 'SAN-437');
+});
 
 test('JavFree article treats first image as cover and second 1080p image as Preview', () => {
   const dom = sanArticleDom();
