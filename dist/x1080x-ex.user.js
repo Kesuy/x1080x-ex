@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.12
+// @version      1.10.13
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -2336,6 +2336,755 @@ ${failures.join("\n")}
     return { standard, fourK };
   }
 
+  // src/javfree.js
+  var JAVFREE_ORIGIN = "https://javfree.me";
+  var REQUEST_TIMEOUT3 = 3e4;
+  var HDBLOG_SECTION_ID = "x1080x-ex-hdblog-javfree-preview";
+  var JAVFREE_SETTINGS_PANEL_ID = "x1080x-ex-javfree-settings-panel";
+  var JAVFREE_DOWNLOAD_BUTTON_ID = "x1080x-ex-javfree-preview-download";
+  var JAVFREE_AGAGHHH_SEARCH_BUTTON_ID = "x1080x-ex-javfree-agaghhh-search";
+  var JAVFREE_PREVIEW_ATTR = "data-x1080x-javfree-preview-url";
+  var PREVIEW_REFERER_ATTR2 = "data-x1080x-preview-referer";
+  var AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:agaghhh-javfree-preview-fallback-enabled";
+  var HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:hdblog-javfree-preview-fallback-enabled";
+  var HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY = "x1080x-ex:hdblog-deleted-javfree-search-enabled";
+  var JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:javfree-search-auto-redirect-enabled";
+  var JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY = "x1080x-ex:javfree-preview-download-enabled";
+  var JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY = "x1080x-ex:javfree-agaghhh-search-enabled";
+  var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
+  var HDBLOG_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  function normalizeText(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function absoluteHttpUrl(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function parseHtml(html, baseUrl, hostDocument = globalThis.document) {
+    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (typeof Parser !== "function") return null;
+    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
+    const base = parsed.createElement("base");
+    base.href = baseUrl;
+    (parsed.head || parsed.documentElement).prepend(base);
+    return parsed;
+  }
+  function requestText(url, request = globalThis.GM_xmlhttpRequest, referer = "") {
+    return new Promise((resolve, reject) => {
+      if (typeof request !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      request({
+        method: "GET",
+        url,
+        responseType: "text",
+        timeout: REQUEST_TIMEOUT3,
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          ...referer ? { Referer: referer } : {}
+        },
+        onload(response) {
+          if (response.status < 200 || response.status >= 400) {
+            reject(new Error("\u8BF7\u6C42\u5931\u8D25\uFF08HTTP " + (response.status || 0) + "\uFF09"));
+            return;
+          }
+          resolve({
+            html: String(response.responseText ?? response.response ?? ""),
+            finalUrl: response.finalUrl || response.responseURL || url
+          });
+        },
+        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
+        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  function requestImageBlob(url, referer, request = globalThis.GM_xmlhttpRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof request !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      request({
+        method: "GET",
+        url,
+        responseType: "blob",
+        timeout: REQUEST_TIMEOUT3,
+        headers: referer ? { Referer: referer } : void 0,
+        onload(response) {
+          if (response.status < 200 || response.status >= 300 || !response.response) {
+            reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\uFF08HTTP " + (response.status || 0) + "\uFF09"));
+            return;
+          }
+          resolve(response.response);
+        },
+        onerror: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25")),
+        ontimeout: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  function readEnabled(key, fallback = true) {
+    if (typeof GM_getValue !== "function") return fallback;
+    return GM_getValue(key, fallback) !== false;
+  }
+  function isAgaghhhJavfreePreviewFallbackEnabled() {
+    return readEnabled(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, true);
+  }
+  function isHdblogJavfreePreviewFallbackEnabled() {
+    return readEnabled(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, true);
+  }
+  function isHdblogDeletedJavfreeSearchEnabled() {
+    return readEnabled(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, true);
+  }
+  function isJavfreeSearchAutoRedirectEnabled() {
+    return readEnabled(JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY, true);
+  }
+  function isJavfreePreviewDownloadEnabled() {
+    return readEnabled(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, true);
+  }
+  function isJavfreeAgaghhhSearchEnabled() {
+    return readEnabled(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, true);
+  }
+  function isJavfreeHost(locationObject = globalThis.location) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "javfree.me" || hostname.endsWith(".javfree.me");
+  }
+  function isHdblogHost2(locationObject = globalThis.location) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
+  }
+  function extractJavfreeVideoCode(value) {
+    const source = normalizeText(value).toUpperCase();
+    if (!source) return "";
+    const fc2 = source.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
+    if (fc2) return "FC2" + (fc2[1] ? "-PPV" : "") + "-" + fc2[2];
+    const standard = source.match(
+      /(?:^|[^A-Z0-9])([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)(?:$|[^A-Z0-9])/i
+    );
+    return standard ? standard[1] + "-" + standard[2] : "";
+  }
+  function codeTokenMatches(value, code) {
+    const target = String(code || "").trim().toUpperCase();
+    if (!target) return false;
+    const normalized = normalizeText(value).toUpperCase();
+    const escaped = target.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
+    return new RegExp("(?:^|[^A-Z0-9])" + escaped + "(?:$|[^A-Z0-9])", "i").test(normalized);
+  }
+  function javfreeSearchUrl(code) {
+    const normalized = String(code || "").trim().toUpperCase();
+    return normalized ? JAVFREE_ORIGIN + "/search/" + encodeURIComponent(normalized) : "";
+  }
+  function isJavfreeArticleUrl(value, baseUrl = JAVFREE_ORIGIN) {
+    const href = absoluteHttpUrl(value, baseUrl);
+    if (!href) return false;
+    try {
+      const url = new URL(href);
+      return url.origin === JAVFREE_ORIGIN && /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function collectJavfreeSearchResults(document2) {
+    if (!document2) return [];
+    let anchors = [...document2.querySelectorAll(
+      "main#main article .entry-title a[href], main.site-main article .entry-title a[href]"
+    )];
+    if (!anchors.length) anchors = [...document2.querySelectorAll("article .entry-title a[href]")];
+    const seen = /* @__PURE__ */ new Set();
+    return anchors.map((anchor) => {
+      const url = absoluteHttpUrl(anchor.getAttribute("href"), document2.baseURI || JAVFREE_ORIGIN);
+      if (!isJavfreeArticleUrl(url) || seen.has(url)) return null;
+      seen.add(url);
+      return { title: normalizeText(anchor.textContent), url };
+    }).filter(Boolean);
+  }
+  function chooseJavfreeSearchResult(candidates, code = "") {
+    const unique = [...new Map(
+      (candidates || []).filter(Boolean).map((candidate) => [candidate.url, candidate])
+    ).values()];
+    if (unique.length === 1) return unique[0];
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return null;
+    const slug = normalizedCode.toLowerCase();
+    const slugMatches = unique.filter((candidate) => {
+      try {
+        return new URL(candidate.url).pathname.split("/").filter(Boolean).at(-1)?.toLowerCase() === slug;
+      } catch {
+        return false;
+      }
+    });
+    if (slugMatches.length === 1) return slugMatches[0];
+    const titleMatches = unique.filter((candidate) => codeTokenMatches(candidate.title, normalizedCode));
+    return titleMatches.length === 1 ? titleMatches[0] : null;
+  }
+  function imageUrlFromElement(document2, image) {
+    const candidates = [
+      image?.getAttribute("data-original"),
+      image?.getAttribute("data-lazy-src"),
+      image?.getAttribute("data-src"),
+      image?.currentSrc,
+      image?.getAttribute("src")
+    ];
+    for (const candidate of candidates) {
+      const url = absoluteHttpUrl(candidate, document2.baseURI || JAVFREE_ORIGIN);
+      if (url) return url;
+    }
+    return "";
+  }
+  function filenameOf(value) {
+    try {
+      return decodeURIComponent(new URL(value).pathname.split("/").pop() || "").toUpperCase();
+    } catch {
+      return "";
+    }
+  }
+  function imageMatchesCode(url, code) {
+    const compactCode = String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const compactFilename = filenameOf(url).replace(/[^A-Z0-9]/g, "");
+    return compactCode && compactFilename.includes(compactCode);
+  }
+  function collectJavfreeArticleImages(document2, code = "") {
+    const content = document2?.querySelector(
+      "main#main article .entry-content, main.site-main article .entry-content, article .entry-content, .entry-content"
+    );
+    if (!content) return { coverUrl: "", previewUrl: "", imageUrls: [] };
+    const all = [...content.querySelectorAll("img")].map((image) => imageUrlFromElement(document2, image)).filter(Boolean);
+    const matching = code ? all.filter((url) => imageMatchesCode(url, code)) : [];
+    const imageUrls = matching.length >= 2 ? matching : all;
+    if (!imageUrls.length) return { coverUrl: "", previewUrl: "", imageUrls: [] };
+    const coverUrl = imageUrls[0] || "";
+    const preferred = imageUrls.find((url, index) => index > 0 && /(?:^|[-_])(?:1080p|2160p|4k(?:\d{2,3}fps)?|preview|sample)(?:[-_.]|$)/i.test(filenameOf(url)));
+    return {
+      coverUrl,
+      previewUrl: preferred || imageUrls[1] || "",
+      imageUrls
+    };
+  }
+  function javfreeCodeFromDocument(document2, locationObject = document2?.location) {
+    const title = document2?.querySelector(
+      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
+    )?.textContent || document2?.title || "";
+    const fromTitle = extractJavfreeVideoCode(title);
+    if (fromTitle) return fromTitle;
+    try {
+      const slug = new URL(locationObject?.href || document2?.baseURI || JAVFREE_ORIGIN).pathname.split("/").filter(Boolean).at(-1) || "";
+      return extractJavfreeVideoCode(slug);
+    } catch {
+      return "";
+    }
+  }
+  function buildJavfreeAgaghhhSearchUrl(code) {
+    const normalized = String(code || "").trim().toUpperCase();
+    if (!normalized) return "";
+    return "https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=" + encodeURIComponent(normalized) + "&orderby=lastpost&ascdesc=desc";
+  }
+  function openJavfreeAgaghhhSearch(document2, code) {
+    const url = buildJavfreeAgaghhhSearchUrl(code);
+    if (!url) return false;
+    if (typeof GM_openInTab === "function") {
+      try {
+        GM_openInTab(url, { active: true, insert: true, setParent: true });
+        return true;
+      } catch (error) {
+        console.warn("[x1080x-ex] JavFree agaghhh search GM_openInTab failed", {
+          url,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return Boolean(document2.defaultView?.open?.(url, "_blank"));
+  }
+  function installJavfreeAgaghhhSearchButton(document2, locationObject) {
+    if (!isJavfreeAgaghhhSearchEnabled() || document2.getElementById(JAVFREE_AGAGHHH_SEARCH_BUTTON_ID)) {
+      return null;
+    }
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return null;
+    }
+    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
+    const title = document2.querySelector(
+      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
+    );
+    const code = javfreeCodeFromDocument(document2, locationObject);
+    if (!title || !code) return null;
+    const button = document2.createElement("button");
+    button.id = JAVFREE_AGAGHHH_SEARCH_BUTTON_ID;
+    button.type = "button";
+    button.textContent = "\u{1F50D}";
+    button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 agaghhh.cc \u641C\u7D22";
+    button.setAttribute("aria-label", "\u5728 agaghhh.cc \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      button.style.background = "#398bd4";
+    });
+    button.addEventListener("click", () => {
+      openJavfreeAgaghhhSearch(document2, javfreeCodeFromDocument(document2, locationObject));
+    });
+    title.append(" ", button);
+    return button;
+  }
+  async function fetchJavfreePreviewForCode(code, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    const empty = {
+      code: normalizedCode,
+      sourceName: "JavFree",
+      sourceUrl: "",
+      articleUrl: "",
+      referer: "",
+      imageUrls: []
+    };
+    if (!normalizedCode) return empty;
+    const searchUrl = javfreeSearchUrl(normalizedCode);
+    const search = await requestText(searchUrl, request, JAVFREE_ORIGIN + "/");
+    let articleUrl = "";
+    let articleHtml = "";
+    let articleFinalUrl = "";
+    if (isJavfreeArticleUrl(search.finalUrl, JAVFREE_ORIGIN)) {
+      articleUrl = search.finalUrl;
+      articleHtml = search.html;
+      articleFinalUrl = search.finalUrl;
+    } else {
+      const searchDocument = parseHtml(search.html, search.finalUrl || searchUrl, hostDocument);
+      const selected = chooseJavfreeSearchResult(
+        collectJavfreeSearchResults(searchDocument),
+        normalizedCode
+      );
+      if (!selected) return { ...empty, sourceUrl: searchUrl };
+      articleUrl = selected.url;
+      const article = await requestText(articleUrl, request, searchUrl);
+      articleHtml = article.html;
+      articleFinalUrl = article.finalUrl || articleUrl;
+    }
+    const articleDocument = parseHtml(articleHtml, articleFinalUrl || articleUrl, hostDocument);
+    const images = collectJavfreeArticleImages(articleDocument, normalizedCode);
+    return {
+      code: normalizedCode,
+      sourceName: "JavFree",
+      sourceUrl: articleUrl,
+      articleUrl,
+      referer: articleUrl,
+      coverUrl: images.coverUrl,
+      imageUrls: images.previewUrl ? [images.previewUrl] : []
+    };
+  }
+  function javfreeUniqueSearchTarget(document2, locationObject = document2?.location) {
+    if (!document2 || !isJavfreeHost(locationObject)) return "";
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return "";
+    }
+    if (!/^\/search(?:\/|$)/i.test(url.pathname)) return "";
+    const results = collectJavfreeSearchResults(document2);
+    return results.length === 1 ? results[0].url : "";
+  }
+  function extensionFromBlob(blob, url) {
+    const type = String(blob?.type || "").toLowerCase();
+    if (type.includes("jpeg")) return "jpg";
+    if (type.includes("png")) return "png";
+    if (type.includes("webp")) return "webp";
+    if (type.includes("gif")) return "gif";
+    if (type.includes("avif")) return "avif";
+    try {
+      const match = new URL(url).pathname.match(/\.((?:jpe?g|png|webp|gif|avif))$/i);
+      return match?.[1]?.toLowerCase().replace("jpeg", "jpg") || "jpg";
+    } catch {
+      return "jpg";
+    }
+  }
+  function saveBlob2(document2, blob, filename) {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document2.createElement("a");
+    anchor.hidden = true;
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document2.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+      document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    }
+  }
+  async function downloadJavfreePreview(button, document2, locationObject, request) {
+    const code = javfreeCodeFromDocument(document2, locationObject);
+    const previewUrl = collectJavfreeArticleImages(document2, code).previewUrl;
+    if (!code || !previewUrl) return;
+    button.disabled = true;
+    button.textContent = "\u4E0B\u8F7D\u4E2D\u2026";
+    try {
+      const blob = await requestImageBlob(previewUrl, locationObject?.href || document2.baseURI, request);
+      saveBlob2(document2, blob, code + "." + extensionFromBlob(blob, previewUrl));
+      button.textContent = "\u2713";
+    } catch (error) {
+      button.textContent = "\u5931\u8D25";
+      button.title = error?.message || "Preview \u4E0B\u8F7D\u5931\u8D25";
+    } finally {
+      document2.defaultView?.setTimeout(() => {
+        button.disabled = false;
+        button.textContent = "\u2B07";
+        button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
+      }, 2500);
+    }
+  }
+  function installJavfreePreviewDownloadButton(document2, locationObject, request) {
+    if (!isJavfreePreviewDownloadEnabled() || document2.getElementById(JAVFREE_DOWNLOAD_BUTTON_ID)) {
+      return null;
+    }
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return null;
+    }
+    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
+    const title = document2.querySelector("main#main article h1.entry-title, article h1.entry-title, h1.entry-title");
+    const code = javfreeCodeFromDocument(document2, locationObject);
+    const previewUrl = collectJavfreeArticleImages(document2, code).previewUrl;
+    if (!title || !code || !previewUrl) return null;
+    const button = document2.createElement("button");
+    button.id = JAVFREE_DOWNLOAD_BUTTON_ID;
+    button.type = "button";
+    button.textContent = "\u2B07";
+    button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("click", () => void downloadJavfreePreview(
+      button,
+      document2,
+      locationObject,
+      request
+    ));
+    title.append(" ", button);
+    return button;
+  }
+  function closeJavfreeSettingsPanel(document2) {
+    document2?.getElementById(JAVFREE_SETTINGS_PANEL_ID)?.remove();
+  }
+  function openJavfreeSettingsPanel(document2 = globalThis.document) {
+    if (!document2?.body) return null;
+    closeJavfreeSettingsPanel(document2);
+    const overlay = document2.createElement("div");
+    overlay.id = JAVFREE_SETTINGS_PANEL_ID;
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483646",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "20px",
+      background: "rgba(0,0,0,.42)",
+      boxSizing: "border-box"
+    });
+    const form = document2.createElement("form");
+    Object.assign(form.style, {
+      width: "min(480px, 100%)",
+      padding: "22px",
+      borderRadius: "10px",
+      background: "#fff",
+      color: "#222",
+      boxShadow: "0 18px 60px rgba(0,0,0,.28)",
+      boxSizing: "border-box",
+      font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    });
+    form.innerHTML = `
+    <h2 style="margin:0 0 18px;font-size:20px">JavFree \u8BBE\u7F6E</h2>
+    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
+      <span><strong>\u641C\u7D22\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">\u641C\u7D22\u9875\u53EA\u6709 1 \u4E2A\u552F\u4E00\u6587\u7AE0\u7ED3\u679C\u65F6\u81EA\u52A8\u8FDB\u5165\u8BE6\u60C5\u9875\u3002</small></span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <input data-setting="agaghhh-search" type="checkbox" style="margin-top:3px">
+      <span><strong>agaghhh.cc \u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u8BC6\u522B\u5F53\u524D\u756A\u53F7\uFF0C\u5E76\u5728 agaghhh.cc \u8BBA\u575B\u4E2D\u641C\u7D22\u3002</small></span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:9px">
+      <input data-setting="preview-download" type="checkbox" style="margin-top:3px">
+      <span><strong>Preview \u4E0B\u8F7D\u6309\u94AE</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u6807\u9898\u65C1\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u53EA\u4E0B\u8F7D\u5C01\u9762\u540E\u7684 Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D\u3002</small></span>
+    </label>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
+      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
+    </div>`;
+    const redirectInput = form.querySelector('[data-setting="search-auto-redirect"]');
+    const agaghhhSearchInput = form.querySelector('[data-setting="agaghhh-search"]');
+    const downloadInput = form.querySelector('[data-setting="preview-download"]');
+    redirectInput.checked = isJavfreeSearchAutoRedirectEnabled();
+    agaghhhSearchInput.checked = isJavfreeAgaghhhSearchEnabled();
+    downloadInput.checked = isJavfreePreviewDownloadEnabled();
+    form.querySelector('[data-action="cancel"]')?.addEventListener(
+      "click",
+      () => closeJavfreeSettingsPanel(document2)
+    );
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeJavfreeSettingsPanel(document2);
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (typeof GM_setValue === "function") {
+        GM_setValue(JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY, redirectInput.checked);
+        GM_setValue(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, agaghhhSearchInput.checked);
+        GM_setValue(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+      }
+      closeJavfreeSettingsPanel(document2);
+      document2.defaultView?.location?.reload?.();
+    });
+    overlay.append(form);
+    document2.body.append(overlay);
+    return overlay;
+  }
+  function registerJavfreeSettingsMenu(document2, locationObject) {
+    if (!isJavfreeHost(locationObject) || typeof GM_registerMenuCommand !== "function") return;
+    const view = document2?.defaultView;
+    if (view && view.top !== view) return;
+    GM_registerMenuCommand("\u2699\uFE0F JavFree \u8BBE\u7F6E", () => openJavfreeSettingsPanel(document2));
+  }
+  function installJavfreeEnhancement(document2 = globalThis.document, locationObject = globalThis.location, request = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isJavfreeHost(locationObject)) return null;
+    registerJavfreeSettingsMenu(document2, locationObject);
+    if (isJavfreeSearchAutoRedirectEnabled()) {
+      const target = javfreeUniqueSearchTarget(document2, locationObject);
+      if (target && typeof locationObject?.replace === "function") {
+        locationObject.replace(target);
+        return { redirectTarget: target, button: null };
+      }
+    }
+    return {
+      redirectTarget: "",
+      searchButton: installJavfreeAgaghhhSearchButton(document2, locationObject),
+      button: installJavfreePreviewDownloadButton(document2, locationObject, request)
+    };
+  }
+  function hdblogCodeFromLocation(document2, locationObject) {
+    try {
+      const slug = new URL(locationObject?.href || document2?.baseURI || "").pathname.split("/").filter(Boolean).at(-1) || "";
+      const slugCode = extractJavfreeVideoCode(slug);
+      if (slugCode && !/^ERROR-?404$/i.test(slugCode)) return slugCode;
+    } catch {
+    }
+    const titleCode = extractJavfreeVideoCode(
+      document2?.querySelector("h1.entry-title, #genesis-content h1, h1")?.textContent || ""
+    );
+    return /^ERROR-?404$/i.test(titleCode) ? "" : titleCode;
+  }
+  function isDeletedHdblogArticlePage(document2, locationObject = document2?.location) {
+    if (!document2 || !isHdblogHost2(locationObject)) return false;
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return false;
+    }
+    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return false;
+    const bodyClass = String(document2.body?.className || "");
+    const signalText = normalizeText([
+      document2.title,
+      document2.querySelector("h1, .entry-title, .page-title")?.textContent
+    ].filter(Boolean).join(" "));
+    const has404Signal = /(?:^|\s)(?:error404|error-404|not-found)(?:\s|$)/i.test(bodyClass) || /(?:\berror[-\s]?404\b|\b404\b|page\s+not\s+found|not\s+found)/i.test(signalText);
+    if (has404Signal) return true;
+    return !document2.querySelector(
+      "main#genesis-content article.entry h1.entry-title, article.entry h1.entry-title"
+    );
+  }
+  function openJavfreeSearchTab(document2, code) {
+    const url = javfreeSearchUrl(code);
+    if (!url) return false;
+    const key = "x1080x-ex:hdblog-javfree-opened:" + (document2?.location?.pathname || code);
+    try {
+      if (document2.defaultView?.sessionStorage?.getItem(key) === "1") return false;
+      document2.defaultView?.sessionStorage?.setItem(key, "1");
+    } catch {
+    }
+    if (typeof GM_openInTab === "function") {
+      try {
+        GM_openInTab(url, { active: true, insert: true, setParent: true });
+        return true;
+      } catch (error) {
+        console.warn("[x1080x-ex] GM_openInTab failed, fallback to window.open", {
+          url,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    const opened = document2.defaultView?.open?.(url, "_blank");
+    return Boolean(opened);
+  }
+  function textNodesUnder(root) {
+    const view = root?.ownerDocument?.defaultView;
+    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
+    const walker = root?.ownerDocument?.createTreeWalker?.(root, showText);
+    if (!walker) return [];
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function isAfter(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
+  }
+  function hdblogPreviewRange(document2) {
+    const content = document2?.querySelector(
+      "main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content"
+    );
+    if (!content) return null;
+    const nodes = textNodesUnder(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
+    if (!marker) return null;
+    const boundary = nodes.find((node) => isAfter(marker, node) && HDBLOG_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))) || null;
+    return { content, marker, boundary };
+  }
+  function inHdblogPreviewRange(range, node) {
+    if (!range || !isAfter(range.marker, node)) return false;
+    return !range.boundary || !isAfter(range.boundary, node);
+  }
+  async function hasUsableHdblogPreview(document2, request) {
+    const range = hdblogPreviewRange(document2);
+    if (!range) return false;
+    if ([...range.content.querySelectorAll(
+      'img[data-x1080x-preview-large="1"], img[data-x1080x-preview-expanded="1"]'
+    )].some((image) => inHdblogPreviewRange(range, image))) {
+      return true;
+    }
+    const anchors = [...range.content.querySelectorAll("a[href]")].filter((anchor) => inHdblogPreviewRange(range, anchor));
+    for (const anchor of anchors) {
+      const href = absoluteHttpUrl(anchor.getAttribute("href"), document2.baseURI);
+      if (!href) continue;
+      if (isPixhostShowUrl(href, document2.baseURI)) {
+        const thumb = imageUrlFromElement(document2, anchor.querySelector("img"));
+        try {
+          if (await resolvePixhostShowUrl(document2, href, thumb, request)) return true;
+        } catch {
+        }
+        continue;
+      }
+      if (IMAGE_EXTENSION_PATTERN2.test(href)) return true;
+    }
+    return [...range.content.querySelectorAll("img")].filter((image) => inHdblogPreviewRange(range, image)).some((image) => {
+      const anchor = image.closest("a[href]");
+      if (anchor && isPixhostShowUrl(anchor.getAttribute("href"), document2.baseURI)) return false;
+      return Boolean(imageUrlFromElement(document2, image));
+    });
+  }
+  function renderHdblogJavfreePreview(document2, result) {
+    if (!document2 || !result?.imageUrls?.length || document2.getElementById(HDBLOG_SECTION_ID)) {
+      return null;
+    }
+    const content = document2.querySelector(
+      "main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content"
+    );
+    if (!content) return null;
+    const url = absoluteHttpUrl(result.imageUrls[0], result.articleUrl || JAVFREE_ORIGIN);
+    if (!url) return null;
+    const section = document2.createElement("section");
+    section.id = HDBLOG_SECTION_ID;
+    section.style.cssText = "clear:both;margin:24px 0 8px;padding:16px 0 0;border-top:1px solid #ddd";
+    const heading = document2.createElement("div");
+    heading.style.cssText = "margin:0 0 12px;font-size:15px;font-weight:700;color:#444";
+    const source = document2.createElement("a");
+    source.href = result.articleUrl || result.sourceUrl || JAVFREE_ORIGIN;
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    source.textContent = "JavFree Preview \xB7 " + (result.code || "");
+    source.style.cssText = "color:inherit;text-decoration:none";
+    heading.append(source);
+    const anchor = document2.createElement("a");
+    anchor.href = url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.style.cssText = "display:block;clear:both;margin:14px 0;text-align:center";
+    const image = document2.createElement("img");
+    image.src = url;
+    image.alt = ((result.code || "") + " Preview").trim();
+    image.loading = "eager";
+    image.decoding = "async";
+    image.setAttribute(JAVFREE_PREVIEW_ATTR, url);
+    image.setAttribute(
+      PREVIEW_REFERER_ATTR2,
+      result.referer || result.articleUrl || JAVFREE_ORIGIN
+    );
+    image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
+    anchor.append(image);
+    section.append(heading, anchor);
+    content.append(section);
+    return section;
+  }
+  async function installHdblogJavfreeFallback(document2 = globalThis.document, locationObject = globalThis.location, request = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isHdblogHost2(locationObject)) return null;
+    const code = hdblogCodeFromLocation(document2, locationObject);
+    if (!code) return null;
+    if (isDeletedHdblogArticlePage(document2, locationObject)) {
+      if (isHdblogDeletedJavfreeSearchEnabled()) openJavfreeSearchTab(document2, code);
+      return null;
+    }
+    if (!isHdblogJavfreePreviewFallbackEnabled()) return null;
+    if (!document2.querySelector(
+      "main#genesis-content article.entry .entry-content, article.entry .entry-content"
+    )) {
+      return null;
+    }
+    try {
+      if (await hasUsableHdblogPreview(document2, request)) return null;
+      return renderHdblogJavfreePreview(
+        document2,
+        await fetchJavfreePreviewForCode(code, request, document2)
+      );
+    } catch (error) {
+      console.warn("[x1080x-ex] JavFree preview fallback failed on hdblog", {
+        code,
+        error: error?.message || String(error)
+      });
+      return null;
+    }
+  }
+
   // src/hdblog-article.js
   var HDBLOG_ARTICLE_WIDTH_KEY = "x1080x-ex:hdblog-article-width";
   var HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY = "x1080x-ex:hdblog-article-layout-enabled";
@@ -2372,13 +3121,13 @@ ${failures.join("\n")}
   var SEARCH_BUTTON_ID = "x1080x-ex-hdblog-agaghhh-search";
   var COPY_BUTTON_ID = "x1080x-ex-hdblog-copy-code";
   var ARTICLE_BODY_CLASS = "x1080x-hdblog-single";
-  var REQUEST_TIMEOUT3 = 6e4;
+  var REQUEST_TIMEOUT4 = 6e4;
   var PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
   var PIXHOST_IMAGE_HOST_PATTERN = /^img\d+\.(?:pixhost\.(?:to|cc)|pixho\.st)$/i;
-  function normalizeText(value) {
+  function normalizeText2(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function isHdblogHost2(locationObject) {
+  function isHdblogHost3(locationObject) {
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
   }
@@ -2403,7 +3152,7 @@ ${failures.join("\n")}
     return article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || document2?.querySelector("main#genesis-content .entry-content, .entry-content") || null;
   }
   function isHdblogArticlePage(document2, locationObject = document2?.location) {
-    if (!document2 || !isHdblogHost2(locationObject)) return false;
+    if (!document2 || !isHdblogHost3(locationObject)) return false;
     let url;
     try {
       url = new URL(locationObject?.href || document2.baseURI);
@@ -2614,7 +3363,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return true;
   }
   function extractHdblogVideoCode(value) {
-    const source = normalizeText(value);
+    const source = normalizeText2(value);
     if (!source) return "";
     const uncensored = source.match(/^([A-Z0-9][A-Z0-9.+-]{1,31})\s+(\d{6}[-_]\d{2,4})\b/i);
     if (uncensored) return `${uncensored[1]} ${uncensored[2]}`;
@@ -2624,21 +3373,27 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const standard = text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)\b/i);
     if (!standard) return "";
     const prefix = standard[1];
-    if (["HTTP", "HTTPS", "IMG", "IMAGE", "JPG", "JPEG", "PNG", "WEBP"].includes(prefix)) return "";
+    if (["HTTP", "HTTPS", "IMG", "IMAGE", "JPG", "JPEG", "PNG", "WEBP", "ERROR"].includes(prefix)) return "";
     return `${prefix}-${standard[2]}`;
   }
   function extractHdblogArticleCode(document2) {
-    const titleText = normalizeText(articleTitleElement(document2)?.textContent || document2?.title);
+    try {
+      const slug = new URL(document2?.location?.href || document2?.baseURI || "").pathname.split("/").filter(Boolean).at(-1) || "";
+      const fromSlug = extractHdblogVideoCode(slug);
+      if (fromSlug) return fromSlug;
+    } catch {
+    }
+    const titleText = normalizeText2(articleTitleElement(document2)?.textContent || document2?.title);
     const fromTitle = extractHdblogVideoCode(titleText);
     if (fromTitle) return fromTitle;
     const content = articleContentElement(document2);
     if (!content) return "";
-    const text = normalizeText(content.textContent).slice(0, 5e3);
+    const text = normalizeText2(content.textContent).slice(0, 5e3);
     const labelled = text.match(/(?:品番|品號|品号|番号|番號|code)\s*[:：]?\s*([A-Z0-9 _-]{4,30})/i);
     return extractHdblogVideoCode(labelled?.[1] || text);
   }
   function hdblogAgaghhhSearchKeyword(code) {
-    const source = normalizeText(code);
+    const source = normalizeText2(code);
     const uncensored = source.match(/^[A-Z0-9][A-Z0-9.+-]{1,31}\s+(\d{6}[-_]\d{2,4})$/i);
     return uncensored?.[1] || source;
   }
@@ -2655,7 +3410,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     document2.defaultView?.open(url, "_blank", "noopener");
   }
-  function absoluteHttpUrl(document2, value) {
+  function absoluteHttpUrl2(document2, value) {
     if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
     try {
       const url = new URL(String(value), document2.baseURI);
@@ -2670,7 +3425,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
       const amount = match ? Number(match[2]) : order;
       const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
-      const url = absoluteHttpUrl(document2, rawUrl);
+      const url = absoluteHttpUrl2(document2, rawUrl);
       return url ? { url, score } : null;
     }).filter(Boolean).sort((a, b) => b.score - a.score);
     return candidates[0]?.url || "";
@@ -2689,7 +3444,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       image.getAttribute("src")
     ];
     for (const value of values) {
-      const url = absoluteHttpUrl(document2, value);
+      const url = absoluteHttpUrl2(document2, value);
       if (url) return url;
     }
     return "";
@@ -2704,15 +3459,15 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function displayedPixhostImageUrl(document2, image) {
     if (!image || image.dataset.x1080xPreviewLarge !== "1") return "";
-    const anchorHref = absoluteHttpUrl(document2, image.closest("a[href]")?.getAttribute("href"));
+    const anchorHref = absoluteHttpUrl2(document2, image.closest("a[href]")?.getAttribute("href"));
     const candidates = [image.currentSrc, image.getAttribute("src"), anchorHref];
     for (const value of candidates) {
-      const url = absoluteHttpUrl(document2, value);
+      const url = absoluteHttpUrl2(document2, value);
       if (url && isPixhostImageUrl(url, document2.baseURI)) return url;
     }
     return "";
   }
-  function textNodesUnder(root) {
+  function textNodesUnder2(root) {
     const view = root.ownerDocument.defaultView;
     const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
     const walker = root.ownerDocument.createTreeWalker(root, showText);
@@ -2754,7 +3509,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       node.style.setProperty("display", "none", "important");
       return true;
     }
-    if (node.nodeType === 3 && normalizeText(node.nodeValue)) {
+    if (node.nodeType === 3 && normalizeText2(node.nodeValue)) {
       const wrapper = document2.createElement("span");
       wrapper.setAttribute(DOWNLOAD_HIDDEN_ATTR, "1");
       wrapper.setAttribute(DOWNLOAD_WRAPPER_ATTR, "1");
@@ -2782,10 +3537,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (visible) return 0;
     const content = articleContentElement(document2);
     if (!content) return 0;
-    const nodes = textNodesUnder(content);
-    const start = nodes.find((node) => DOWNLOAD_SECTION_LABEL_PATTERN.test(normalizeText(node.nodeValue)));
+    const nodes = textNodesUnder2(content);
+    const start = nodes.find((node) => DOWNLOAD_SECTION_LABEL_PATTERN.test(normalizeText2(node.nodeValue)));
     if (!start) return 0;
-    const preview = nodes.find((node) => isAfter(start, node) && PREVIEW_LABEL_PATTERN.test(normalizeText(node.nodeValue)));
+    const preview = nodes.find((node) => isAfter2(start, node) && PREVIEW_LABEL_PATTERN.test(normalizeText2(node.nodeValue)));
     if (!preview) return 0;
     const common = lowestCommonAncestorWithin(start, preview, content);
     if (!common) return 0;
@@ -2801,46 +3556,65 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     return hidden;
   }
-  function isAfter(reference, node) {
+  function isAfter2(reference, node) {
     return Boolean(reference?.compareDocumentPosition(node) & 4);
   }
   function previewRange(content) {
-    const nodes = textNodesUnder(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
+    const nodes = textNodesUnder2(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue)));
     if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))) || null;
+    const boundary = nodes.find((node) => isAfter2(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText2(node.nodeValue))) || null;
     return { marker, boundary };
   }
   function inPreviewRange(range, node) {
-    if (!range || !isAfter(range.marker, node)) return false;
-    return !range.boundary || !isAfter(range.boundary, node);
+    if (!range || !isAfter2(range.marker, node)) return false;
+    return !range.boundary || !isAfter2(range.boundary, node);
   }
   function collectHdblogPixhostPreviewImages(document2) {
     const content = articleContentElement(document2);
     if (!content) return [];
     const range = previewRange(content);
-    if (!range) return [];
     const seen = /* @__PURE__ */ new Set();
-    return [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(range, anchor)).map((anchor) => {
-      const image = anchor.querySelector("img");
-      if (!image) return null;
-      const href = absoluteHttpUrl(document2, anchor.getAttribute("href"));
-      const pixhostShowUrl = isPixhostShowUrl(href, document2.baseURI) ? href : "";
-      const directUrl = displayedPixhostImageUrl(document2, image);
-      if (!pixhostShowUrl && !directUrl) return null;
-      return {
-        image,
-        pixhostShowUrl,
-        thumbUrl: thumbnailUrl(document2, image),
-        directUrl
-      };
-    }).filter(Boolean).filter((candidate) => {
+    const candidates = [];
+    if (range) {
+      candidates.push(
+        ...[...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(range, anchor)).map((anchor) => {
+          const image = anchor.querySelector("img");
+          if (!image) return null;
+          const href = absoluteHttpUrl2(document2, anchor.getAttribute("href"));
+          const pixhostShowUrl = isPixhostShowUrl(href, document2.baseURI) ? href : "";
+          const directUrl = displayedPixhostImageUrl(document2, image);
+          if (!pixhostShowUrl && !directUrl) return null;
+          return {
+            image,
+            pixhostShowUrl,
+            thumbUrl: thumbnailUrl(document2, image),
+            directUrl,
+            referer: document2.baseURI
+          };
+        }).filter(Boolean)
+      );
+    }
+    candidates.push(
+      ...[...content.querySelectorAll("img[" + JAVFREE_PREVIEW_ATTR + "]")].map((image) => {
+        const directUrl = absoluteHttpUrl2(document2, image.getAttribute(JAVFREE_PREVIEW_ATTR));
+        if (!directUrl) return null;
+        return {
+          image,
+          pixhostShowUrl: "",
+          thumbUrl: directUrl,
+          directUrl,
+          referer: image.getAttribute(PREVIEW_REFERER_ATTR2) || "https://javfree.me/"
+        };
+      }).filter(Boolean)
+    );
+    return candidates.filter((candidate) => {
       const key = candidate.pixhostShowUrl || candidate.directUrl;
       return !seen.has(key) && seen.add(key);
     }).slice(0, 24);
   }
   function hdblogImageFilename(code, index, total, extension = "jpg") {
-    const safeCode = normalizeText(code).replace(/[<>:"/\\|?*]/g, "-");
+    const safeCode = normalizeText2(code).replace(/[<>:"/\\|?*]/g, "-");
     const safeExtension = String(extension || "jpg").replace(/^\./, "").toLowerCase();
     const suffix = total > 1 ? `-${index + 1}` : "";
     return `${safeCode}${suffix}.${safeExtension || "jpg"}`;
@@ -2853,7 +3627,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       return "";
     }
   }
-  function extensionFromBlob(blob, url) {
+  function extensionFromBlob2(blob, url) {
     const type = String(blob?.type || "").toLowerCase();
     if (type.includes("jpeg")) return "jpg";
     if (type.includes("png")) return "png";
@@ -2862,7 +3636,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (type.includes("avif")) return "avif";
     return extensionFromUrl(url) || "jpg";
   }
-  function requestImageBlob(url, referer, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+  function requestImageBlob2(url, referer, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     return new Promise((resolve, reject) => {
       if (typeof gmRequest2 !== "function") {
         reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
@@ -2872,7 +3646,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         method: "GET",
         url,
         responseType: "blob",
-        timeout: REQUEST_TIMEOUT3,
+        timeout: REQUEST_TIMEOUT4,
         headers: referer ? { Referer: referer } : void 0,
         onload: (response) => {
           if (response.status < 200 || response.status >= 300 || !response.response) {
@@ -2882,11 +3656,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
           resolve(response.response);
         },
         onerror: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\u3002")),
-        ontimeout: () => reject(new Error(`\u56FE\u7247\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT3 / 1e3} \u79D2\uFF09\u3002`))
+        ontimeout: () => reject(new Error(`\u56FE\u7247\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT4 / 1e3} \u79D2\uFF09\u3002`))
       });
     });
   }
-  function saveBlob2(document2, blob, name) {
+  function saveBlob3(document2, blob, name) {
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document2.createElement("a");
     anchor.hidden = true;
@@ -2930,7 +3704,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       showStatus("\u672A\u8BC6\u522B\u756A\u53F7", "\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\uFF0C\u672A\u5F00\u59CB\u4E0B\u8F7D\u3002");
       return;
     }
-    const candidates = initialCandidates.length ? initialCandidates : collectHdblogPixhostPreviewImages(document2);
+    const liveCandidates = collectHdblogPixhostPreviewImages(document2);
+    const candidateMap = /* @__PURE__ */ new Map();
+    [...initialCandidates, ...liveCandidates].forEach((candidate) => {
+      const key = candidate?.pixhostShowUrl || candidate?.directUrl || candidate?.thumbUrl;
+      if (key && !candidateMap.has(key)) candidateMap.set(key, candidate);
+    });
+    const candidates = [...candidateMap.values()];
     if (!candidates.length) {
       showStatus("\u65E0 Preview", "Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
       return;
@@ -2984,9 +3764,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
           const { url, candidate } = item;
           button.textContent = phase.fallback ? `4K \u56DE\u9000\u4E0B\u8F7D ${index + 1}/${resolved.length}` : `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
           try {
-            const blob = await requestImageBlob(url, locationObject?.href, gmRequest2);
-            const extension = extensionFromBlob(blob, url);
-            saveBlob2(
+            const blob = await requestImageBlob2(
+              url,
+              candidate?.referer || locationObject?.href,
+              gmRequest2
+            );
+            const extension = extensionFromBlob2(blob, url);
+            saveBlob3(
               document2,
               blob,
               hdblogImageFilename(code, downloaded + phaseDownloaded, resolved.length, extension)
@@ -3014,12 +3798,33 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         failures.push(...phaseFailures, ...downloadFailures);
         break;
       }
+      if (!downloaded && isHdblogJavfreePreviewFallbackEnabled()) {
+        try {
+          button.textContent = "\u5C1D\u8BD5 JavFree Preview\u2026";
+          const javfree = await fetchJavfreePreviewForCode(code, gmRequest2, document2);
+          const javfreeUrl = javfree.imageUrls?.[0] || "";
+          if (javfreeUrl) {
+            const blob = await requestImageBlob2(
+              javfreeUrl,
+              javfree.referer || javfree.articleUrl || "https://javfree.me/",
+              gmRequest2
+            );
+            const extension = extensionFromBlob2(blob, javfreeUrl);
+            saveBlob3(document2, blob, hdblogImageFilename(code, 0, 1, extension));
+            downloaded = 1;
+            failures.length = 0;
+            skipped = 0;
+          }
+        } catch (error) {
+          failures.push("JavFree\uFF1A" + (error?.message || "Preview \u4E0B\u8F7D\u5931\u8D25"));
+        }
+      }
       if (!downloaded && !failures.length) {
         if (skipped) {
           showStatus("\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview", "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002");
           return;
         }
-        showStatus("\u65E0\u53EF\u4E0B\u8F7D Preview", "\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u4E0B\u8F7D\u7684 Pixhost Preview \u5927\u56FE\u3002");
+        showStatus("\u65E0\u53EF\u4E0B\u8F7D Preview", "HDblog \u4E0E JavFree \u90FD\u6CA1\u6709\u53EF\u4E0B\u8F7D\u7684 Preview\u3002");
         return;
       }
     } catch (error) {
@@ -3339,9 +4144,17 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <input data-setting="copy-code" type="checkbox">
         \u663E\u793A\u590D\u5236\u756A\u53F7\u6309\u94AE\uFF08\u{1F4CB}\uFF09
       </label>
-      <label style="display:flex;align-items:center;gap:9px">
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="expand-preview" type="checkbox">
         \u81EA\u52A8\u5C55\u5F00 Preview \u5927\u56FE\uFF08\u542B Pixhost / refer \u89E3\u6790\uFF09
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
+        <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
+        <span>JavFree Preview \u540E\u5907\u6E90<small style="display:block;margin-top:2px;color:#666">\u5F53\u524D\u6587\u7AE0\u6CA1\u6709\u53EF\u7528 Preview \u6216 Pixhost \u5DF2\u5931\u6548\u65F6\uFF0C\u6309\u756A\u53F7\u4ECE javfree.me \u8865\u5145\u7B2C 2 \u5F20 Preview\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px">
+        <input data-setting="deleted-javfree-search" type="checkbox" style="margin-top:3px">
+        <span>\u5DF2\u5220\u9664\u6587\u7AE0\u81EA\u52A8\u641C\u7D22 JavFree<small style="display:block;margin-top:2px;color:#666">\u8BBF\u95EE HDblog \u5DF2\u5220\u9664\u7684\u5386\u53F2\u6587\u7AE0\u65F6\uFF0C\u81EA\u52A8\u65B0\u5F00\u6807\u7B7E\u641C\u7D22\u540C\u756A\u53F7\u7684 javfree.me\u3002</small></span>
       </label>
     </div>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
@@ -3409,6 +4222,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
     const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
     const previewInput = panel.querySelector('[data-setting="expand-preview"]');
+    const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
+    const deletedJavfreeSearchInput = panel.querySelector('[data-setting="deleted-javfree-search"]');
     const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
     const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
     const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
@@ -3428,6 +4243,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     crossSearchInput.checked = isHdblogCrossSearchEnabled();
     copyCodeInput.checked = isHdblogCopyCodeEnabled();
     previewInput.checked = isHdblogPreviewExpansionEnabled();
+    javfreePreviewInput.checked = isHdblogJavfreePreviewFallbackEnabled();
+    deletedJavfreeSearchInput.checked = isHdblogDeletedJavfreeSearchEnabled();
     batchOpenInput.checked = isHdblogBatchOpenEnabled();
     const batchInterval = getHdblogBatchOpenInterval();
     batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
@@ -3442,6 +4259,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       widthInput.disabled = !layoutInput.checked;
       downloadGuardInput.disabled = !imageDownloadInput.checked;
       keywordsInput.disabled = !searchFilterInput.checked;
+      javfreePreviewInput.disabled = !previewInput.checked;
       const batchIntervalDisabled = !batchOpenInput.checked;
       batchIntervalMinInput.disabled = batchIntervalDisabled;
       batchIntervalMaxInput.disabled = batchIntervalDisabled;
@@ -3454,6 +4272,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     layoutInput.addEventListener("change", syncDependentFields);
     imageDownloadInput.addEventListener("change", syncDependentFields);
     searchFilterInput.addEventListener("change", syncDependentFields);
+    previewInput.addEventListener("change", syncDependentFields);
     batchOpenInput.addEventListener("change", syncDependentFields);
     batchHistoryInput.addEventListener("change", syncDependentFields);
     batchIntervalResetButton.addEventListener("click", () => {
@@ -3505,6 +4324,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
         GM_setValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, copyCodeInput.checked);
         GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, previewInput.checked);
+        GM_setValue(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
+        GM_setValue(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, deletedJavfreeSearchInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, batchOpenInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2, batchIntervalMinMs);
         GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
@@ -3530,7 +4351,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return overlay;
   }
   function registerHdblogSettingsMenu(document2, locationObject) {
-    if (!isHdblogHost2(locationObject) || typeof GM_registerMenuCommand !== "function") return;
+    if (!isHdblogHost3(locationObject) || typeof GM_registerMenuCommand !== "function") return;
     const view = document2?.defaultView;
     if (view && view.top !== view) return;
     GM_registerMenuCommand("\u2699\uFE0F hdblog \u8BBE\u7F6E", () => openHdblogSettingsPanel(document2));
@@ -3555,17 +4376,17 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
 
   // src/hdblog-preview.js
-  var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
+  var IMAGE_EXTENSION_PATTERN3 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
   var PREVIEW_BOUNDARY_PATTERN2 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
   var PREVIEW_VIEWPORT_WIDTH = "min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))";
-  function normalizeText2(value) {
+  function normalizeText3(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function isHdblogHost3(locationObject) {
+  function isHdblogHost4(locationObject) {
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
   }
-  function absoluteHttpUrl2(document2, value) {
+  function absoluteHttpUrl3(document2, value) {
     if (!value || /^(?:data:|blob:|javascript:)/i.test(value)) return "";
     try {
       const url = new URL(value, document2.baseURI);
@@ -3575,20 +4396,20 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
   }
   function pixhostShowHref(document2, anchor) {
-    const href = absoluteHttpUrl2(document2, anchor?.getAttribute("href"));
+    const href = absoluteHttpUrl3(document2, anchor?.getAttribute("href"));
     return href && isPixhostShowUrl(href, document2.baseURI) ? href : "";
   }
   function directImageHref2(document2, anchor) {
-    const href = absoluteHttpUrl2(document2, anchor?.getAttribute("href"));
+    const href = absoluteHttpUrl3(document2, anchor?.getAttribute("href"));
     if (!href || isPixhostShowUrl(href, document2.baseURI)) return "";
     try {
-      return IMAGE_EXTENSION_PATTERN2.test(new URL(href).pathname) ? href : "";
+      return IMAGE_EXTENSION_PATTERN3.test(new URL(href).pathname) ? href : "";
     } catch {
       return "";
     }
   }
   function wordpressOriginalUrl(document2, value) {
-    const href = absoluteHttpUrl2(document2, value);
+    const href = absoluteHttpUrl3(document2, value);
     if (!href) return "";
     try {
       const url = new URL(href);
@@ -3610,7 +4431,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
       const amount = match ? Number(match[2]) : order;
       const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
-      const url = absoluteHttpUrl2(document2, rawUrl);
+      const url = absoluteHttpUrl3(document2, rawUrl);
       return url ? { url, score } : null;
     }).filter(Boolean).sort((a, b) => b.score - a.score);
     return candidates[0]?.url || "";
@@ -3624,7 +4445,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       image?.getAttribute("data-src")
     ];
     for (const candidate of candidates) {
-      const url = absoluteHttpUrl2(document2, candidate);
+      const url = absoluteHttpUrl3(document2, candidate);
       if (url) return url;
     }
     return "";
@@ -3642,7 +4463,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       image.getAttribute("src")
     ];
     for (const candidate of rawCandidates) {
-      const direct = absoluteHttpUrl2(document2, candidate);
+      const direct = absoluteHttpUrl3(document2, candidate);
       if (!direct) continue;
       const original = wordpressOriginalUrl(document2, direct);
       if (original) return original;
@@ -3660,12 +4481,12 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       if (url) return wordpressOriginalUrl(document2, url) || url;
     }
     for (const candidate of rawCandidates) {
-      const url = absoluteHttpUrl2(document2, candidate);
+      const url = absoluteHttpUrl3(document2, candidate);
       if (url) return url;
     }
     return "";
   }
-  function textNodesUnder2(root) {
+  function textNodesUnder3(root) {
     const view = root.ownerDocument.defaultView;
     const walker = root.ownerDocument.createTreeWalker(root, view.NodeFilter.SHOW_TEXT);
     const nodes = [];
@@ -3678,21 +4499,21 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return nodes;
   }
   function findPreviewMarker(root) {
-    return textNodesUnder2(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue))) || null;
+    return textNodesUnder3(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue))) || null;
   }
-  function isAfter2(reference, node) {
+  function isAfter3(reference, node) {
     return Boolean(reference.compareDocumentPosition(node) & 4);
   }
   function findBoundary(root, marker) {
-    return textNodesUnder2(root).find((node) => {
-      if (!isAfter2(marker, node)) return false;
-      const text = normalizeText2(node.nodeValue);
+    return textNodesUnder3(root).find((node) => {
+      if (!isAfter3(marker, node)) return false;
+      const text = normalizeText3(node.nodeValue);
       return text && PREVIEW_BOUNDARY_PATTERN2.test(text);
     }) || null;
   }
   function inPreviewRange2(marker, boundary, node) {
-    if (!isAfter2(marker, node)) return false;
-    return !boundary || !isAfter2(boundary, node);
+    if (!isAfter3(marker, node)) return false;
+    return !boundary || !isAfter3(boundary, node);
   }
   function findArticleContent(document2) {
     const article = document2.querySelector(
@@ -3781,7 +4602,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return true;
   }
   function previewRange2(document2, locationObject) {
-    if (!document2 || !isHdblogHost3(locationObject)) return null;
+    if (!document2 || !isHdblogHost4(locationObject)) return null;
     const content = findArticleContent(document2);
     if (!content) return null;
     const marker = findPreviewMarker(content);
@@ -3801,7 +4622,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       let image = anchor.querySelector("img");
       if (!image) {
         image = document2.createElement("img");
-        image.alt = normalizeText2(anchor.textContent) || "Preview";
+        image.alt = normalizeText3(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
       if (styleExpandedImage(image, wordpressOriginalUrl(document2, fullUrl) || fullUrl)) {
@@ -3826,7 +4647,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       if (!fullUrl) return false;
       if (!image) {
         image = document2.createElement("img");
-        image.alt = normalizeText2(anchor.textContent) || "Preview";
+        image.alt = normalizeText3(anchor.textContent) || "Preview";
         anchor.replaceChildren(image);
       }
       return styleExpandedImage(image, fullUrl);
@@ -3834,7 +4655,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return results.filter(Boolean).length;
   }
   function installHdblogPreviewImages(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isHdblogHost3(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
+    if (!document2 || !isHdblogHost4(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
     const run = () => {
       if (!isHdblogPreviewExpansionEnabled()) return;
       expandHdblogPreviewImages2(document2, locationObject);
@@ -3848,17 +4669,17 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
 
   // src/hdblog-refer.js
-  var REQUEST_TIMEOUT4 = 3e4;
+  var REQUEST_TIMEOUT5 = 3e4;
   var PREVIEW_BOUNDARY_PATTERN3 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
   var resolutionCache2 = /* @__PURE__ */ new Map();
-  function normalizeText3(value) {
+  function normalizeText4(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
   function isHdblogHostname(hostname) {
     const host = String(hostname ?? "").toLowerCase().replace(/\.$/, "");
     return host === "hdblog.me" || host.endsWith(".hdblog.me");
   }
-  function absoluteHttpUrl3(value, baseUrl) {
+  function absoluteHttpUrl4(value, baseUrl) {
     if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
     try {
       const url = new URL(String(value), baseUrl);
@@ -3868,7 +4689,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
   }
   function isHdblogReferUrl(value, baseUrl = "https://hdblog.me/") {
-    const href = absoluteHttpUrl3(value, baseUrl);
+    const href = absoluteHttpUrl4(value, baseUrl);
     if (!href) return false;
     try {
       const url = new URL(href);
@@ -3895,7 +4716,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
         const content = meta.getAttribute("content") || "";
         const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
-        const target = absoluteHttpUrl3(match?.[1], baseUrl);
+        const target = absoluteHttpUrl4(match?.[1], baseUrl);
         if (target) return target;
       }
     } catch {
@@ -3903,10 +4724,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const scriptMatch = String(html).match(
       /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
     );
-    return absoluteHttpUrl3(scriptMatch?.[1], baseUrl);
+    return absoluteHttpUrl4(scriptMatch?.[1], baseUrl);
   }
   function targetFromResponse(document2, response, referUrl) {
-    const finalUrl = absoluteHttpUrl3(
+    const finalUrl = absoluteHttpUrl4(
       response?.finalUrl || response?.responseURL,
       referUrl
     );
@@ -3914,7 +4735,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       return finalUrl;
     }
     const location2 = responseHeadersMap(response?.responseHeaders).get("location");
-    const locationUrl = absoluteHttpUrl3(location2, referUrl);
+    const locationUrl = absoluteHttpUrl4(location2, referUrl);
     if (locationUrl && !isHdblogReferUrl(locationUrl, referUrl)) return locationUrl;
     const html = String(response?.responseText ?? response?.response ?? "");
     const htmlTarget = htmlRedirectTarget(document2, html, referUrl);
@@ -3930,7 +4751,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         method: "GET",
         url: referUrl,
         responseType: "text",
-        timeout: REQUEST_TIMEOUT4,
+        timeout: REQUEST_TIMEOUT5,
         headers: {
           Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
           ...referer ? { Referer: referer } : {}
@@ -3953,7 +4774,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     });
   }
   function resolveHdblogReferUrl(document2, referUrl, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    const absoluteReferUrl = absoluteHttpUrl3(referUrl, document2?.baseURI || "https://hdblog.me/");
+    const absoluteReferUrl = absoluteHttpUrl4(referUrl, document2?.baseURI || "https://hdblog.me/");
     if (!absoluteReferUrl || !isHdblogReferUrl(absoluteReferUrl, document2?.baseURI)) {
       return Promise.resolve("");
     }
@@ -3967,7 +4788,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     resolutionCache2.set(absoluteReferUrl, promise);
     return promise;
   }
-  function textNodesUnder3(root) {
+  function textNodesUnder4(root) {
     const view = root.ownerDocument.defaultView;
     const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
     const walker = root.ownerDocument.createTreeWalker(root, showText);
@@ -3980,7 +4801,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     return nodes;
   }
-  function isAfter3(reference, node) {
+  function isAfter4(reference, node) {
     return Boolean(reference?.compareDocumentPosition(node) & 4);
   }
   function findArticleContent2(document2) {
@@ -3996,22 +4817,22 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (!document2 || !isHdblogHostname(locationObject?.hostname)) return null;
     const content = findArticleContent2(document2);
     if (!content) return null;
-    const nodes = textNodesUnder3(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue)));
+    const nodes = textNodesUnder4(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText4(node.nodeValue)));
     if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter3(marker, node) && PREVIEW_BOUNDARY_PATTERN3.test(normalizeText3(node.nodeValue))) || null;
+    const boundary = nodes.find((node) => isAfter4(marker, node) && PREVIEW_BOUNDARY_PATTERN3.test(normalizeText4(node.nodeValue))) || null;
     return { content, marker, boundary };
   }
   function inPreviewRange3(range, node) {
-    if (!range || !isAfter3(range.marker, node)) return false;
-    return !range.boundary || !isAfter3(range.boundary, node);
+    if (!range || !isAfter4(range.marker, node)) return false;
+    return !range.boundary || !isAfter4(range.boundary, node);
   }
   async function resolveHdblogPreviewReferLinks(document2, locationObject = document2?.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     const range = previewRange3(document2, locationObject);
     if (!range) return 0;
     const anchors = [...range.content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange3(range, anchor)).map((anchor) => ({
       anchor,
-      referUrl: absoluteHttpUrl3(anchor.getAttribute("href"), document2.baseURI)
+      referUrl: absoluteHttpUrl4(anchor.getAttribute("href"), document2.baseURI)
     })).filter(({ referUrl }) => isHdblogReferUrl(referUrl, document2.baseURI));
     if (!anchors.length) return 0;
     const results = await Promise.all(anchors.map(async ({ anchor, referUrl }) => {
@@ -4046,13 +4867,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var FANZA_IMAGE_ORIGIN = "https://pics.dmm.co.jp";
   var FANZA_REFERER = "https://www.dmm.co.jp/";
   var MGS_ORIGIN = "https://www.mgstage.com";
-  var REQUEST_TIMEOUT5 = 3e4;
+  var REQUEST_TIMEOUT6 = 3e4;
   var MAX_PREVIEW_IMAGES = 20;
   var AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:agaghhh-official-preview-fallback-enabled";
-  function normalizeText4(value) {
+  function normalizeText5(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function absoluteHttpUrl4(value, baseUrl) {
+  function absoluteHttpUrl5(value, baseUrl) {
     if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
     try {
       const url = new URL(String(value), baseUrl);
@@ -4068,7 +4889,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         return;
       }
       request({
-        timeout: REQUEST_TIMEOUT5,
+        timeout: REQUEST_TIMEOUT6,
         ...details,
         onload: resolve,
         onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
@@ -4076,7 +4897,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       });
     });
   }
-  async function requestText(url, request, options = {}) {
+  async function requestText2(url, request, options = {}) {
     const response = await gmRequest({
       method: "GET",
       url,
@@ -4109,7 +4930,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       return false;
     }
   }
-  function parseHtml(html, baseUrl, hostDocument = globalThis.document) {
+  function parseHtml2(html, baseUrl, hostDocument = globalThis.document) {
     const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
     if (typeof Parser !== "function") return null;
     const parsed = new Parser().parseFromString(String(html || ""), "text/html");
@@ -4118,18 +4939,18 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     (parsed.head || parsed.documentElement).prepend(base);
     return parsed;
   }
-  function codeTokenMatches(text, code) {
+  function codeTokenMatches2(text, code) {
     const target = String(code || "").trim().toUpperCase();
     if (!target) return false;
     const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`, "i").test(normalizeText4(text).toUpperCase());
+    return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`, "i").test(normalizeText5(text).toUpperCase());
   }
   function findAvWikiResultUrl(document2, code) {
     if (!document2 || !code) return "";
     const exactPath = `/${String(code).toLowerCase()}/`;
     const anchors = [...document2.querySelectorAll("a[href]")];
     for (const anchor of anchors) {
-      const url = absoluteHttpUrl4(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+      const url = absoluteHttpUrl5(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
       if (!url) continue;
       try {
         const parsed = new URL(url);
@@ -4139,8 +4960,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     for (const anchor of anchors) {
       const article = anchor.closest("article");
-      if (!codeTokenMatches(article?.textContent || anchor.textContent, code)) continue;
-      const url = absoluteHttpUrl4(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+      if (!codeTokenMatches2(article?.textContent || anchor.textContent, code)) continue;
+      const url = absoluteHttpUrl5(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
       if (!url) continue;
       try {
         const parsed = new URL(url);
@@ -4151,22 +4972,22 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return "";
   }
   function cleanProviderId(value) {
-    return normalizeText4(value).replace(/^(?:MGS|FANZA)\s*品番\s*[:：]?\s*/i, "").split(/\s+/, 1)[0].replace(/[，,;；]+$/u, "").trim();
+    return normalizeText5(value).replace(/^(?:MGS|FANZA)\s*品番\s*[:：]?\s*/i, "").split(/\s+/, 1)[0].replace(/[，,;；]+$/u, "").trim();
   }
   function labeledValue(document2, labelPattern) {
     if (!document2) return "";
     for (const row of document2.querySelectorAll("tr")) {
       const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
       if (cells.length < 2) continue;
-      if (labelPattern.test(normalizeText4(cells[0].textContent))) {
+      if (labelPattern.test(normalizeText5(cells[0].textContent))) {
         return cleanProviderId(cells[1].textContent);
       }
     }
     for (const term of document2.querySelectorAll("dt")) {
-      if (!labelPattern.test(normalizeText4(term.textContent))) continue;
+      if (!labelPattern.test(normalizeText5(term.textContent))) continue;
       return cleanProviderId(term.nextElementSibling?.textContent || "");
     }
-    const lines = String(document2.body?.innerText || document2.body?.textContent || "").replace(/\r/g, "").split("\n").map((line) => normalizeText4(line)).filter(Boolean);
+    const lines = String(document2.body?.innerText || document2.body?.textContent || "").replace(/\r/g, "").split("\n").map((line) => normalizeText5(line)).filter(Boolean);
     for (let index = 0; index < lines.length; index += 1) {
       if (!labelPattern.test(lines[index])) continue;
       const inline = lines[index].replace(labelPattern, "").replace(/^\s*[:：]\s*/, "");
@@ -4185,11 +5006,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const normalizedCode = String(code || "").trim().toUpperCase();
     if (!normalizedCode) return { code: "", detailUrl: "", fanzaId: "", mgsId: "" };
     const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
-    const search = await requestText(searchUrl, request, { referer: `${AV_WIKI_ORIGIN}/` });
-    const searchDocument = parseHtml(search.html, search.finalUrl || searchUrl, hostDocument);
+    const search = await requestText2(searchUrl, request, { referer: `${AV_WIKI_ORIGIN}/` });
+    const searchDocument = parseHtml2(search.html, search.finalUrl || searchUrl, hostDocument);
     const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
-    const detail = await requestText(detailUrl, request, { referer: searchUrl });
-    const detailDocument = parseHtml(detail.html, detail.finalUrl || detailUrl, hostDocument);
+    const detail = await requestText2(detailUrl, request, { referer: searchUrl });
+    const detailDocument = parseHtml2(detail.html, detail.finalUrl || detailUrl, hostDocument);
     return {
       code: normalizedCode,
       detailUrl,
@@ -4224,18 +5045,18 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function parseMgsPreviewImages(document2, baseUrl) {
     if (!document2) return [];
     const seen = /* @__PURE__ */ new Set();
-    return [...document2.querySelectorAll("a.sample_image[href], .sample_image[href]")].map((element) => absoluteHttpUrl4(element.getAttribute("href"), baseUrl)).filter((url) => url && !seen.has(url) && seen.add(url));
+    return [...document2.querySelectorAll("a.sample_image[href], .sample_image[href]")].map((element) => absoluteHttpUrl5(element.getAttribute("href"), baseUrl)).filter((url) => url && !seen.has(url) && seen.add(url));
   }
   async function fetchMgsPreviewImages(mgsId, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
     const id = String(mgsId || "").trim();
     if (!id) return { productUrl: "", imageUrls: [] };
     const productUrl = `${MGS_ORIGIN}/product/product_detail/${encodeURIComponent(id)}/`;
-    const response = await requestText(productUrl, request, {
+    const response = await requestText2(productUrl, request, {
       referer: `${MGS_ORIGIN}/`,
       cookie: "adc=1; coc=1",
       headers: { "Accept-Language": "ja-JP" }
     });
-    const document2 = parseHtml(response.html, response.finalUrl || productUrl, hostDocument);
+    const document2 = parseHtml2(response.html, response.finalUrl || productUrl, hostDocument);
     return {
       productUrl,
       imageUrls: parseMgsPreviewImages(document2, response.finalUrl || productUrl)
@@ -4307,15 +5128,16 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const strong = masterLabel?.querySelector("strong");
     const small = masterLabel?.querySelector("small");
     if (strong) strong.textContent = "\u663E\u793A\u5927\u9884\u89C8\u56FE";
-    if (small) small.textContent = "\u4F18\u5148\u6309\u756A\u53F7\u641C\u7D22 hdblog\uFF1Bhdblog \u6CA1\u6709\u5339\u914D\u5927\u56FE\u65F6\uFF0C\u53EF\u7EE7\u7EED\u4F7F\u7528\u5B98\u65B9\u540E\u5907\u6E90\u3002";
+    if (small) small.textContent = "\u4F18\u5148\u6309\u756A\u53F7\u641C\u7D22 hdblog\uFF1B\u6CA1\u6709\u53EF\u7528 Preview \u65F6\u4F9D\u6B21\u5C1D\u8BD5 JavFree\uFF0C\u518D\u5C1D\u8BD5\u5B98\u65B9\u540E\u5907\u6E90\u3002";
     let input = form.querySelector('[data-setting="official-preview-fallback"]');
     if (!input) {
       const label = document2.createElement("label");
       label.style.cssText = "display:flex;align-items:flex-start;gap:9px;margin:-3px 0 13px 24px";
       label.innerHTML = `
       <input data-setting="official-preview-fallback" type="checkbox" style="margin-top:3px">
-      <span><strong>\u5B98\u65B9\u540E\u5907\u9884\u89C8\u56FE\uFF08FANZA / MGStage\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u5728 hdblog \u6CA1\u627E\u5230 Preview \u65F6\u542F\u7528\uFF0C\u987A\u5E8F\u4E3A FANZA \u5B98\u65B9\u56FE\u7247 CDN \u2192 MGStage \u5B98\u65B9\u5546\u54C1\u9875\u3002</small></span>`;
-      masterLabel?.after(label);
+      <span><strong>\u5B98\u65B9\u540E\u5907\u9884\u89C8\u56FE\uFF08FANZA / MGStage\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u5728 hdblog \u548C JavFree \u90FD\u6CA1\u6709\u53EF\u7528 Preview \u65F6\u542F\u7528\uFF0C\u987A\u5E8F\u4E3A FANZA \u5B98\u65B9\u56FE\u7247 CDN \u2192 MGStage \u5B98\u65B9\u5546\u54C1\u9875\u3002</small></span>`;
+      const javfreeLabel = form.querySelector('[data-setting="javfree-preview-fallback"]')?.closest("label");
+      (javfreeLabel || masterLabel)?.after(label);
       input = label.querySelector('[data-setting="official-preview-fallback"]');
     }
     input.checked = isOfficialPreviewFallbackEnabled();
@@ -4352,15 +5174,15 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var HDBLOG_ORIGIN = "https://hdblog.me";
   var HDBLOG_BLOCKED_KEYWORDS_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
   var DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
-  var REQUEST_TIMEOUT6 = 3e4;
+  var REQUEST_TIMEOUT7 = 3e4;
   var CONTAINER_ID = "x1080x-ex-agaghhh-hdblog-preview";
   var PREVIEW_IMAGE_ATTR = "data-x1080x-hdblog-preview-url";
-  var IMAGE_EXTENSION_PATTERN3 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
+  var IMAGE_EXTENSION_PATTERN4 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
   var PREVIEW_BOUNDARY_PATTERN4 = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
-  function normalizeText5(value) {
+  function normalizeText6(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function absoluteHttpUrl5(value, baseUrl) {
+  function absoluteHttpUrl6(value, baseUrl) {
     if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
     try {
       const url = new URL(String(value), baseUrl);
@@ -4369,7 +5191,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       return "";
     }
   }
-  function requestText2(url, gmRequest2, referer = "") {
+  function requestText3(url, gmRequest2, referer = "") {
     return new Promise((resolve, reject) => {
       if (typeof gmRequest2 !== "function") {
         reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
@@ -4379,7 +5201,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         method: "GET",
         url,
         responseType: "text",
-        timeout: REQUEST_TIMEOUT6,
+        timeout: REQUEST_TIMEOUT7,
         headers: {
           Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
           ...referer ? { Referer: referer } : {}
@@ -4400,7 +5222,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       });
     });
   }
-  function parseHtml2(html, baseUrl, hostDocument = globalThis.document) {
+  function parseHtml3(html, baseUrl, hostDocument = globalThis.document) {
     const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
     if (typeof Parser !== "function") return null;
     const parsed = new Parser().parseFromString(String(html || ""), "text/html");
@@ -4416,8 +5238,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       stored === null || stored === void 0 ? DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 : stored
     );
   }
-  function codeTokenMatches2(title, code) {
-    const normalized = normalizeText5(title).toUpperCase();
+  function codeTokenMatches3(title, code) {
+    const normalized = normalizeText6(title).toUpperCase();
     const target = String(code || "").trim().toUpperCase();
     if (!target) return false;
     const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -4437,7 +5259,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       }
     });
     if (exactSlug.length === 1) return { blocked, remaining, selected: exactSlug[0] };
-    const exactTitle = remaining.filter((candidate) => codeTokenMatches2(candidate.title, code));
+    const exactTitle = remaining.filter((candidate) => codeTokenMatches3(candidate.title, code));
     if (exactTitle.length === 1) return { blocked, remaining, selected: exactTitle[0] };
     return { blocked, remaining, selected: null };
   }
@@ -4450,27 +5272,27 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return line ? line.slice(line.indexOf(":") + 1).trim() : "";
   }
   function redirectFromHtml(html, baseUrl, hostDocument) {
-    const parsed = parseHtml2(html, baseUrl, hostDocument);
+    const parsed = parseHtml3(html, baseUrl, hostDocument);
     const meta = parsed?.querySelector("meta[http-equiv]");
     if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
       const content = meta.getAttribute("content") || "";
       const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
-      const target = absoluteHttpUrl5(match?.[1], baseUrl);
+      const target = absoluteHttpUrl6(match?.[1], baseUrl);
       if (target) return target;
     }
     const scriptMatch = String(html).match(
       /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
     );
-    return absoluteHttpUrl5(scriptMatch?.[1], baseUrl);
+    return absoluteHttpUrl6(scriptMatch?.[1], baseUrl);
   }
   async function resolveHdblogReferTarget(document2, referUrl, articleUrl, gmRequest2) {
     try {
-      const response = await requestText2(referUrl, gmRequest2, articleUrl);
-      const finalUrl = absoluteHttpUrl5(response.finalUrl, referUrl);
+      const response = await requestText3(referUrl, gmRequest2, articleUrl);
+      const finalUrl = absoluteHttpUrl6(response.finalUrl, referUrl);
       if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
         return finalUrl;
       }
-      const location2 = absoluteHttpUrl5(responseHeader(response.responseHeaders, "location"), referUrl);
+      const location2 = absoluteHttpUrl6(responseHeader(response.responseHeaders, "location"), referUrl);
       if (location2 && !isHdblogReferUrl(location2, referUrl)) return location2;
       const htmlTarget = redirectFromHtml(response.html, referUrl, document2);
       return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
@@ -4487,13 +5309,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       image?.getAttribute("data-src")
     ];
     for (const candidate of candidates) {
-      const url = absoluteHttpUrl5(candidate, document2.baseURI);
+      const url = absoluteHttpUrl6(candidate, document2.baseURI);
       if (url) return url;
     }
     return "";
   }
   function wordpressOriginalUrl2(value) {
-    const href = absoluteHttpUrl5(value, HDBLOG_ORIGIN);
+    const href = absoluteHttpUrl6(value, HDBLOG_ORIGIN);
     if (!href) return "";
     try {
       const url = new URL(href);
@@ -4513,12 +5335,12 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
       const amount = match ? Number(match[2]) : order;
       const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
-      const url = absoluteHttpUrl5(rawUrl, document2.baseURI);
+      const url = absoluteHttpUrl6(rawUrl, document2.baseURI);
       return url ? { url, score } : null;
     }).filter(Boolean).sort((a, b) => b.score - a.score)[0]?.url || "";
   }
   function pixhostAssetIdentity(value, baseUrl) {
-    const href = absoluteHttpUrl5(value, baseUrl);
+    const href = absoluteHttpUrl6(value, baseUrl);
     if (!href) return "";
     try {
       const url = new URL(href);
@@ -4551,8 +5373,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function bestImageUrl(document2, image) {
     if (!image) return "";
-    const anchorHref = absoluteHttpUrl5(image.closest("a[href]")?.getAttribute("href"), document2.baseURI);
-    const directAnchorHref = anchorHref && !isPixhostShowUrl(anchorHref, document2.baseURI) && IMAGE_EXTENSION_PATTERN3.test(anchorHref) ? anchorHref : "";
+    const anchorHref = absoluteHttpUrl6(image.closest("a[href]")?.getAttribute("href"), document2.baseURI);
+    const directAnchorHref = anchorHref && !isPixhostShowUrl(anchorHref, document2.baseURI) && IMAGE_EXTENSION_PATTERN4.test(anchorHref) ? anchorHref : "";
     const candidates = [
       directAnchorHref,
       image.getAttribute("data-orig-file"),
@@ -4563,7 +5385,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       image.getAttribute("src")
     ];
     for (const candidate of candidates) {
-      const url = absoluteHttpUrl5(candidate, document2.baseURI);
+      const url = absoluteHttpUrl6(candidate, document2.baseURI);
       if (!url) continue;
       return wordpressOriginalUrl2(url) || url;
     }
@@ -4573,7 +5395,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     );
     return wordpressOriginalUrl2(srcset) || srcset;
   }
-  function textNodesUnder4(root) {
+  function textNodesUnder5(root) {
     const view = root.ownerDocument.defaultView;
     const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
     const walker = root.ownerDocument.createTreeWalker(root, showText);
@@ -4586,7 +5408,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     return nodes;
   }
-  function isAfter4(reference, node) {
+  function isAfter5(reference, node) {
     return Boolean(reference?.compareDocumentPosition(node) & 4);
   }
   function previewRange4(document2) {
@@ -4595,15 +5417,15 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     );
     const content = article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article || document2.querySelector("main#genesis-content, main, #content") || document2.body;
     if (!content) return null;
-    const nodes = textNodesUnder4(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText5(node.nodeValue)));
+    const nodes = textNodesUnder5(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText6(node.nodeValue)));
     if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter4(marker, node) && PREVIEW_BOUNDARY_PATTERN4.test(normalizeText5(node.nodeValue))) || null;
+    const boundary = nodes.find((node) => isAfter5(marker, node) && PREVIEW_BOUNDARY_PATTERN4.test(normalizeText6(node.nodeValue))) || null;
     return { content, marker, boundary };
   }
   function inPreviewRange4(range, node) {
-    if (!range || !isAfter4(range.marker, node)) return false;
-    return !range.boundary || !isAfter4(range.boundary, node);
+    if (!range || !isAfter5(range.marker, node)) return false;
+    return !range.boundary || !isAfter5(range.boundary, node);
   }
   async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest2) {
     const range = previewRange4(document2);
@@ -4617,7 +5439,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         kind: "anchor",
         anchor,
         image,
-        href: absoluteHttpUrl5(anchor.getAttribute("href"), document2.baseURI),
+        href: absoluteHttpUrl6(anchor.getAttribute("href"), document2.baseURI),
         thumbUrl: previewThumbnailUrl2(document2, image),
         values: [
           image?.getAttribute("src"),
@@ -4645,7 +5467,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       const urls = [];
       const seen = /* @__PURE__ */ new Set();
       const add = (value) => {
-        const url = absoluteHttpUrl5(value, articleUrl);
+        const url = absoluteHttpUrl6(value, articleUrl);
         if (!url) return;
         const key = pixhostAssetIdentity(url, articleUrl) || url;
         if (seen.has(key)) return;
@@ -4668,7 +5490,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
           target = await resolvePixhostShowUrl(document2, target, thumbnail, gmRequest2);
           if (!target) continue;
         }
-        if (target && (IMAGE_EXTENSION_PATTERN3.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
+        if (target && (IMAGE_EXTENSION_PATTERN4.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
           add(wordpressOriginalUrl2(target) || target);
           continue;
         }
@@ -4693,8 +5515,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (!normalizedCode) return { code: "", articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
     const searchCode = hdblogSearchCodeForThreadCode(normalizedCode);
     const searchUrl = `${HDBLOG_ORIGIN}/?s=${encodeURIComponent(searchCode)}`;
-    const searchResponse = await requestText2(searchUrl, gmRequest2, `${HDBLOG_ORIGIN}/`);
-    const searchDocument = parseHtml2(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
+    const searchResponse = await requestText3(searchUrl, gmRequest2, `${HDBLOG_ORIGIN}/`);
+    const searchDocument = parseHtml3(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
     if (!searchDocument) return { code: normalizedCode, articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
     const candidates = collectHdblogSearchResults(searchDocument);
     const selection = chooseHdblogSearchResult(candidates, searchCode, getHdblogBlockedKeywords());
@@ -4702,8 +5524,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       return { code: normalizedCode, articleUrl: "", imageUrls: [], ...selection };
     }
     const articleUrl = selection.selected.url;
-    const articleResponse = await requestText2(articleUrl, gmRequest2, searchUrl);
-    const articleDocument = parseHtml2(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
+    const articleResponse = await requestText3(articleUrl, gmRequest2, searchUrl);
+    const articleDocument = parseHtml3(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
     const imageUrls = articleDocument ? await collectHdblogPreviewImageUrls(articleDocument, articleUrl, gmRequest2) : [];
     return { code: normalizedCode, articleUrl, imageUrls, ...selection };
   }
@@ -4730,7 +5552,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const existingAssets = existingPixhostAssets(content);
     const seenResultAssets = /* @__PURE__ */ new Set();
     const imageUrls = result.imageUrls.filter((value) => {
-      const url = absoluteHttpUrl5(value, document2.baseURI);
+      const url = absoluteHttpUrl6(value, document2.baseURI);
       if (!url) return false;
       const identity = pixhostAssetIdentity(url, document2.baseURI);
       const key = identity || url;
@@ -4787,6 +5609,16 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         error: error?.message || String(error)
       });
     }
+    if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
+      try {
+        result = await fetchJavfreePreviewForCode(code, gmRequest2, document2);
+      } catch (error) {
+        console.warn("[x1080x-ex] JavFree preview fallback failed", {
+          code,
+          error: error?.message || String(error)
+        });
+      }
+    }
     if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
       try {
         result = await fetchOfficialPreviewFallbackForCode(code, gmRequest2, document2);
@@ -4830,7 +5662,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var AV_WIKI_TIMEOUT = 2e4;
   var REAL_ACTRESS_BOUND_ATTR = "data-x1080x-real-actress-bound";
   var REAL_ACTRESS_BYPASS_ATTR = "data-x1080x-real-actress-bypass";
-  function normalizeText6(value) {
+  function normalizeText7(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
   function isAgaghhhHost2(locationObject = globalThis.location) {
@@ -4923,7 +5755,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       return false;
     }
     if (!/\/search\.php$/i.test(url.pathname) || url.searchParams.get("mod") !== "forum") return false;
-    const hasSearch = normalizeText6(url.searchParams.get("srchtxt")) || url.searchParams.has("searchid");
+    const hasSearch = normalizeText7(url.searchParams.get("srchtxt")) || url.searchParams.has("searchid");
     if (!hasSearch) return false;
     const page = Number.parseInt(url.searchParams.get("page") || "1", 10);
     return !Number.isFinite(page) || page <= 1;
@@ -4977,29 +5809,29 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       const line = lines[index];
       const match = line.match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
       if (!match) continue;
-      const inlineValue = normalizeText6(match[1]);
+      const inlineValue = normalizeText7(match[1]);
       if (inlineValue) return { found: true, value: inlineValue };
-      const nextLine = normalizeText6(lines[index + 1] || "");
+      const nextLine = normalizeText7(lines[index + 1] || "");
       if (nextLine && !/^[^:：]{1,12}\s*[:：]/u.test(nextLine)) {
         return { found: true, value: nextLine };
       }
       return { found: true, value: "" };
     }
-    const flattened = normalizeText6(raw);
+    const flattened = normalizeText7(raw);
     const inline = flattened.match(/(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*([^:：]{1,80}?)(?=\s+[\p{L}\p{N}_-]{1,16}\s*[:：]|$)/iu);
-    if (inline) return { found: true, value: normalizeText6(inline[1]) };
+    if (inline) return { found: true, value: normalizeText7(inline[1]) };
     return { found: false, value: "" };
   }
   function nodeActressText(node) {
     if (!node) return "";
-    const anchors = [...node.querySelectorAll?.("a") || []].map((anchor) => normalizeText6(anchor.textContent)).filter(Boolean).filter((text) => !/^(?:FANZA|ソクミル|DUGA|続きを読む)$/i.test(text));
+    const anchors = [...node.querySelectorAll?.("a") || []].map((anchor) => normalizeText7(anchor.textContent)).filter(Boolean).filter((text) => !/^(?:FANZA|ソクミル|DUGA|続きを読む)$/i.test(text));
     if (anchors.length) return [...new Set(anchors)].join(" ");
-    return normalizeText6(node.textContent).replace(/^AV女優名\s*[:：]?\s*/i, "").replace(/\s+(?:メーカー品番|FANZA品番|SOKMIL品番|DUGA品番|配信開始日)\b.*$/i, "").trim();
+    return normalizeText7(node.textContent).replace(/^AV女優名\s*[:：]?\s*/i, "").replace(/\s+(?:メーカー品番|FANZA品番|SOKMIL品番|DUGA品番|配信開始日)\b.*$/i, "").trim();
   }
   function scopeForCode(document2, code) {
     const upperCode = String(code || "").toUpperCase();
     const articles = [...document2.querySelectorAll("article")];
-    return articles.find((article) => normalizeText6(article.textContent).toUpperCase().includes(upperCode)) || document2.body || document2.documentElement;
+    return articles.find((article) => normalizeText7(article.textContent).toUpperCase().includes(upperCode)) || document2.body || document2.documentElement;
   }
   function parseAvWikiActressesFromDocument(document2, code = "") {
     if (!document2) return "";
@@ -5008,17 +5840,17 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     for (const row of scope.querySelectorAll("tr")) {
       const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
       if (cells.length < 2) continue;
-      if (/^AV女優名\s*[:：]?$/i.test(normalizeText6(cells[0].textContent))) {
+      if (/^AV女優名\s*[:：]?$/i.test(normalizeText7(cells[0].textContent))) {
         return nodeActressText(cells[1]);
       }
     }
     for (const term of scope.querySelectorAll("dt")) {
-      if (!/^AV女優名\s*[:：]?$/i.test(normalizeText6(term.textContent))) continue;
+      if (!/^AV女優名\s*[:：]?$/i.test(normalizeText7(term.textContent))) continue;
       const value = term.nextElementSibling;
       const text2 = nodeActressText(value);
       if (text2) return text2;
     }
-    const labels = [...scope.querySelectorAll("strong, b, span, div, p, li")].filter((element) => /^AV女優名\s*[:：]?$/i.test(normalizeText6(element.textContent)));
+    const labels = [...scope.querySelectorAll("strong, b, span, div, p, li")].filter((element) => /^AV女優名\s*[:：]?$/i.test(normalizeText7(element.textContent)));
     for (const label of labels) {
       const candidates = [
         label.nextElementSibling,
@@ -5031,11 +5863,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       }
     }
     const text = String(scope.innerText || scope.textContent || "").replace(/\r/g, "");
-    const lines = text.split("\n").map((line) => normalizeText6(line)).filter(Boolean);
+    const lines = text.split("\n").map((line) => normalizeText7(line)).filter(Boolean);
     const labelIndex = lines.findIndex((line) => /^AV女優名\s*[:：]?$/i.test(line));
-    if (labelIndex >= 0) return normalizeText6(lines[labelIndex + 1] || "");
+    if (labelIndex >= 0) return normalizeText7(lines[labelIndex + 1] || "");
     const inline = lines.find((line) => /^AV女優名\s*[:：]/i.test(line));
-    return inline ? normalizeText6(inline.replace(/^AV女優名\s*[:：]\s*/i, "")) : "";
+    return inline ? normalizeText7(inline.replace(/^AV女優名\s*[:：]\s*/i, "")) : "";
   }
   function findAvWikiResultUrl2(document2, code) {
     if (!document2 || !code) return "";
@@ -5052,7 +5884,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     for (const anchor of anchors) {
       const article = anchor.closest("article");
-      const text = normalizeText6(article?.textContent || anchor.textContent).toUpperCase();
+      const text = normalizeText7(article?.textContent || anchor.textContent).toUpperCase();
       if (!text.includes(targetCode)) continue;
       try {
         const url = new URL(anchor.getAttribute("href"), AV_WIKI_ORIGIN2);
@@ -5089,7 +5921,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       });
     });
   }
-  function parseHtml3(html, document2 = globalThis.document) {
+  function parseHtml4(html, document2 = globalThis.document) {
     const Parser = document2?.defaultView?.DOMParser || globalThis.DOMParser;
     if (typeof Parser !== "function") return null;
     return new Parser().parseFromString(String(html || ""), "text/html");
@@ -5098,17 +5930,17 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const normalizedCode = String(code || "").trim().toUpperCase();
     if (!normalizedCode) return "";
     const searchUrl = `${AV_WIKI_ORIGIN2}/?s=${encodeURIComponent(normalizedCode)}`;
-    const searchDocument = parseHtml3(await requestHtml(searchUrl, gmRequest2), document2);
+    const searchDocument = parseHtml4(await requestHtml(searchUrl, gmRequest2), document2);
     if (!searchDocument) return "";
     const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
     if (fromSearch) return fromSearch;
     const detailUrl = findAvWikiResultUrl2(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN2}/${normalizedCode.toLowerCase()}/`;
-    const detailDocument = parseHtml3(await requestHtml(detailUrl, gmRequest2), document2);
+    const detailDocument = parseHtml4(await requestHtml(detailUrl, gmRequest2), document2);
     return parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
   }
   function appendActressToTitleText(titleText, actress) {
-    const cleanTitle = normalizeText6(titleText);
-    const cleanActress = normalizeText6(actress);
+    const cleanTitle = normalizeText7(titleText);
+    const cleanActress = normalizeText7(actress);
     if (!cleanActress || cleanTitle.includes(cleanActress)) return cleanTitle;
     return `${cleanTitle} ${cleanActress}`;
   }
@@ -5362,6 +6194,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
         <span><strong>\u663E\u793A hdblog \u5927\u9884\u89C8\u56FE</strong><small style="display:block;margin-top:2px;color:#666">\u6309\u5E16\u5B50\u756A\u53F7\u641C\u7D22 hdblog\uFF0C\u6CBF\u7528 hdblog \u7684\u201C\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD\u201D\uFF0C\u5E76\u628A\u5339\u914D\u6587\u7AE0\u7684 Preview \u5927\u56FE\u663E\u793A\u5230\u4E3B\u697C\u3002</small></span>
       </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin:-5px 0 13px 24px">
+        <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
+        <span><strong>JavFree Preview \u540E\u5907\u6E90</strong><small style="display:block;margin-top:2px;color:#666">hdblog \u6CA1\u6709\u53EF\u7528 Preview \u65F6\uFF0C\u518D\u641C\u7D22 javfree.me\uFF0C\u5E76\u53EA\u53D6\u5C01\u9762\u540E\u7684\u7B2C 1 \u5F20 Preview\u3002</small></span>
+      </label>
       <label style="display:flex;align-items:flex-start;gap:9px">
         <input data-setting="real-actress" type="checkbox" style="margin-top:3px">
         <span><strong>\u67E5\u771F\u5B9E\u6F14\u5458\u4FE1\u606F</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u5F53\u5E16\u5B50\u201C\u51FA\u6F14\u8005\u201D\u4E3A\u7A7A\u4E14\u542F\u7528\u4E86\u4E0B\u8F7D\u589E\u5F3A\u65F6\uFF0C\u901A\u8FC7 av-wiki \u67E5\u8BE2\u6F14\u5458\u5E76\u8FFD\u52A0\u5230\u9644\u4EF6\u6587\u4EF6\u540D\u3002</small></span>
@@ -5386,6 +6222,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
     const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
     const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
+    const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
     const actressInput = panel.querySelector('[data-setting="real-actress"]');
     batchInput.checked = isAgaghhhBatchOpenEnabled();
     const batchInterval = getAgaghhhBatchOpenInterval();
@@ -5401,6 +6238,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     copyCodeInput.checked = isAgaghhhCopyCodeEnabled();
     searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
     previewInput.checked = isAgaghhhHdblogPreviewEnabled();
+    javfreePreviewInput.checked = isAgaghhhJavfreePreviewFallbackEnabled();
     actressInput.checked = isAgaghhhRealActressEnabled();
     const syncBatchIntervalFields = () => {
       const disabled = !batchInput.checked;
@@ -5419,15 +6257,20 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const syncDownloadGuardField = () => {
       downloadGuardInput.disabled = !downloadInput.checked;
     };
+    const syncPreviewFallbackFields = () => {
+      javfreePreviewInput.disabled = !previewInput.checked;
+    };
     syncBatchIntervalFields();
     syncBatchHistoryFields();
     syncDownloadGuardField();
+    syncPreviewFallbackFields();
     batchInput.addEventListener("change", () => {
       syncBatchIntervalFields();
       syncBatchHistoryFields();
     });
     batchHistoryInput.addEventListener("change", syncBatchHistoryFields);
     downloadInput.addEventListener("change", syncDownloadGuardField);
+    previewInput.addEventListener("change", syncPreviewFallbackFields);
     batchIntervalResetButton.addEventListener("click", () => {
       batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1e3);
       batchIntervalMaxInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS / 1e3);
@@ -5478,6 +6321,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(AGAGHHH_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
         GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
         GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
+        GM_setValue(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
         GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
       }
       closeX1080xSettingsPanel(document2);
@@ -5639,5 +6483,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   installHdblogReferResolver();
   installHdblogArticleEnhancement();
   installHdblogPreviewImages();
+  void installHdblogJavfreeFallback();
   installHdblogSearchEnhancement();
+  installJavfreeEnhancement();
 })();
