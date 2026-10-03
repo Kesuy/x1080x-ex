@@ -182,6 +182,10 @@ test('agaghhh falls back from missing HDblog Preview to JavFree', async () => {
       section.querySelector('img')?.getAttribute('src'),
       'https://cf.javfree.me/HLIC/SAN-437-1080p.jpeg'
     );
+    const previewImage = section.querySelector('img');
+    assert.equal(previewImage?.draggable, false);
+    assert.equal(previewImage?.closest('a')?.draggable, false);
+    assert.equal(previewImage?.style.getPropertyValue('-webkit-user-drag'), 'none');
   } finally {
     if (oldGet === undefined) delete globalThis.GM_getValue;
     else globalThis.GM_getValue = oldGet;
