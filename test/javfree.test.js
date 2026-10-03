@@ -179,8 +179,13 @@ test('agaghhh falls back from missing HDblog Preview to JavFree', async () => {
 });
 
 test('deleted HDblog article opens JavFree search once for the code in its slug', async () => {
-  const dom = new JSDOM(`<!doctype html><html><head><title>404 - Not Found</title></head>
-    <body class="error404"><main><h1>404 Not Found</h1></main></body></html>`, {
+  const dom = new JSDOM(`<!doctype html><html><head><title>ERROR-404 | HDblog.me</title></head>
+    <body class="error404">
+      <main id="genesis-content"><article class="entry">
+        <header class="entry-header"><h1 class="entry-title">ERROR-404</h1></header>
+        <div class="entry-content"><p>The page you requested could not be found.</p></div>
+      </article></main>
+    </body></html>`, {
     url: 'https://hdblog.me/768141/pjam-034/',
   });
   const oldGet = globalThis.GM_getValue;
@@ -197,6 +202,31 @@ test('deleted HDblog article opens JavFree search once for the code in its slug'
       url: 'https://javfree.me/search/PJAM-034',
       options: { active: true, insert: true, setParent: true },
     }]);
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+    if (oldOpen === undefined) delete globalThis.GM_openInTab;
+    else globalThis.GM_openInTab = oldOpen;
+  }
+});
+
+test('deleted HDblog ignores ERROR-404 title and always searches the original URL code', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>ERROR-404</title></head>
+    <body><main id="genesis-content"><article class="entry">
+      <h1 class="entry-title">ERROR-404</h1>
+      <div class="entry-content"><p>404 Not Found</p></div>
+    </article></main></body></html>`, {
+    url: 'https://hdblog.me/768141/pjam-034/',
+  });
+  const oldGet = globalThis.GM_getValue;
+  const oldOpen = globalThis.GM_openInTab;
+  const opened = [];
+  globalThis.GM_getValue = (_key, fallback) => fallback;
+  globalThis.GM_openInTab = (url) => opened.push(url);
+  try {
+    await installHdblogJavfreeFallback(dom.window.document, dom.window.location, () => {});
+    assert.deepEqual(opened, ['https://javfree.me/search/PJAM-034']);
+    assert.equal(opened.some((url) => /ERROR-404/i.test(url)), false);
   } finally {
     if (oldGet === undefined) delete globalThis.GM_getValue;
     else globalThis.GM_getValue = oldGet;
