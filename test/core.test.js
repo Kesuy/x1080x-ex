@@ -85,6 +85,22 @@ test('保留数字后尾随字母的番号后缀', () => {
   });
 });
 
+test('支持前缀包含数字的番号', () => {
+  const direct = parseThreadTitle('T38-042 sample title');
+  assert.deepEqual(direct, {
+    code: 'T38-042',
+    cleanTitle: 'T38-042 sample title',
+    hasExternalSubtitle: false,
+  });
+
+  const grouped = parseThreadTitle('(HD1080P)(T38-038)sample title');
+  assert.deepEqual(grouped, {
+    code: 'T38-038',
+    cleanTitle: 'T38-038 sample title',
+    hasExternalSubtitle: false,
+  });
+});
+
 test('中文字幕附件使用清理后的标题并追加外挂字幕标记', () => {
   const parsed = parseThreadTitle(
     'MFYD-080 [中文外掛字幕](HD1080P_60fps)(溜池ゴロー)(mfyd00080)近所に住むタダマン妻 郊外のラブホテルサービスタイムで濃厚不倫 夢実かなえ'
