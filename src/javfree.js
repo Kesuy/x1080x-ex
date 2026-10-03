@@ -5,6 +5,7 @@ const REQUEST_TIMEOUT = 30000;
 const HDBLOG_SECTION_ID = 'x1080x-ex-hdblog-javfree-preview';
 const JAVFREE_SETTINGS_PANEL_ID = 'x1080x-ex-javfree-settings-panel';
 const JAVFREE_DOWNLOAD_BUTTON_ID = 'x1080x-ex-javfree-preview-download';
+const JAVFREE_AGAGHHH_SEARCH_BUTTON_ID = 'x1080x-ex-javfree-agaghhh-search';
 export const JAVFREE_PREVIEW_ATTR = 'data-x1080x-javfree-preview-url';
 export const PREVIEW_REFERER_ATTR = 'data-x1080x-preview-referer';
 
@@ -18,6 +19,8 @@ export const JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY =
   'x1080x-ex:javfree-search-auto-redirect-enabled';
 export const JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY =
   'x1080x-ex:javfree-preview-download-enabled';
+export const JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY =
+  'x1080x-ex:javfree-agaghhh-search-enabled';
 
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
 const HDBLOG_BOUNDARY_PATTERN =
@@ -126,6 +129,10 @@ export function isJavfreeSearchAutoRedirectEnabled() {
 
 export function isJavfreePreviewDownloadEnabled() {
   return readEnabled(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, true);
+}
+
+export function isJavfreeAgaghhhSearchEnabled() {
+  return readEnabled(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, true);
 }
 
 export function isJavfreeHost(locationObject = globalThis.location) {
@@ -278,6 +285,82 @@ function javfreeCodeFromDocument(document, locationObject = document?.location) 
   } catch {
     return '';
   }
+}
+
+export function buildJavfreeAgaghhhSearchUrl(code) {
+  const normalized = String(code || '').trim().toUpperCase();
+  if (!normalized) return '';
+  return 'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt='
+    + encodeURIComponent(normalized)
+    + '&orderby=lastpost&ascdesc=desc';
+}
+
+function openJavfreeAgaghhhSearch(document, code) {
+  const url = buildJavfreeAgaghhhSearchUrl(code);
+  if (!url) return false;
+  if (typeof GM_openInTab === 'function') {
+    try {
+      GM_openInTab(url, { active: true, insert: true, setParent: true });
+      return true;
+    } catch (error) {
+      console.warn('[x1080x-ex] JavFree agaghhh search GM_openInTab failed', {
+        url,
+        error: error?.message || String(error),
+      });
+    }
+  }
+  return Boolean(document.defaultView?.open?.(url, '_blank'));
+}
+
+function installJavfreeAgaghhhSearchButton(document, locationObject) {
+  if (!isJavfreeAgaghhhSearchEnabled()
+    || document.getElementById(JAVFREE_AGAGHHH_SEARCH_BUTTON_ID)) {
+    return null;
+  }
+  let url;
+  try {
+    url = new URL(locationObject?.href || document.baseURI);
+  } catch {
+    return null;
+  }
+  if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
+
+  const title = document.querySelector(
+    'main#main article h1.entry-title, article h1.entry-title, h1.entry-title'
+  );
+  const code = javfreeCodeFromDocument(document, locationObject);
+  if (!title || !code) return null;
+
+  const button = document.createElement('button');
+  button.id = JAVFREE_AGAGHHH_SEARCH_BUTTON_ID;
+  button.type = 'button';
+  button.textContent = '🔍';
+  button.title = '按当前番号在 agaghhh.cc 搜索';
+  button.setAttribute('aria-label', '在 agaghhh.cc 搜索当前番号');
+  Object.assign(button.style, {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    verticalAlign: 'middle',
+    margin: '0 0 4px 8px',
+    padding: '5px 8px',
+    minWidth: '34px',
+    border: '1px solid #2878c8',
+    borderRadius: '5px',
+    color: '#fff',
+    background: '#398bd4',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: '600',
+    lineHeight: '20px',
+  });
+  button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
+  button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
+  button.addEventListener('click', () => {
+    openJavfreeAgaghhhSearch(document, javfreeCodeFromDocument(document, locationObject));
+  });
+  title.append(' ', button);
+  return button;
 }
 
 export async function fetchJavfreePreviewForCode(
@@ -486,6 +569,10 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
       <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
       <span><strong>搜索单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">搜索页只有 1 个唯一文章结果时自动进入详情页。</small></span>
     </label>
+    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <input data-setting="agaghhh-search" type="checkbox" style="margin-top:3px">
+      <span><strong>agaghhh.cc 搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">详情页识别当前番号，并在 agaghhh.cc 论坛中搜索。</small></span>
+    </label>
     <label style="display:flex;align-items:flex-start;gap:9px">
       <input data-setting="preview-download" type="checkbox" style="margin-top:3px">
       <span><strong>Preview 下载按钮</strong><small style="display:block;margin-top:2px;color:#666">详情页标题旁显示下载按钮，只下载封面后的 Preview，并按番号命名。</small></span>
@@ -496,8 +583,10 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
     </div>`;
 
   const redirectInput = form.querySelector('[data-setting="search-auto-redirect"]');
+  const agaghhhSearchInput = form.querySelector('[data-setting="agaghhh-search"]');
   const downloadInput = form.querySelector('[data-setting="preview-download"]');
   redirectInput.checked = isJavfreeSearchAutoRedirectEnabled();
+  agaghhhSearchInput.checked = isJavfreeAgaghhhSearchEnabled();
   downloadInput.checked = isJavfreePreviewDownloadEnabled();
 
   form.querySelector('[data-action="cancel"]')?.addEventListener(
@@ -511,6 +600,7 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
     event.preventDefault();
     if (typeof GM_setValue === 'function') {
       GM_setValue(JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY, redirectInput.checked);
+      GM_setValue(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, agaghhhSearchInput.checked);
       GM_setValue(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
     }
     closeJavfreeSettingsPanel(document);
@@ -547,6 +637,7 @@ export function installJavfreeEnhancement(
 
   return {
     redirectTarget: '',
+    searchButton: installJavfreeAgaghhhSearchButton(document, locationObject),
     button: installJavfreePreviewDownloadButton(document, locationObject, request),
   };
 }
