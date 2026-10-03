@@ -5,6 +5,7 @@ import {
   AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
   AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY,
   AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
+  AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY,
   AGAGHHH_CROSS_SEARCH_ENABLED_KEY,
   AGAGHHH_DOWNLOAD_ENABLED_KEY,
   AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY,
@@ -19,6 +20,7 @@ import {
   HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
   HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY,
   HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
+  HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY,
   HDBLOG_SEARCH_FILTER_ENABLED_KEY,
   HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY,
   installHdblogArticleEnhancement,
@@ -55,7 +57,7 @@ test('x1080x settings exposes every independent agaghhh feature switch', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   withGm(new Map(), () => {
     const panel = openX1080xSettingsPanel(dom.window.document);
-    for (const key of ['batch-open', 'batch-open-history', 'batch-open-history-limit', 'batch-open-history-color', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'real-actress']) {
+    for (const key of ['batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'real-actress']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });
@@ -113,10 +115,13 @@ test('batch-open history defaults off, enables its limit field, and saves the co
   withGm(values, () => {
     const panel = openX1080xSettingsPanel(dom.window.document);
     const enabled = panel.querySelector('[data-setting="batch-open-history"]');
+    const unopenedOnly = panel.querySelector('[data-setting="batch-open-unopened-only"]');
     const limit = panel.querySelector('[data-setting="batch-open-history-limit"]');
     const color = panel.querySelector('[data-setting="batch-open-history-color"]');
     const resetColor = panel.querySelector('[data-action="reset-batch-open-history-color"]');
     assert.equal(enabled.checked, false);
+    assert.equal(unopenedOnly.checked, false);
+    assert.equal(unopenedOnly.disabled, true);
     assert.equal(limit.value, '5000');
     assert.equal(color.value, '#bd10e0');
     assert.equal(limit.disabled, true);
@@ -124,6 +129,8 @@ test('batch-open history defaults off, enables its limit field, and saves the co
     assert.equal(resetColor.disabled, false);
 
     enabled.click();
+    assert.equal(unopenedOnly.disabled, false);
+    unopenedOnly.click();
     assert.equal(limit.disabled, false);
     assert.equal(color.disabled, false);
     assert.equal(resetColor.disabled, false);
@@ -138,6 +145,7 @@ test('batch-open history defaults off, enables its limit field, and saves the co
     }));
 
     assert.equal(values.get(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY), true);
+    assert.equal(values.get(AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY), true);
     assert.equal(values.get(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY), 1234);
     assert.equal(values.get(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY), '#654321');
   });
@@ -182,7 +190,7 @@ test('hdblog settings exposes layout, cross-search, preview, batch-open and sear
   const dom = hdblogArticleDom();
   withGm(new Map(), () => {
     const panel = openHdblogSettingsPanel(dom.window.document);
-    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'batch-open', 'batch-open-history', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter']) {
+    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });
@@ -194,15 +202,20 @@ test('hdblog batch-open history settings support limit, custom color and reset',
   withGm(values, () => {
     const panel = openHdblogSettingsPanel(dom.window.document);
     const enabled = panel.querySelector('[data-setting="batch-open-history"]');
+    const unopenedOnly = panel.querySelector('[data-setting="batch-open-unopened-only"]');
     const limit = panel.querySelector('[data-setting="batch-open-history-limit"]');
     const color = panel.querySelector('[data-setting="batch-open-history-color"]');
     const resetColor = panel.querySelector('[data-action="reset-batch-open-history-color"]');
     assert.equal(enabled.checked, false);
+    assert.equal(unopenedOnly.checked, false);
+    assert.equal(unopenedOnly.disabled, true);
     assert.equal(limit.value, '5000');
     assert.equal(color.value, '#bd10e0');
     assert.equal(limit.disabled, true);
 
     enabled.click();
+    assert.equal(unopenedOnly.disabled, false);
+    unopenedOnly.click();
     assert.equal(limit.disabled, false);
     limit.value = '4321';
     color.value = '#123456';
@@ -215,6 +228,7 @@ test('hdblog batch-open history settings support limit, custom color and reset',
     }));
 
     assert.equal(values.get(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY), true);
+    assert.equal(values.get(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY), true);
     assert.equal(values.get(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY), 4321);
     assert.equal(values.get(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY), '#abcdef');
   });
