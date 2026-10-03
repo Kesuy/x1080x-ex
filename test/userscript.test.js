@@ -223,6 +223,121 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
   }
 });
 
+
+test('agaghhh 开启只打开未打开主题后跳过历史记录', async () => {
+  const dom = new JSDOM(`
+    <title>agaghhh 未打开过滤</title>
+    <div id="pgt"></div>
+    <div id="threadlist"><table>
+      <tbody id="normalthread_303"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=303">主题 303</a></th></tr></tbody>
+      <tbody id="normalthread_302"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=302">主题 302</a></th></tr></tbody>
+      <tbody id="normalthread_301"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=301">主题 301</a></th></tr></tbody>
+    </table></div>
+  `, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
+  const restore = installDomGlobals(dom.window);
+  const opened = [];
+  const stored = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+    ['x1080x-ex:agaghhh-batch-open-history', ['tid:302']],
+  ]);
+  const originalSetTimeout = dom.window.setTimeout;
+  const originalClearTimeout = dom.window.clearTimeout;
+  dom.window.setTimeout = (callback) => {
+    queueMicrotask(callback);
+    return 1;
+  };
+  dom.window.clearTimeout = () => {};
+  globalThis.GM_getValue = (key, fallback) => stored.has(key) ? stored.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => stored.set(key, value);
+  globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
+
+  try {
+    await import(`../src/userscript.js?agaghhh-unopened=${Date.now()}`);
+    const button = dom.window.document.querySelector('#x1080x-ex-open-page');
+    assert.ok(button);
+    assert.equal(button.textContent, '后台顺序打开未打开主题（2）');
+
+    button.click();
+    await waitFor(() => opened.length === 2, 'only unopened agaghhh threads should open');
+    assert.deepEqual(opened.map(({ url }) => url), [
+      'https://agaghhh.cc/forum.php?mod=viewthread&tid=303',
+      'https://agaghhh.cc/forum.php?mod=viewthread&tid=301',
+    ]);
+    assert.deepEqual(
+      stored.get('x1080x-ex:agaghhh-batch-open-history'),
+      ['tid:302', 'tid:303', 'tid:301']
+    );
+    await waitFor(
+      () => button.textContent === '后台顺序打开未打开主题（0）',
+      'agaghhh button should refresh the unopened count'
+    );
+  } finally {
+    dom.window.setTimeout = originalSetTimeout;
+    dom.window.clearTimeout = originalClearTimeout;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('hdblog 开启只打开未打开主题后跳过历史记录', async () => {
+  const dom = new JSDOM(`
+    <title>HDBlog 未打开过滤</title>
+    <main id="genesis-content">
+      <div class="archive-description"><h1>测试</h1></div>
+      <article class="entry"><header class="entry-header"><h2 class="entry-title">
+        <a href="/983859/topic-a/">主题 A</a>
+      </h2></header></article>
+      <article class="entry"><header class="entry-header"><h2 class="entry-title">
+        <a href="/983856/topic-b/">主题 B</a>
+      </h2></header></article>
+    </main>
+  `, { url: 'https://hdblog.me/tag/test/' });
+  const restore = installDomGlobals(dom.window);
+  const opened = [];
+  const stored = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:983856']],
+  ]);
+  const originalSetTimeout = dom.window.setTimeout;
+  const originalClearTimeout = dom.window.clearTimeout;
+  dom.window.setTimeout = (callback) => {
+    queueMicrotask(callback);
+    return 1;
+  };
+  dom.window.clearTimeout = () => {};
+  globalThis.GM_getValue = (key, fallback) => stored.has(key) ? stored.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => stored.set(key, value);
+  globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
+
+  try {
+    await import(`../src/userscript.js?hdblog-unopened=${Date.now()}`);
+    const button = dom.window.document.querySelector('#x1080x-ex-open-page');
+    assert.ok(button);
+    assert.equal(button.textContent, '后台顺序打开未打开主题（1）');
+
+    button.click();
+    await waitFor(() => opened.length === 1, 'only unopened hdblog articles should open');
+    assert.deepEqual(opened.map(({ url }) => url), [
+      'https://hdblog.me/983859/topic-a/',
+    ]);
+    assert.deepEqual(
+      stored.get('x1080x-ex:hdblog-batch-open-history'),
+      ['post:983856', 'post:983859']
+    );
+    await waitFor(
+      () => button.textContent === '后台顺序打开未打开主题（0）',
+      'hdblog button should refresh the unopened count'
+    );
+  } finally {
+    dom.window.setTimeout = originalSetTimeout;
+    dom.window.clearTimeout = originalClearTimeout;
+    restore();
+    dom.window.close();
+  }
+});
+
 function threadDom() {
   return new JSDOM(`
     <h1 class="ts"><span id="thread_subject">ABCD-123 (HD1080P)(abcd00123)本文タイトル</span></h1>
