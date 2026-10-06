@@ -21,6 +21,7 @@ import {
   HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY,
   HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
   HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY,
+  HDBLOG_BROWSE_FILTER_ENABLED_KEY,
   HDBLOG_SEARCH_FILTER_ENABLED_KEY,
   HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY,
   installHdblogArticleEnhancement,
@@ -239,9 +240,35 @@ test('hdblog settings exposes layout, cross-search, preview, batch-open and sear
   const dom = hdblogArticleDom();
   withGm(new Map(), () => {
     const panel = openHdblogSettingsPanel(dom.window.document);
-    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'javfree-preview-fallback', 'deleted-javfree-search', 'batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter']) {
+    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'javfree-preview-fallback', 'deleted-javfree-search', 'batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter', 'browse-filter']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
+  });
+});
+
+test('hdblog normal-browse filter is independent and shares the keyword field', () => {
+  const dom = hdblogArticleDom();
+  const values = new Map([[HDBLOG_SEARCH_FILTER_ENABLED_KEY, false]]);
+  withGm(values, () => {
+    const panel = openHdblogSettingsPanel(dom.window.document);
+    const searchFilter = panel.querySelector('[data-setting="search-filter"]');
+    const browseFilter = panel.querySelector('[data-setting="browse-filter"]');
+    const keywords = panel.querySelector('[data-setting="keywords"]');
+    assert.equal(searchFilter.checked, false);
+    assert.equal(browseFilter.checked, false);
+    assert.equal(keywords.disabled, true);
+
+    browseFilter.click();
+    assert.equal(keywords.disabled, false);
+    keywords.value = 'モザイク破壊\nUNCENSORED';
+    panel.querySelector('form')?.dispatchEvent(new dom.window.Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    }));
+
+    assert.equal(values.get(HDBLOG_SEARCH_FILTER_ENABLED_KEY), false);
+    assert.equal(values.get(HDBLOG_BROWSE_FILTER_ENABLED_KEY), true);
+    assert.equal(values.get('x1080x-ex:hdblog-blocked-keywords'), 'モザイク破壊\nUNCENSORED');
   });
 });
 
@@ -335,9 +362,11 @@ test('new hdblog switches default to enabled except layout which preserves legac
     assert.equal(panel.querySelector('[data-setting="cross-search"]').checked, true);
     assert.equal(panel.querySelector('[data-setting="batch-open"]').checked, true);
     assert.equal(panel.querySelector('[data-setting="search-filter"]').checked, true);
+    assert.equal(panel.querySelector('[data-setting="browse-filter"]').checked, false);
     assert.equal(panel.querySelector('[data-setting="download-guard"]').checked, true);
   });
   assert.equal(HDBLOG_BATCH_OPEN_ENABLED_KEY, 'x1080x-ex:hdblog-batch-open-enabled');
+  assert.equal(HDBLOG_BROWSE_FILTER_ENABLED_KEY, 'x1080x-ex:hdblog-browse-filter-enabled');
   assert.equal(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, 'x1080x-ex:agaghhh-download-guard-enabled');
   assert.equal(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY, 'x1080x-ex:hdblog-download-guard-enabled');
 });
