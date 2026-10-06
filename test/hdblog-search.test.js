@@ -153,3 +153,24 @@ test('normal-browse filtering does not run on hdblog search pages', () => {
     else globalThis.GM_getValue = oldGet;
   }
 });
+
+
+test('normal-browse filtering leaves hdblog article detail pages untouched', () => {
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => (
+    key === HDBLOG_BROWSE_FILTER_ENABLED_KEY ? true : fallback
+  );
+  try {
+    const result = applyHdblogBrowseEnhancement({
+      location: { href: 'https://hdblog.me/988344/ebwh-365/' },
+      document: {
+        baseURI: 'https://hdblog.me/988344/ebwh-365/',
+        querySelectorAll() { throw new Error('article DOM should not be filtered'); },
+      },
+    });
+    assert.deepEqual(result, { blocked: [], remaining: [] });
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+  }
+});
