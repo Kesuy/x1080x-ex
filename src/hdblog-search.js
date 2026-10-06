@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 export const HDBLOG_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-search-filter-enabled';
+export const HDBLOG_BROWSE_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-browse-filter-enabled';
 const DEFAULT_BLOCKED_KEYWORDS = 'モザイク破壊';
 
 function normalizeKeyword(value) {
@@ -34,11 +35,20 @@ export function isBlockedTitle(title, keywords) {
   });
 }
 
-export function isHdblogSearchUrl(value) {
+export function isHdblogUrl(value) {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase().replace(/\.$/, '');
-    return (host === 'hdblog.me' || host.endsWith('.hdblog.me'))
+    return host === 'hdblog.me' || host.endsWith('.hdblog.me');
+  } catch {
+    return false;
+  }
+}
+
+export function isHdblogSearchUrl(value) {
+  try {
+    const url = new URL(value);
+    return isHdblogUrl(url.href)
       && url.searchParams.has('s')
       && Boolean(url.searchParams.get('s')?.trim());
   } catch {
@@ -103,6 +113,11 @@ export function isHdblogSearchEnhancementEnabled() {
   return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, true) !== false;
 }
 
+export function isHdblogBrowseFilterEnabled() {
+  if (typeof GM_getValue !== 'function') return false;
+  return GM_getValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY, false) === true;
+}
+
 export function applyHdblogSearchEnhancement(windowObject = window) {
   if (!isHdblogSearchEnhancementEnabled() || !isHdblogSearchUrl(windowObject.location.href)) {
     return { blocked: [], remaining: [], redirectTarget: '' };
@@ -116,7 +131,23 @@ export function applyHdblogSearchEnhancement(windowObject = window) {
   return { ...result, redirectTarget };
 }
 
+export function applyHdblogBrowseEnhancement(windowObject = window) {
+  const href = windowObject.location.href;
+  if (
+    !isHdblogBrowseFilterEnabled()
+    || !isHdblogUrl(href)
+    || isHdblogSearchUrl(href)
+  ) {
+    return { blocked: [], remaining: [] };
+  }
+  return filterHdblogSearchResults(windowObject.document, getBlockedKeywords());
+}
+
 export function installHdblogSearchEnhancement() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  applyHdblogSearchEnhancement(window);
+  if (isHdblogSearchUrl(window.location.href)) {
+    applyHdblogSearchEnhancement(window);
+    return;
+  }
+  applyHdblogBrowseEnhancement(window);
 }
