@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  HDBLOG_BROWSE_FILTER_ENABLED_KEY,
+  applyHdblogBrowseEnhancement,
   collectHdblogSearchResults,
   filterHdblogSearchResults,
   filterSearchCandidates,
@@ -93,4 +95,61 @@ test('DOM collection ignores cross-origin links and filtering removes only block
   assert.equal(blockedArticle.removed, true);
   assert.equal(keptArticle.removed, false);
   assert.equal(externalArticle.removed, false);
+});
+
+
+test('normal browsing can hide blocked themes without enabling search filtering or redirecting', () => {
+  const makeArticle = (title, href) => ({
+    removed: false,
+    remove() { this.removed = true; },
+    querySelector() {
+      return {
+        textContent: title,
+        getAttribute(name) { return name === 'href' ? href : null; },
+      };
+    },
+  });
+  const blockedArticle = makeArticle('モザイク破壊 IPZZ-941', '/986166/un-ipzz-941/');
+  const keptArticle = makeArticle('IPZZ-941 normal', '/985910/ipzz-941/');
+  const document = {
+    baseURI: 'https://hdblog.me/category/new/',
+    querySelectorAll() { return [blockedArticle, keptArticle]; },
+  };
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => {
+    if (key === HDBLOG_BROWSE_FILTER_ENABLED_KEY) return true;
+    if (key === 'x1080x-ex:hdblog-blocked-keywords') return 'モザイク破壊';
+    if (key === 'x1080x-ex:hdblog-search-filter-enabled') return false;
+    return fallback;
+  };
+  try {
+    const result = applyHdblogBrowseEnhancement({
+      location: { href: 'https://hdblog.me/category/new/' },
+      document,
+    });
+    assert.equal(result.blocked.length, 1);
+    assert.equal(result.remaining.length, 1);
+    assert.equal(blockedArticle.removed, true);
+    assert.equal(keptArticle.removed, false);
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+  }
+});
+
+test('normal-browse filtering does not run on hdblog search pages', () => {
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => (
+    key === HDBLOG_BROWSE_FILTER_ENABLED_KEY ? true : fallback
+  );
+  try {
+    const result = applyHdblogBrowseEnhancement({
+      location: { href: 'https://hdblog.me/?s=IPZZ-941' },
+      document: { baseURI: 'https://hdblog.me/?s=IPZZ-941', querySelectorAll() { return []; } },
+    });
+    assert.deepEqual(result, { blocked: [], remaining: [] });
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+  }
 });
