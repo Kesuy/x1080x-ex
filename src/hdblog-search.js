@@ -56,6 +56,15 @@ export function isHdblogSearchUrl(value) {
   }
 }
 
+export function isHdblogArticleUrl(value) {
+  try {
+    const url = new URL(value);
+    return isHdblogUrl(url.href) && /^\/\d+\/[^/]+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function filterSearchCandidates(candidates, keywords) {
   const blocked = [];
   const remaining = [];
@@ -137,6 +146,7 @@ export function applyHdblogBrowseEnhancement(windowObject = window) {
     !isHdblogBrowseFilterEnabled()
     || !isHdblogUrl(href)
     || isHdblogSearchUrl(href)
+    || isHdblogArticleUrl(href)
   ) {
     return { blocked: [], remaining: [] };
   }
