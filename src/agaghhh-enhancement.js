@@ -700,7 +700,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       <div data-batch-open-history-row style="margin:0 0 13px 24px">
         <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
           <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
-          <span><strong>只打开未打开的主题</strong><small style="display:block;margin-top:2px;color:#666">批量打开时跳过已经保存在“批量打开记录”中的主题。</small></span>
+          <span><strong>批量只打开未打开主题</strong><small style="display:block;margin-top:2px;color:#666">开启后，批量打开时跳过已经保存在“批量打开记录”中的主题。</small></span>
         </label>
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">最多保存</span>
