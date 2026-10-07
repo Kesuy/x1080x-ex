@@ -33,6 +33,8 @@ function withGlobals(values, callback) {
 test('hdblog builds agaghhh search URLs and strips uncensored studio names', () => {
   assert.equal(hdblogAgaghhhSearchKeyword('SVMGM-050'), 'SVMGM-050');
   assert.equal(hdblogAgaghhhSearchKeyword('1pondo 121125_001'), '121125_001');
+  assert.equal(hdblogAgaghhhSearchKeyword('FC2-PPV-4906444'), '4906444');
+  assert.equal(hdblogAgaghhhSearchKeyword('FC2-PPV 4906444'), '4906444');
   assert.equal(
     buildAgaghhhSearchUrl('SVMGM-050'),
     'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=SVMGM-050&orderby=lastpost&ascdesc=desc'
@@ -40,6 +42,10 @@ test('hdblog builds agaghhh search URLs and strips uncensored studio names', () 
   assert.equal(
     buildAgaghhhSearchUrl('1pondo 121125_001'),
     'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=121125_001&orderby=lastpost&ascdesc=desc'
+  );
+  assert.equal(
+    buildAgaghhhSearchUrl('FC2-PPV-4906444'),
+    'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=4906444&orderby=lastpost&ascdesc=desc'
   );
 });
 
@@ -68,6 +74,8 @@ test('agaghhh builds hdblog URLs with normal and uncensored thread codes', () =>
   assert.equal(buildHdblogSearchUrlForThreadCode('SVMGM-050'), 'http://hdblog.me/?s=SVMGM-050');
   assert.equal(buildHdblogSearchUrlForThreadCode('1PON-121125_001'), 'http://hdblog.me/?s=121125_001');
   assert.equal(buildHdblogSearchUrlForThreadCode('CARIB-092425-001'), 'http://hdblog.me/?s=092425-001');
+  assert.equal(buildHdblogSearchUrlForThreadCode('FC2-4906444'), 'http://hdblog.me/?s=4906444');
+  assert.equal(buildHdblogSearchUrlForThreadCode('FC2-PPV-4906444'), 'http://hdblog.me/?s=4906444');
 });
 
 test('agaghhh thread shows a search icon beside download and opens hdblog search', () => {

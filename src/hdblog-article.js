@@ -361,6 +361,9 @@ export function extractHdblogArticleCode(document) {
 
 export function hdblogAgaghhhSearchKeyword(code) {
   const source = normalizeText(code);
+  const fc2 = source.match(/^FC2(?:[\s_-]*PPV)?[\s_-]*(\d{5,9})$/i);
+  if (fc2) return fc2[1];
+
   const uncensored = source.match(/^[A-Z0-9][A-Z0-9.+-]{1,31}\s+(\d{6}[-_]\d{2,4})$/i);
   return uncensored?.[1] || source;
 }
