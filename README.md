@@ -7,9 +7,9 @@
 - **一键下载**：下载 agaghhh 主楼附件、图片、Preview 大图，并将磁力链转换为 `.torrent`。
 - **下载保护**：下载进行中在浏览器标签标题显示“⬇ 下载中”，关闭标签页时弹出浏览器确认提示，完成后自动恢复。
 - **自动命名**：自动识别番号、清理标题并处理 Windows 非法字符，支持 FC2、1PON、CARIB 等规则。
-- **Preview 大图**：agaghhh 按番号优先从 hdblog 获取 Preview；hdblog 无结果或 Preview 失效时可回退到 JavFree，再回退 FANZA / MGStage 官方源。HDblog 文章页自身无可用 Preview 时也可从 JavFree 补图。
+- **Preview 大图**：agaghhh 按番号优先从 hdblog 获取 Preview；FC2 会自动只用纯数字部分联动（如 `FC2-4906444` → `4906444`）；hdblog 无结果或 Preview 失效时可回退到 JavFree，再回退 FANZA / MGStage 官方源。HDblog 文章页自身无可用 Preview 时也可从 JavFree 补图。
 - **Pixhost 解析**：自动解析 Preview 原图，并对 `pixhost.to` / `pixhost.cc` 等同一资源进行去重；同一文章同时有普通版和 4K Preview 时优先普通版，仅在普通版不可用时回退 4K。
-- **跨站搜索**：agaghhh 与 hdblog 标题旁提供 `🔍`，可按番号直接搜索另一站。
+- **跨站搜索**：agaghhh 与 hdblog 标题旁提供 `🔍`，可按番号直接搜索另一站；FC2 标题会去掉 `FC2 / PPV` 前缀，仅搜索数字番号。
 - **复制番号**：agaghhh 与 hdblog 标题旁提供 `📋`，一键把当前番号复制到剪切板。
 - **真实演员查询**：主楼演员信息为空时，可通过 av-wiki 查询并补充到下载文件名。
 - **批量打开**：列表和搜索页支持顺序后台打开主题；执行期间标签标题显示“↗ 批量打开中”，关闭或刷新页面会由浏览器确认，完成/停止后自动解除。
