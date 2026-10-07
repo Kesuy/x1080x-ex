@@ -42,6 +42,53 @@ test('uses the same hdblog blocked keywords when two search results exist', () =
   assert.equal(result.selected?.url, 'https://hdblog.me/964139/svmgm-050/');
 });
 
+test('FC2 agaghhh lookup searches hdblog by numeric id and returns Preview', async () => {
+  const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
+  const requested = [];
+  const previewImage = 'https://img1.example.com/fc2-4906444-preview.jpg';
+  const gmRequest = (options) => {
+    requested.push(options.url);
+    if (options.url === 'https://hdblog.me/?s=4906444') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<!doctype html><html><body><main id="genesis-content">
+          <article class="entry"><h2 class="entry-title">
+            <a href="https://hdblog.me/936935/fc2ppv-4906444/">FC2-PPV 4906444 220 Sample</a>
+          </h2></article>
+        </main></body></html>`,
+      });
+      return;
+    }
+    if (options.url === 'https://hdblog.me/936935/fc2ppv-4906444/') {
+      options.onload({
+        status: 200,
+        finalUrl: options.url,
+        responseText: `<!doctype html><html><body><main id="genesis-content"><article class="entry"><div class="entry-content">
+          <p>Preview:</p>
+          <p><a href="${previewImage}"><img src="${previewImage}"></a></p>
+          <p>BTFile:</p>
+        </div></article></main></body></html>`,
+      });
+      return;
+    }
+    throw new Error(`unexpected request: ${options.url}`);
+  };
+
+  const result = await withGmGetValue(() => (
+    fetchHdblogPreviewForCode('FC2-4906444', gmRequest, browser.window.document)
+  ));
+
+  assert.equal(result.articleUrl, 'https://hdblog.me/936935/fc2ppv-4906444/');
+  assert.deepEqual(result.imageUrls, [previewImage]);
+  assert.deepEqual(requested, [
+    'https://hdblog.me/?s=4906444',
+    'https://hdblog.me/936935/fc2ppv-4906444/',
+  ]);
+
+  browser.window.close();
+});
+
 test('fetches hdblog Preview images including refer -> Pixhost resolution', async () => {
   const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   const requested = [];
