@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.15
+// @version      1.10.16
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -2199,6 +2199,7 @@ ${failures.join("\n")}
   // src/hdblog-search.js
   var STORAGE_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
   var HDBLOG_SEARCH_FILTER_ENABLED_KEY = "x1080x-ex:hdblog-search-filter-enabled";
+  var HDBLOG_BROWSE_FILTER_ENABLED_KEY = "x1080x-ex:hdblog-browse-filter-enabled";
   var DEFAULT_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
   function normalizeKeyword(value) {
     return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
@@ -2221,11 +2222,27 @@ ${failures.join("\n")}
       return normalizedKeyword && normalizedTitle.includes(normalizedKeyword);
     });
   }
-  function isHdblogSearchUrl(value) {
+  function isHdblogUrl(value) {
     try {
       const url = new URL(value);
       const host = url.hostname.toLowerCase().replace(/\.$/, "");
-      return (host === "hdblog.me" || host.endsWith(".hdblog.me")) && url.searchParams.has("s") && Boolean(url.searchParams.get("s")?.trim());
+      return host === "hdblog.me" || host.endsWith(".hdblog.me");
+    } catch {
+      return false;
+    }
+  }
+  function isHdblogSearchUrl(value) {
+    try {
+      const url = new URL(value);
+      return isHdblogUrl(url.href) && url.searchParams.has("s") && Boolean(url.searchParams.get("s")?.trim());
+    } catch {
+      return false;
+    }
+  }
+  function isHdblogArticleUrl(value) {
+    try {
+      const url = new URL(value);
+      return isHdblogUrl(url.href) && /^\/\d+\/[^/]+\/?$/.test(url.pathname);
     } catch {
       return false;
     }
@@ -2279,6 +2296,10 @@ ${failures.join("\n")}
     if (typeof GM_getValue !== "function") return true;
     return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, true) !== false;
   }
+  function isHdblogBrowseFilterEnabled() {
+    if (typeof GM_getValue !== "function") return false;
+    return GM_getValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY, false) === true;
+  }
   function applyHdblogSearchEnhancement(windowObject = window) {
     if (!isHdblogSearchEnhancementEnabled() || !isHdblogSearchUrl(windowObject.location.href)) {
       return { blocked: [], remaining: [], redirectTarget: "" };
@@ -2291,9 +2312,20 @@ ${failures.join("\n")}
     }
     return { ...result, redirectTarget };
   }
+  function applyHdblogBrowseEnhancement(windowObject = window) {
+    const href = windowObject.location.href;
+    if (!isHdblogBrowseFilterEnabled() || !isHdblogUrl(href) || isHdblogSearchUrl(href) || isHdblogArticleUrl(href)) {
+      return { blocked: [], remaining: [] };
+    }
+    return filterHdblogSearchResults(windowObject.document, getBlockedKeywords());
+  }
   function installHdblogSearchEnhancement() {
     if (typeof window === "undefined" || typeof document === "undefined") return;
-    applyHdblogSearchEnhancement(window);
+    if (isHdblogSearchUrl(window.location.href)) {
+      applyHdblogSearchEnhancement(window);
+      return;
+    }
+    applyHdblogBrowseEnhancement(window);
   }
 
   // src/hdblog-preview-variants.js
@@ -3151,6 +3183,7 @@ ${failures.join("\n")}
   var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2 = "x1080x-ex:hdblog-expand-preview-images";
   var HDBLOG_BLOCKED_KEYWORDS_KEY = "x1080x-ex:hdblog-blocked-keywords";
   var HDBLOG_SEARCH_FILTER_ENABLED_KEY2 = "x1080x-ex:hdblog-search-filter-enabled";
+  var HDBLOG_BROWSE_FILTER_ENABLED_KEY2 = "x1080x-ex:hdblog-browse-filter-enabled";
   var HDBLOG_BATCH_OPEN_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-open-enabled";
   var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2 = "x1080x-ex:hdblog-batch-open-interval-min-ms";
   var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2 = "x1080x-ex:hdblog-batch-open-interval-max-ms";
@@ -4063,6 +4096,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (typeof GM_getValue !== "function") return true;
     return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY2, true) !== false;
   }
+  function isHdblogBrowseFilterEnabled2() {
+    if (typeof GM_getValue !== "function") return false;
+    return GM_getValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY2, false) === true;
+  }
   function isHdblogBatchOpenEnabled() {
     if (typeof GM_getValue !== "function") return true;
     return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, true) !== false;
@@ -4256,15 +4293,19 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         </div>
         <small style="display:block;margin-top:5px;color:#666">\u9ED8\u8BA4 5000 \u6761\uFF0C\u9ED8\u8BA4\u989C\u8272 #bd10e0\uFF1B\u8D85\u8FC7\u4E0A\u9650\u81EA\u52A8\u5220\u9664\u6700\u65E7\u8BB0\u5F55\u3002</small>
       </div>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
-        <input data-setting="search-filter" type="checkbox">
-        \u542F\u7528\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u4E0E\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+        <input data-setting="search-filter" type="checkbox" style="margin-top:3px">
+        <span><strong>\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u4E0E\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u4F5C\u7528\u4E8E hdblog \u641C\u7D22\u7ED3\u679C\u9875\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+        <input data-setting="browse-filter" type="checkbox" style="margin-top:3px">
+        <span><strong>\u6B63\u5E38\u6D4F\u89C8\u5173\u952E\u8BCD\u5C4F\u853D</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u9996\u9875\u3001\u5206\u7C7B\u3001\u6807\u7B7E\u548C\u5206\u9875\u7B49\u6587\u7AE0\u5217\u8868\u4E2D\u6309\u76F8\u540C\u5173\u952E\u8BCD\u9690\u85CF\u4E3B\u9898\uFF1B\u4E0D\u5F71\u54CD\u6587\u7AE0\u8BE6\u60C5\u9875\u3002</small></span>
       </label>
       <label data-keywords-row style="display:block;margin-left:24px">
-        <span style="display:block;font-weight:600;margin-bottom:6px">\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD</span>
+        <span style="display:block;font-weight:600;margin-bottom:6px">\u5C4F\u853D\u5173\u952E\u8BCD\uFF08\u641C\u7D22 / \u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF09</span>
         <textarea data-setting="keywords" rows="5" placeholder="\u7559\u7A7A = \u4E0D\u5C4F\u853D"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u8BE5\u89C4\u5219\u4E5F\u4F9B agaghhh \u7684 hdblog Preview \u641C\u7D22\u590D\u7528\u3002</small>
+        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u641C\u7D22\u4E0E\u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF0C\u8BE5\u89C4\u5219\u4E5F\u4F9B agaghhh \u7684 hdblog Preview \u641C\u7D22\u590D\u7528\u3002</small>
       </label>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
@@ -4291,6 +4332,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
     const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
     const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
+    const browseFilterInput = panel.querySelector('[data-setting="browse-filter"]');
     const keywordsInput = panel.querySelector('[data-setting="keywords"]');
     layoutInput.checked = isHdblogArticleLayoutEnabled();
     widthInput.value = rawStoredWidth() || String(DEFAULT_HDBLOG_ARTICLE_WIDTH);
@@ -4311,11 +4353,12 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     batchHistoryLimitInput.value = String(getHdblogBatchOpenHistoryLimit());
     batchHistoryColorInput.value = getHdblogBatchOpenHistoryColor();
     searchFilterInput.checked = isHdblogSearchFilterEnabled();
+    browseFilterInput.checked = isHdblogBrowseFilterEnabled2();
     keywordsInput.value = readBlockedKeywordsText();
     const syncDependentFields = () => {
       widthInput.disabled = !layoutInput.checked;
       downloadGuardInput.disabled = !imageDownloadInput.checked;
-      keywordsInput.disabled = !searchFilterInput.checked;
+      keywordsInput.disabled = !searchFilterInput.checked && !browseFilterInput.checked;
       javfreePreviewInput.disabled = !previewInput.checked;
       const batchIntervalDisabled = !batchOpenInput.checked;
       batchIntervalMinInput.disabled = batchIntervalDisabled;
@@ -4329,6 +4372,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     layoutInput.addEventListener("change", syncDependentFields);
     imageDownloadInput.addEventListener("change", syncDependentFields);
     searchFilterInput.addEventListener("change", syncDependentFields);
+    browseFilterInput.addEventListener("change", syncDependentFields);
     previewInput.addEventListener("change", syncDependentFields);
     batchOpenInput.addEventListener("change", syncDependentFields);
     batchHistoryInput.addEventListener("change", syncDependentFields);
@@ -4397,6 +4441,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
           }
         }
         GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY2, searchFilterInput.checked);
+        GM_setValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY2, browseFilterInput.checked);
         GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
       }
       closeHdblogSettingsPanel(document2);
@@ -6289,7 +6334,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       <div data-batch-open-history-row style="margin:0 0 13px 24px">
         <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
           <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
-          <span><strong>\u53EA\u6253\u5F00\u672A\u6253\u5F00\u7684\u4E3B\u9898</strong><small style="display:block;margin-top:2px;color:#666">\u6279\u91CF\u6253\u5F00\u65F6\u8DF3\u8FC7\u5DF2\u7ECF\u4FDD\u5B58\u5728\u201C\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u4E2D\u7684\u4E3B\u9898\u3002</small></span>
+          <span><strong>\u6279\u91CF\u53EA\u6253\u5F00\u672A\u6253\u5F00\u4E3B\u9898</strong><small style="display:block;margin-top:2px;color:#666">\u5F00\u542F\u540E\uFF0C\u6279\u91CF\u6253\u5F00\u65F6\u8DF3\u8FC7\u5DF2\u7ECF\u4FDD\u5B58\u5728\u201C\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u4E2D\u7684\u4E3B\u9898\u3002</small></span>
         </label>
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">\u6700\u591A\u4FDD\u5B58</span>
