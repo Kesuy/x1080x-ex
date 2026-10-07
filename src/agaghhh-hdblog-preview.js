@@ -411,6 +411,9 @@ export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequ
 
 export function hdblogSearchCodeForThreadCode(code) {
   const normalized = String(code || '').trim().toUpperCase();
+  const fc2 = normalized.match(/^FC2-(?:PPV-)?(\d{5,9})$/i);
+  if (fc2) return fc2[1];
+
   const uncensored = normalized.match(/^[A-Z0-9]{2,12}-(\d{6}[-_]\d{3,4})$/i);
   return uncensored?.[1] || normalized;
 }
