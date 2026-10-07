@@ -25,6 +25,7 @@ export const HDBLOG_SHOW_COPY_CODE_BUTTON_KEY = 'x1080x-ex:hdblog-show-copy-code
 export const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
 export const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 export const HDBLOG_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-search-filter-enabled';
+export const HDBLOG_BROWSE_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-browse-filter-enabled';
 export const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
 export const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
 export const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
@@ -1038,6 +1039,11 @@ export function isHdblogSearchFilterEnabled() {
   return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, true) !== false;
 }
 
+export function isHdblogBrowseFilterEnabled() {
+  if (typeof GM_getValue !== 'function') return false;
+  return GM_getValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY, false) === true;
+}
+
 export function isHdblogBatchOpenEnabled() {
   if (typeof GM_getValue !== 'function') return true;
   return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
@@ -1245,15 +1251,19 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         </div>
         <small style="display:block;margin-top:5px;color:#666">默认 5000 条，默认颜色 #bd10e0；超过上限自动删除最旧记录。</small>
       </div>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
-        <input data-setting="search-filter" type="checkbox">
-        启用搜索结果屏蔽与单结果自动跳转
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+        <input data-setting="search-filter" type="checkbox" style="margin-top:3px">
+        <span><strong>搜索结果屏蔽与单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">仅作用于 hdblog 搜索结果页。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+        <input data-setting="browse-filter" type="checkbox" style="margin-top:3px">
+        <span><strong>正常浏览关键词屏蔽</strong><small style="display:block;margin-top:2px;color:#666">在首页、分类、标签和分页等文章列表中按相同关键词隐藏主题；不影响文章详情页。</small></span>
       </label>
       <label data-keywords-row style="display:block;margin-left:24px">
-        <span style="display:block;font-weight:600;margin-bottom:6px">搜索结果屏蔽关键词</span>
+        <span style="display:block;font-weight:600;margin-bottom:6px">屏蔽关键词（搜索 / 正常浏览共用）</span>
         <textarea data-setting="keywords" rows="5" placeholder="留空 = 不屏蔽"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；该规则也供 agaghhh 的 hdblog Preview 搜索复用。</small>
+        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 agaghhh 的 hdblog Preview 搜索复用。</small>
       </label>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
@@ -1281,6 +1291,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
   const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
   const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
+  const browseFilterInput = panel.querySelector('[data-setting="browse-filter"]');
   const keywordsInput = panel.querySelector('[data-setting="keywords"]');
 
   layoutInput.checked = isHdblogArticleLayoutEnabled();
@@ -1302,12 +1313,13 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   batchHistoryLimitInput.value = String(getHdblogBatchOpenHistoryLimit());
   batchHistoryColorInput.value = getHdblogBatchOpenHistoryColor();
   searchFilterInput.checked = isHdblogSearchFilterEnabled();
+  browseFilterInput.checked = isHdblogBrowseFilterEnabled();
   keywordsInput.value = readBlockedKeywordsText();
 
   const syncDependentFields = () => {
     widthInput.disabled = !layoutInput.checked;
     downloadGuardInput.disabled = !imageDownloadInput.checked;
-    keywordsInput.disabled = !searchFilterInput.checked;
+    keywordsInput.disabled = !searchFilterInput.checked && !browseFilterInput.checked;
     javfreePreviewInput.disabled = !previewInput.checked;
     const batchIntervalDisabled = !batchOpenInput.checked;
     batchIntervalMinInput.disabled = batchIntervalDisabled;
@@ -1321,6 +1333,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   layoutInput.addEventListener('change', syncDependentFields);
   imageDownloadInput.addEventListener('change', syncDependentFields);
   searchFilterInput.addEventListener('change', syncDependentFields);
+  browseFilterInput.addEventListener('change', syncDependentFields);
   previewInput.addEventListener('change', syncDependentFields);
   batchOpenInput.addEventListener('change', syncDependentFields);
   batchHistoryInput.addEventListener('change', syncDependentFields);
@@ -1398,6 +1411,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         }
       }
       GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, searchFilterInput.checked);
+      GM_setValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY, browseFilterInput.checked);
       GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
     }
 
