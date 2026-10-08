@@ -740,13 +740,16 @@ export function isDeletedHdblogArticlePage(document, locationObject = document?.
   if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return false;
 
   const bodyClass = String(document.body?.className || '');
-  const signalText = normalizeText([
+  const signalTexts = [
     document.title,
     document.querySelector('h1, .entry-title, .page-title')?.textContent,
-  ].filter(Boolean).join(' '));
+  ].map(normalizeText).filter(Boolean);
   const has404Signal =
     /(?:^|\s)(?:error404|error-404|not-found)(?:\s|$)/i.test(bodyClass)
-    || /(?:\berror[-\s]?404\b|\b404\b|page\s+not\s+found|not\s+found)/i.test(signalText);
+    || signalTexts.some((text) => (
+      /(?:\berror[-\s]?404\b|page\s+not\s+found|not\s+found)/i.test(text)
+      || /^404(?:$|\s|[|:–—])/i.test(text)
+    ));
   if (has404Signal) return true;
 
   // 某些主题/缓存会保留 article.entry / .entry-content 外壳，
