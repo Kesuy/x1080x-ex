@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.17
+// @version      1.10.18
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -3008,11 +3008,11 @@ ${failures.join("\n")}
     }
     if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return false;
     const bodyClass = String(document2.body?.className || "");
-    const signalText = normalizeText([
+    const signalTexts = [
       document2.title,
       document2.querySelector("h1, .entry-title, .page-title")?.textContent
-    ].filter(Boolean).join(" "));
-    const has404Signal = /(?:^|\s)(?:error404|error-404|not-found)(?:\s|$)/i.test(bodyClass) || /(?:\berror[-\s]?404\b|\b404\b|page\s+not\s+found|not\s+found)/i.test(signalText);
+    ].map(normalizeText).filter(Boolean);
+    const has404Signal = /(?:^|\s)(?:error404|error-404|not-found)(?:\s|$)/i.test(bodyClass) || signalTexts.some((text) => /(?:\berror[-\s]?404\b|page\s+not\s+found|not\s+found)/i.test(text) || /^404(?:$|\s|[|:–—])/i.test(text));
     if (has404Signal) return true;
     return !document2.querySelector(
       "main#genesis-content article.entry h1.entry-title, article.entry h1.entry-title"
