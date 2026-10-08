@@ -13,6 +13,7 @@ import {
   fetchJavfreePreviewForCode,
   installHdblogJavfreeFallback,
   installJavfreeEnhancement,
+  isDeletedHdblogArticlePage,
   javfreeUniqueSearchTarget,
   openJavfreeSettingsPanel,
 } from '../src/javfree.js';
@@ -217,6 +218,38 @@ test('deleted HDblog article opens JavFree search once for the code in its slug'
     else globalThis.GM_getValue = oldGet;
     if (oldOpen === undefined) delete globalThis.GM_openInTab;
     else globalThis.GM_openInTab = oldOpen;
+  }
+});
+
+test('HDblog code ending in 404 is not treated as a deleted article', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>SNOS-404 Sample | HDblog.me</title></head>
+    <body class="single single-post">
+      <main id="genesis-content"><article class="entry">
+        <header class="entry-header"><h1 class="entry-title">SNOS-404 Sample</h1></header>
+        <div class="entry-content">
+          <p>Preview:</p>
+          <p><a href="https://img.example.com/SNOS-404-preview.jpg">Preview image</a></p>
+          <p>Btfile:</p>
+        </div>
+      </article></main>
+    </body></html>`, {
+    url: 'https://hdblog.me/1000328/snos-404/',
+  });
+  const oldGet = globalThis.GM_getValue;
+  const oldOpen = globalThis.GM_openInTab;
+  const opened = [];
+  globalThis.GM_getValue = (_key, fallback) => fallback;
+  globalThis.GM_openInTab = (url) => opened.push(url);
+  try {
+    assert.equal(isDeletedHdblogArticlePage(dom.window.document, dom.window.location), false);
+    await installHdblogJavfreeFallback(dom.window.document, dom.window.location, () => {});
+    assert.deepEqual(opened, []);
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+    if (oldOpen === undefined) delete globalThis.GM_openInTab;
+    else globalThis.GM_openInTab = oldOpen;
+    dom.window.close();
   }
 });
 
