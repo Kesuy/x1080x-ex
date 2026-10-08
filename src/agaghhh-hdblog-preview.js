@@ -6,6 +6,7 @@ import {
 } from './hdblog-search.js';
 import { isHdblogReferUrl } from './hdblog-refer.js';
 import { partitionPreviewCandidates } from './hdblog-preview-variants.js';
+import { makePreviewGestureFriendly } from './preview-gesture.js';
 import {
   isPixhostShowUrl,
   resolvePixhostShowUrl,
@@ -521,6 +522,7 @@ export function renderAgaghhhHdblogPreview(document, result) {
     if (previewReferer) image.setAttribute('data-x1080x-preview-referer', previewReferer);
     image.style.cssText = 'display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain';
     anchor.append(image);
+    makePreviewGestureFriendly(image);
     section.append(anchor);
   });
 
