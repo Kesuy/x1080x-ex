@@ -1104,8 +1104,13 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
     window.alert('当前列表还没有可定位的浏览进度。使用一次批量打开后会自动记录。');
   });
   refreshBatchProgressLocatorButton(button);
-  if (prependButton) host.prepend(button);
-  else host.append(button);
+  if (prependButton) {
+    const batchButton = document.getElementById(BATCH_BUTTON_ID);
+    if (batchButton?.parentElement === host) batchButton.after(button);
+    else host.prepend(button);
+  } else {
+    host.append(button);
+  }
 }
 
 function addBatchOpenButton() {
