@@ -82,6 +82,35 @@ test('agaghhh 从第一页跨页扫描到第三页混合记录，不依赖最后
   }
 });
 
+test('零星打开的较新主题不会盖过后面真正的分界页', async () => {
+  const page1 = 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75';
+  const urls = [page1, `${page1}&page=2`, `${page1}&page=3`, `${page1}&page=4`];
+  const pages = new Map([
+    [urls[0], agaghhhPage([900, 899, 898, 897, 896], 2)],
+    [urls[1], agaghhhPage([895, 894, 893, 892, 891], 3)],
+    [urls[2], agaghhhPage([890, 889, 888, 887, 886], 4)],
+    [urls[3], agaghhhPage([885, 884, 883, 882, 881])],
+  ]);
+  const dom = new JSDOM(pages.get(page1), { url: page1 });
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: page1,
+      currentUrl: page1,
+      currentDocument: dom.window.document,
+      historyIds: ['tid:900', 'tid:890', 'tid:889', 'tid:888', 'tid:887', 'tid:886', 'tid:885', 'tid:884'],
+      loadPage: async (url) => pages.get(url),
+      collectThreads: collectForumThreadLinks,
+      getId: agaghhhId,
+      getScope: forumScope,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, urls[2]);
+    assert.equal(result.checked, 3);
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('hdblog 整页已打开到下一页未打开的边界定位下一页', async () => {
   const page1 = 'https://hdblog.me/tag/example/';
   const page2 = 'https://hdblog.me/tag/example/page/2/';
