@@ -5,6 +5,7 @@ import {
   parseDomainList,
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
+import { firstBatchListPageUrl, scanBatchProgressPages } from './batch-progress-locator.js';
 import { requestTorrentBytes } from './torrent.js';
 import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
@@ -66,6 +67,7 @@ const HDBLOG_OPEN_TIMING = Object.freeze({
   pauseMax: 5000,
 });
 let batchOpenState = null;
+let batchProgressScanState = null;
 
 function getConfiguredDomains() {
   const stored = GM_getValue(STORAGE_KEY, null);
@@ -1059,28 +1061,123 @@ function addDownloadButton() {
 }
 
 function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
-  if (!button) return;
-  const target = batchProgressTarget();
-  if (target) {
-    button.href = target;
-    button.removeAttribute('aria-disabled');
-    button.style.opacity = '1';
-    button.title = '跳转到已打开记录与未打开主题相邻的浏览进度页';
-  } else {
-    button.removeAttribute('href');
-    button.setAttribute('aria-disabled', 'true');
-    button.style.opacity = '.58';
-    button.title = '当前列表还没有可定位的浏览进度；使用一次批量打开后会自动记录';
+  if (!button || batchProgressScanState) return;
+  const historyCount = readBatchOpenHistory().length;
+  button.textContent = '定位浏览进度';
+  button.title = historyCount
+    ? `跨页查找已打开与未打开主题相邻的分页（现有 ${historyCount} 条脚本记录）`
+    : '还没有保存的批量打开记录，浏览器自己的 :visited 记录不能自动读取';
+  button.style.background = '#6d7d87';
+}
+
+async function requestBatchListPageHtml(url) {
+  let lastError = null;
+  if (typeof window.fetch === 'function') {
+    try {
+      const response = await window.fetch(url, { credentials: 'include' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (typeof GM_xmlhttpRequest !== 'function') {
+    throw lastError || new Error('缺少可用的分页读取接口');
+  }
+  return new Promise((resolve, reject) => {
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url,
+      timeout: 15000,
+      onload: (response) => {
+        if (response.status < 200 || response.status >= 400) {
+          reject(new Error(`HTTP ${response.status}`));
+        } else {
+          resolve(response.responseText || '');
+        }
+      },
+      ontimeout: () => reject(new Error('读取分页超时')),
+      onerror: (error) => reject(new Error(error?.error || '无法读取分页')),
+    });
+  });
+}
+
+async function locateCurrentBatchProgress(button) {
+  if (batchProgressScanState) {
+    batchProgressScanState.cancelled = true;
+    button.textContent = '正在停止查找…';
+    return;
+  }
+  if (!isBatchProgressLocatorEnabled()) return;
+  const historyIds = readBatchOpenHistory();
+  if (!historyIds.length) {
+    window.alert('没有可用的脚本打开记录。请先开启“保存批量打开记录”并使用批量打开；Chrome 的 :visited 紫色链接无法由脚本读取。');
+    return;
+  }
+
+  const scan = { cancelled: false };
+  batchProgressScanState = scan;
+  button.style.background = '#b36b22';
+  button.textContent = '正在查找分页（再次点击停止）';
+  try {
+    const config = batchOpenHistoryConfig();
+    const result = await scanBatchProgressPages({
+      startUrl: firstBatchListPageUrl(location.href, config.kind),
+      currentUrl: location.href,
+      currentDocument: document,
+      historyIds,
+      loadPage: requestBatchListPageHtml,
+      collectThreads: collectForumThreadLinks,
+      getId: batchOpenHistoryId,
+      getScope: batchProgressScopeKey,
+      maxPages: 120,
+      onProgress: ({ checked, opened, unopened }) => {
+        button.textContent = `停止查找 · 第 ${checked} 页（已开 ${opened} / 未开 ${unopened}）`;
+      },
+      cancelled: () => scan.cancelled,
+    });
+
+    if (scan.cancelled || result.status === 'cancelled') return;
+    if (result.status === 'found') {
+      button.textContent = `已定位到第 ${result.checked} 页`;
+      rememberBatchProgressTarget(result.url);
+      if (result.url !== location.href) window.location.assign(result.url);
+      else {
+        const firstUnopened = collectForumThreadLinks(document).find((thread) => {
+          const id = batchOpenHistoryId(thread.url);
+          return !id || !new Set(historyIds).has(id);
+        });
+        firstUnopened?.link?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+    if (result.status === 'unreadable') {
+      window.alert(`第 ${result.checked + 1} 页未读取到主题（可能需要登录或触发了网站验证），不能可靠定位浏览进度。\n${result.pageUrl}`);
+    } else if (result.status === 'limit') {
+      window.alert('已检查前 120 页，仍未找到已打开与未打开主题的交界处。请在更接近历史进度的列表页尝试，或增加扫描上限。');
+    } else if (result.status === 'end') {
+      window.alert(result.visitedFound
+        ? '已检查完能访问的分页，没有找到明确的已打开/未打开分界页。'
+        : '已检查完能访问的分页，但没有在这些主题中找到脚本保存的打开记录。');
+    } else {
+      window.alert('无法识别当前列表的分页位置。');
+    }
+  } catch (error) {
+    if (!scan.cancelled) {
+      window.alert(`定位浏览进度失败：${error?.message || error}。请确认两个站点已登录且分页可以正常打开。`);
+    }
+  } finally {
+    if (batchProgressScanState === scan) batchProgressScanState = null;
+    refreshBatchProgressLocatorButton(button);
   }
 }
 
 function addBatchProgressLocatorButton(host, prependButton = false) {
   if (!host || document.getElementById(BATCH_PROGRESS_BUTTON_ID)) return;
   if (!isBatchProgressLocatorEnabled()) return;
-  const button = document.createElement('a');
+  const button = document.createElement('button');
   button.id = BATCH_PROGRESS_BUTTON_ID;
-  button.textContent = '定位浏览进度';
-  button.setAttribute('role', 'button');
+  button.type = 'button';
   Object.assign(button.style, {
     float: 'right',
     position: 'relative',
@@ -1094,15 +1191,14 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
     cursor: 'pointer',
     fontSize: '14px',
     lineHeight: '20px',
-    textDecoration: 'none',
   });
-  button.addEventListener('mouseenter', () => { button.style.background = '#56656e'; });
-  button.addEventListener('mouseleave', () => { button.style.background = '#6d7d87'; });
-  button.addEventListener('click', (event) => {
-    if (button.getAttribute('href')) return;
-    event.preventDefault();
-    window.alert('当前列表还没有可定位的浏览进度。使用一次批量打开后会自动记录。');
+  button.addEventListener('mouseenter', () => {
+    if (!batchProgressScanState) button.style.background = '#56656e';
   });
+  button.addEventListener('mouseleave', () => {
+    if (!batchProgressScanState) button.style.background = '#6d7d87';
+  });
+  button.addEventListener('click', () => void locateCurrentBatchProgress(button));
   refreshBatchProgressLocatorButton(button);
   if (prependButton) {
     const batchButton = document.getElementById(BATCH_BUTTON_ID);
@@ -1182,7 +1278,6 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   if (isThreadPage()) addDownloadButton();
   if (isBatchOpenPage()) {
     applyBatchOpenHistory(document);
-    inferBatchProgressFromCurrentPage(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
   }
 }
