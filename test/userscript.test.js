@@ -46,6 +46,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
       <tbody id="normalthread_302"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=302">主题 302</a></th></tr></tbody>
       <tbody id="normalthread_301"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=301">主题 301</a></th></tr></tbody>
     </table></div>
+    <div class="pg"><a class="nxt" href="forum.php?mod=forumdisplay&fid=75&page=2">下一页</a></div>
   `, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
   const restore = installDomGlobals(dom.window);
   const opened = [];
@@ -79,7 +80,10 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
   try {
     await import(`../src/userscript.js?forum-list=${Date.now()}`);
     const button = dom.window.document.querySelector('#x1080x-ex-open-page');
+    const progressButton = dom.window.document.querySelector('#x1080x-ex-batch-progress-locator');
     assert.ok(button);
+    assert.ok(progressButton);
+    assert.equal(progressButton.href, 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75');
     assert.equal(button.textContent, '后台顺序打开本页主题（3）');
     assert.equal(
       dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
@@ -117,6 +121,10 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     assert.equal(
       dom.window.document.querySelector('a[href*="tid=301"]').getAttribute('data-x1080x-batch-opened'),
       '1'
+    );
+    assert.equal(
+      progressButton.href,
+      'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75&page=2'
     );
     assert.equal(dom.window.document.title, 'agaghhh 列表');
   } finally {
@@ -171,9 +179,12 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
   try {
     await import(`../src/userscript.js?hdblog-list=${Date.now()}`);
     const button = dom.window.document.querySelector('#x1080x-ex-open-page');
+    const progressButton = dom.window.document.querySelector('#x1080x-ex-batch-progress-locator');
     const archiveDescription = dom.window.document.querySelector('.archive-description');
     const firstArticle = dom.window.document.querySelector('article.entry');
     assert.ok(button);
+    assert.ok(progressButton);
+    assert.equal(progressButton.href, 'https://hdblog.me/tag/fc2-ppv/');
     assert.equal(button.parentElement, archiveDescription);
     assert.equal(archiveDescription.firstElementChild, button);
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
@@ -214,6 +225,7 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
       dom.window.document.querySelector('a[href^="/983856/"]').getAttribute('data-x1080x-batch-opened'),
       '1'
     );
+    assert.equal(progressButton.href, 'https://hdblog.me/tag/fc2-ppv/page/2/');
     assert.equal(dom.window.document.title, 'HDBlog 标签');
   } finally {
     dom.window.setTimeout = originalSetTimeout;
