@@ -83,7 +83,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     const progressButton = dom.window.document.querySelector('#x1080x-ex-batch-progress-locator');
     assert.ok(button);
     assert.ok(progressButton);
-    assert.equal(progressButton.href, 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75');
+    assert.equal(progressButton.textContent, '定位浏览进度');
     assert.equal(button.textContent, '后台顺序打开本页主题（3）');
     assert.equal(
       dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
@@ -122,8 +122,9 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
       dom.window.document.querySelector('a[href*="tid=301"]').getAttribute('data-x1080x-batch-opened'),
       '1'
     );
+    assert.equal(progressButton.textContent, '定位浏览进度');
     assert.equal(
-      progressButton.href,
+      stored.get('x1080x-ex:agaghhh-batch-progress-map')['https://agaghhh.cc/forum:75'].url,
       'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75&page=2'
     );
     assert.equal(dom.window.document.title, 'agaghhh 列表');
@@ -184,7 +185,7 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     const firstArticle = dom.window.document.querySelector('article.entry');
     assert.ok(button);
     assert.ok(progressButton);
-    assert.equal(progressButton.href, 'https://hdblog.me/tag/fc2-ppv/');
+    assert.equal(progressButton.textContent, '定位浏览进度');
     assert.equal(button.parentElement, archiveDescription);
     assert.equal(archiveDescription.firstElementChild, button);
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
@@ -225,7 +226,11 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
       dom.window.document.querySelector('a[href^="/983856/"]').getAttribute('data-x1080x-batch-opened'),
       '1'
     );
-    assert.equal(progressButton.href, 'https://hdblog.me/tag/fc2-ppv/page/2/');
+    assert.equal(progressButton.textContent, '定位浏览进度');
+    assert.equal(
+      stored.get('x1080x-ex:hdblog-batch-progress-map')['https://hdblog.me/tag/fc2-ppv/'].url,
+      'https://hdblog.me/tag/fc2-ppv/page/2/'
+    );
     assert.equal(dom.window.document.title, 'HDBlog 标签');
   } finally {
     dom.window.setTimeout = originalSetTimeout;
