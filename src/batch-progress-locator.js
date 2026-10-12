@@ -81,6 +81,7 @@ export async function scanBatchProgressPages({
   let previous = null;
   let checked = 0;
   let visitedFound = false;
+  let candidate = null;
   const seen = new Set();
 
   while (pageUrl && checked < maxPages) {
@@ -111,23 +112,41 @@ export async function scanBatchProgressPages({
     checked += 1;
     onProgress({ checked, opened, unopened, url: normalized });
 
-    // The crossover can be inside one page or between two adjacent pages.
+    // Do not stop at the first isolated visited thread. A true progress boundary
+    // usually has a strong change in opened ratio between adjacent pages.
+    const ratio = opened / threads.length;
     if (opened && unopened) {
-      return { status: 'found', url: normalized, checked, opened, unopened };
+      const strength = Math.min(opened, unopened) / threads.length;
+      if (!candidate || strength > candidate.strength) {
+        candidate = { status: 'found', url: normalized, checked, opened, unopened, strength };
+      }
     }
-    if (previous && previous.opened !== opened && (
-      (previous.opened === 0 && opened === threads.length)
-      || (previous.unopened === 0 && opened === 0)
-    )) {
-      return { status: 'found', url: normalized, checked, opened, unopened };
+    if (previous) {
+      const delta = Math.abs(ratio - previous.ratio);
+      if (delta >= 0.5) {
+        const preferred = previous.opened && previous.unopened
+          ? previous
+          : { url: normalized, checked, opened, unopened };
+        return {
+          status: 'found',
+          url: preferred.url,
+          checked: preferred.checked,
+          opened: preferred.opened,
+          unopened: preferred.unopened,
+          inspected: checked,
+        };
+      }
     }
-    previous = { opened, unopened };
+    previous = { ratio, url: normalized, checked, opened, unopened };
 
     const next = nextBatchListPageUrl(page, normalized);
     if (!next || next === normalized || getScope(next) !== scope || seen.has(next)) {
-      return { status: 'end', checked, visitedFound };
+      return candidate
+        ? { ...candidate, inspected: checked, approximate: true }
+        : { status: 'end', checked, visitedFound };
     }
     pageUrl = next;
   }
+  if (candidate) return { ...candidate, inspected: checked, approximate: true };
   return { status: checked >= maxPages ? 'limit' : 'end', checked, visitedFound };
 }
