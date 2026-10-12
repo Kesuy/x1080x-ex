@@ -235,7 +235,7 @@ function batchProgressScopeKey(value = location.href) {
     url.hash = '';
     if (config.kind === 'agaghhh') {
       const fid = url.searchParams.get('fid')
-        || url.pathname.match(/forum[-_](\d+)/i)?.[1]
+        || url.pathname.match(/forum[-_](\d+)(?:[-_]\d+)?(?:\.html)?/i)?.[1]
         || '';
       if (fid) return `${url.origin}/forum:${fid}`;
       url.searchParams.delete('page');
