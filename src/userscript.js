@@ -294,7 +294,7 @@ function nextBatchListPageUrl(document) {
 function rememberBatchProgressTarget(url) {
   const config = batchOpenHistoryConfig();
   const scope = batchProgressScopeKey();
-  if (!config || !scope || !url || typeof GM_setValue !== 'function') return false;
+  if (!config || !scope || !url || !isBatchProgressLocatorEnabled() || typeof GM_setValue !== 'function') return false;
   const map = readBatchProgressMap();
   map[scope] = { url, updatedAt: Date.now() };
   const entries = Object.entries(map)
