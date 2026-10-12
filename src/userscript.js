@@ -23,11 +23,15 @@ const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-histo
 const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
 const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
 const AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:agaghhh-batch-open-unopened-only';
+const AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-progress-locator-enabled';
+const AGAGHHH_BATCH_PROGRESS_MAP_KEY = 'x1080x-ex:agaghhh-batch-progress-map';
 const HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-history-enabled';
 const HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:hdblog-batch-open-history-limit';
 const HDBLOG_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:hdblog-batch-open-history';
 const HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:hdblog-batch-open-history-color';
 const HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:hdblog-batch-open-unopened-only';
+const HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = 'x1080x-ex:hdblog-batch-progress-locator-enabled';
+const HDBLOG_BATCH_PROGRESS_MAP_KEY = 'x1080x-ex:hdblog-batch-progress-map';
 const DEFAULT_BATCH_OPEN_HISTORY_LIMIT = 5000;
 const DEFAULT_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
@@ -37,6 +41,7 @@ const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval
 const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
+const BATCH_PROGRESS_BUTTON_ID = 'x1080x-ex-batch-progress-locator';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
 const REQUEST_TIMEOUT = 60000;
 const PIXHOST_PLACEHOLDER_MAX_BYTES = 32 * 1024;
@@ -132,6 +137,8 @@ function batchOpenHistoryConfig() {
       historyKey: AGAGHHH_BATCH_OPEN_HISTORY_KEY,
       colorKey: AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
       unopenedOnlyKey: AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY,
+      progressLocatorEnabledKey: AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY,
+      progressMapKey: AGAGHHH_BATCH_PROGRESS_MAP_KEY,
       kind: 'agaghhh',
     };
   }
@@ -142,6 +149,8 @@ function batchOpenHistoryConfig() {
       historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY,
       colorKey: HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
       unopenedOnlyKey: HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY,
+      progressLocatorEnabledKey: HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY,
+      progressMapKey: HDBLOG_BATCH_PROGRESS_MAP_KEY,
       kind: 'hdblog',
     };
   }
@@ -158,6 +167,12 @@ function isBatchOpenUnopenedOnlyEnabled() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function' || !isBatchOpenHistoryEnabled()) return false;
   return GM_getValue(config.unopenedOnlyKey, false) === true;
+}
+
+function isBatchProgressLocatorEnabled() {
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_getValue !== 'function' || !isBatchOpenHistoryEnabled()) return false;
+  return GM_getValue(config.progressLocatorEnabledKey, true) !== false;
 }
 
 function batchOpenHistoryLimit() {
@@ -208,6 +223,106 @@ function readBatchOpenHistory() {
     typeof value === 'string'
     && (/^(?:tid|post):\d+$/.test(value) || /^url:\//.test(value))
   )))];
+}
+
+function batchProgressScopeKey(value = location.href) {
+  const config = batchOpenHistoryConfig();
+  if (!config) return '';
+  try {
+    const url = new URL(value, location.href);
+    url.hash = '';
+    if (config.kind === 'agaghhh') {
+      const fid = url.searchParams.get('fid')
+        || url.pathname.match(/forum[-_](\d+)/i)?.[1]
+        || '';
+      if (fid) return `${url.origin}/forum:${fid}`;
+      url.searchParams.delete('page');
+      url.searchParams.sort();
+      return url.href;
+    }
+    url.searchParams.delete('paged');
+    url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
+    url.searchParams.sort();
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
+function readBatchProgressMap() {
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_getValue !== 'function') return {};
+  const stored = GM_getValue(config.progressMapKey, {});
+  return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+}
+
+function batchProgressTarget() {
+  const scope = batchProgressScopeKey();
+  if (!scope) return '';
+  const entry = readBatchProgressMap()[scope];
+  return typeof entry?.url === 'string' ? entry.url : '';
+}
+
+function nextBatchListPageUrl(document) {
+  if (!document) return '';
+  const selectors = [
+    'a.nxt[href]',
+    '.pg a.nxt[href]',
+    'a[rel="next"][href]',
+    '.archive-pagination .pagination-next a[href]',
+    '.archive-pagination a.next[href]',
+    '.pagination a.next[href]',
+  ];
+  let link = null;
+  for (const selector of selectors) {
+    link = document.querySelector(selector);
+    if (link) break;
+  }
+  if (!link) {
+    link = [...document.querySelectorAll('a[href]')].find((anchor) => (
+      /^(?:下一页|next|older posts?|older)$/i.test(normalizedLabel(anchor.textContent))
+    ));
+  }
+  if (!link) return '';
+  try {
+    return new URL(link.getAttribute('href'), document.baseURI).href;
+  } catch {
+    return '';
+  }
+}
+
+function rememberBatchProgressTarget(url) {
+  const config = batchOpenHistoryConfig();
+  const scope = batchProgressScopeKey();
+  if (!config || !scope || !url || typeof GM_setValue !== 'function') return false;
+  const map = readBatchProgressMap();
+  map[scope] = { url, updatedAt: Date.now() };
+  const entries = Object.entries(map)
+    .sort((left, right) => Number(right[1]?.updatedAt || 0) - Number(left[1]?.updatedAt || 0))
+    .slice(0, 100);
+  GM_setValue(config.progressMapKey, Object.fromEntries(entries));
+  refreshBatchProgressLocatorButton();
+  return true;
+}
+
+function rememberBatchProgressForCurrentPage(document, completed) {
+  const target = completed ? (nextBatchListPageUrl(document) || location.href) : location.href;
+  return rememberBatchProgressTarget(target);
+}
+
+function inferBatchProgressFromCurrentPage(document) {
+  if (!document || !isBatchProgressLocatorEnabled() || batchProgressTarget()) return false;
+  const threads = collectForumThreadLinks(document);
+  if (!threads.length) return false;
+  const history = new Set(readBatchOpenHistory());
+  const opened = threads.filter((thread) => {
+    const id = batchOpenHistoryId(thread.url);
+    return id && history.has(id);
+  }).length;
+  if (!opened) return false;
+  return rememberBatchProgressTarget(
+    opened === threads.length ? (nextBatchListPageUrl(document) || location.href) : location.href
+  );
 }
 
 function collectBatchOpenThreads(document) {
@@ -502,6 +617,7 @@ async function openCurrentPageThreads(button) {
     timeoutId: null,
   };
   batchOpenState = state;
+  rememberBatchProgressForCurrentPage(document, false);
   const failures = [];
   let opened = 0;
   const timing = batchOpenTiming();
@@ -541,6 +657,8 @@ async function openCurrentPageThreads(button) {
   } finally {
     endBatchOpenGuard();
     const wasCancelled = state.cancelled;
+    const completedPage = !wasCancelled && failures.length === 0 && opened === threads.length;
+    rememberBatchProgressForCurrentPage(document, completedPage);
     batchOpenState = null;
     button.textContent = wasCancelled
       ? `已停止（已打开 ${opened}/${threads.length}）`
@@ -940,6 +1058,56 @@ function addDownloadButton() {
   host.prepend(button);
 }
 
+function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
+  if (!button) return;
+  const target = batchProgressTarget();
+  if (target) {
+    button.href = target;
+    button.removeAttribute('aria-disabled');
+    button.style.opacity = '1';
+    button.title = '跳转到已打开记录与未打开主题相邻的浏览进度页';
+  } else {
+    button.removeAttribute('href');
+    button.setAttribute('aria-disabled', 'true');
+    button.style.opacity = '.58';
+    button.title = '当前列表还没有可定位的浏览进度；使用一次批量打开后会自动记录';
+  }
+}
+
+function addBatchProgressLocatorButton(host, prependButton = false) {
+  if (!host || document.getElementById(BATCH_PROGRESS_BUTTON_ID)) return;
+  if (!isBatchProgressLocatorEnabled()) return;
+  const button = document.createElement('a');
+  button.id = BATCH_PROGRESS_BUTTON_ID;
+  button.textContent = '定位浏览进度';
+  button.setAttribute('role', 'button');
+  Object.assign(button.style, {
+    float: 'right',
+    position: 'relative',
+    zIndex: '20',
+    margin: '0 8px 6px 0',
+    padding: '7px 13px',
+    border: '1px solid #5f6f7a',
+    borderRadius: '5px',
+    color: '#fff',
+    background: '#6d7d87',
+    cursor: 'pointer',
+    fontSize: '14px',
+    lineHeight: '20px',
+    textDecoration: 'none',
+  });
+  button.addEventListener('mouseenter', () => { button.style.background = '#56656e'; });
+  button.addEventListener('mouseleave', () => { button.style.background = '#6d7d87'; });
+  button.addEventListener('click', (event) => {
+    if (button.getAttribute('href')) return;
+    event.preventDefault();
+    window.alert('当前列表还没有可定位的浏览进度。使用一次批量打开后会自动记录。');
+  });
+  refreshBatchProgressLocatorButton(button);
+  if (prependButton) host.prepend(button);
+  else host.append(button);
+}
+
 function addBatchOpenButton() {
   if (document.getElementById(BATCH_BUTTON_ID)) return;
   const threads = collectForumThreadLinks(document);
@@ -997,6 +1165,7 @@ function addBatchOpenButton() {
   } else {
     host.append(button);
   }
+  addBatchProgressLocatorButton(host, prependButton);
 }
 
 registerSettingsMenu();
@@ -1008,6 +1177,7 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   if (isThreadPage()) addDownloadButton();
   if (isBatchOpenPage()) {
     applyBatchOpenHistory(document);
+    inferBatchProgressFromCurrentPage(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
   }
 }
