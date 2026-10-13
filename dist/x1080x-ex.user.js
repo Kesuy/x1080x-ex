@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.19
+// @version      1.10.20
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -5363,6 +5363,62 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     view.setTimeout(run, 1500);
   }
 
+  // src/preview-image-health.js
+  var PIXHOST_IMAGE_HOST = /^(?:img\d+|t\d+)\.(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
+  var IMAGE_CHECK_TIMEOUT = 8e3;
+  function isPixhostAssetUrl2(value) {
+    try {
+      const url = new URL(value);
+      return /^https?:$/.test(url.protocol) && PIXHOST_IMAGE_HOST.test(url.hostname) && /^\/(?:images|thumbs)\//i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function isPixhostRemovedPlaceholder(value, width, height) {
+    if (!isPixhostAssetUrl2(value)) return false;
+    return width >= 240 && width <= 285 && height >= 110 && height <= 155 && width / height >= 1.7 && width / height <= 2.35;
+  }
+  function checkPixhostPreviewImage(value, document2, timeout = IMAGE_CHECK_TIMEOUT) {
+    if (!isPixhostAssetUrl2(value)) return Promise.resolve(true);
+    const ImageConstructor = document2?.defaultView?.Image;
+    if (typeof ImageConstructor !== "function") return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const image = new ImageConstructor();
+      let settled = false;
+      let timer;
+      const finish = (valid) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        image.onload = null;
+        image.onerror = null;
+        resolve(valid);
+      };
+      image.onload = () => finish(
+        image.naturalWidth > 0 && image.naturalHeight > 0 && !isPixhostRemovedPlaceholder(value, image.naturalWidth, image.naturalHeight)
+      );
+      image.onerror = () => finish(false);
+      timer = setTimeout(() => finish(false), timeout);
+      image.src = value;
+      if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        image.onload();
+      }
+    });
+  }
+  async function filterPixhostUnavailableImageUrls(result, document2) {
+    if (!result?.imageUrls?.length) return result;
+    const valid = await Promise.all(result.imageUrls.map(
+      (url) => checkPixhostPreviewImage(url, document2)
+    ));
+    if (valid.every(Boolean)) return result;
+    const imageUrls = result.imageUrls.filter((_url, index) => valid[index]);
+    console.warn("[x1080x-ex] Pixhost unavailable Preview skipped", {
+      code: result.code,
+      skipped: result.imageUrls.length - imageUrls.length
+    });
+    return { ...result, imageUrls };
+  }
+
   // src/agaghhh-preview-official.js
   var AV_WIKI_ORIGIN = "https://av-wiki.net";
   var FANZA_IMAGE_ORIGIN = "https://pics.dmm.co.jp";
@@ -5928,7 +5984,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (!range || !isAfter5(range.marker, node)) return false;
     return !range.boundary || !isAfter5(range.boundary, node);
   }
-  async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest2) {
+  async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest2, healthDocument = null) {
     const range = previewRange4(document2);
     if (!range) return [];
     const handledImages = /* @__PURE__ */ new Set();
@@ -5999,12 +6055,17 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       }
       return urls;
     };
+    const verify = async (urls) => {
+      if (!healthDocument || !urls.length) return urls;
+      const checked = await filterPixhostUnavailableImageUrls({ imageUrls: urls }, healthDocument);
+      return checked.imageUrls;
+    };
     const { standard, fourK } = partitionPreviewCandidates(candidates);
     if (standard.length) {
-      const standardUrls = await resolveCandidates(standard);
+      const standardUrls = await verify(await resolveCandidates(standard));
       if (standardUrls.length) return standardUrls;
     }
-    return fourK.length ? resolveCandidates(fourK) : [];
+    return fourK.length ? verify(await resolveCandidates(fourK)) : [];
   }
   function hdblogSearchCodeForThreadCode(code) {
     const normalized = String(code || "").trim().toUpperCase();
@@ -6013,7 +6074,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const uncensored = normalized.match(/^[A-Z0-9]{2,12}-(\d{6}[-_]\d{3,4})$/i);
     return uncensored?.[1] || normalized;
   }
-  async function fetchHdblogPreviewForCode(code, gmRequest2 = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+  async function fetchHdblogPreviewForCode(code, gmRequest2 = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document, verifyImages = false) {
     const normalizedCode = String(code || "").trim().toUpperCase();
     if (!normalizedCode) return { code: "", articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
     const searchCode = hdblogSearchCodeForThreadCode(normalizedCode);
@@ -6029,7 +6090,12 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const articleUrl = selection.selected.url;
     const articleResponse = await requestText3(articleUrl, gmRequest2, searchUrl);
     const articleDocument = parseHtml3(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
-    const imageUrls = articleDocument ? await collectHdblogPreviewImageUrls(articleDocument, articleUrl, gmRequest2) : [];
+    const imageUrls = articleDocument ? await collectHdblogPreviewImageUrls(
+      articleDocument,
+      articleUrl,
+      gmRequest2,
+      verifyImages ? hostDocument : null
+    ) : [];
     return { code: normalizedCode, articleUrl, imageUrls, ...selection };
   }
   function threadCode(document2) {
@@ -6106,7 +6172,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (!code) return null;
     let result = null;
     try {
-      result = await fetchHdblogPreviewForCode(code, gmRequest2, document2);
+      result = await fetchHdblogPreviewForCode(code, gmRequest2, document2, true);
     } catch (error) {
       console.warn("[x1080x-ex] hdblog preview lookup failed", {
         code,
@@ -6123,6 +6189,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         });
       }
     }
+    result = await filterPixhostUnavailableImageUrls(result, document2);
     if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
       try {
         result = await fetchOfficialPreviewFallbackForCode(code, gmRequest2, document2);
@@ -6133,6 +6200,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         });
       }
     }
+    result = await filterPixhostUnavailableImageUrls(result, document2);
     return renderAgaghhhHdblogPreview(document2, result);
   }
 
