@@ -1264,6 +1264,21 @@ ${settings.password}`;
     };
   }
 
+  // src/preview-gesture.js
+  function makePreviewGestureFriendly(image) {
+    if (!image) return image;
+    image.draggable = false;
+    image.setAttribute("draggable", "false");
+    image.style.setProperty("-webkit-user-drag", "none", "important");
+    const anchor = image.closest?.("a[href]");
+    if (anchor) {
+      anchor.draggable = false;
+      anchor.setAttribute("draggable", "false");
+      anchor.style.setProperty("-webkit-user-drag", "none", "important");
+    }
+    return image;
+  }
+
   // src/userscript.js
   var STORAGE_KEY = "x1080x-ex:domains";
   var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = "x1080x-ex:hdblog-expand-preview-images";
@@ -1579,6 +1594,7 @@ ${domains.join("\n")}
     image.style.setProperty("max-height", "none", "important");
     image.style.setProperty("object-fit", "contain", "important");
     image.style.setProperty("margin", "12px auto", "important");
+    makePreviewGestureFriendly(image);
     return true;
   }
   function expandHdblogPreviewImages() {
@@ -3140,6 +3156,7 @@ ${failures.join("\n")}
     );
     image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
     anchor.append(image);
+    makePreviewGestureFriendly(image);
     section.append(heading, anchor);
     content.append(section);
     return section;
@@ -4661,7 +4678,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function styleExpandedImage(image, fullUrl) {
     if (!fullUrl) return false;
-    if (image.dataset.x1080xPreviewLarge === "1" && image.src === fullUrl) return false;
+    if (image.dataset.x1080xPreviewLarge === "1" && image.src === fullUrl) {
+      makePreviewGestureFriendly(image);
+      return false;
+    }
     image.src = fullUrl;
     [
       "srcset",
@@ -4703,6 +4723,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       image.style.setProperty("transform", "translateX(-50%)", "important");
       image.style.setProperty("margin", "14px 0", "important");
     }
+    makePreviewGestureFriendly(image);
     return true;
   }
   function previewRange2(document2, locationObject) {
@@ -5697,6 +5718,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       if (previewReferer) image.setAttribute("data-x1080x-preview-referer", previewReferer);
       image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
       anchor.append(image);
+      makePreviewGestureFriendly(image);
       section.append(anchor);
     });
     content.append(section);
