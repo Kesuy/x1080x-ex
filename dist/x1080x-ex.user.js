@@ -666,6 +666,143 @@
     return promise;
   }
 
+  // src/batch-progress-locator.js
+  function firstBatchListPageUrl(value, kind) {
+    const url = new URL(value);
+    url.hash = "";
+    if (kind === "agaghhh") {
+      const forumPath = url.pathname.match(/^(.*\/forum-\d+-)\d+(\.html)$/i);
+      if (forumPath) {
+        url.pathname = `${forumPath[1]}1${forumPath[2]}`;
+      }
+      url.searchParams.delete("page");
+    } else {
+      url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, "/");
+      url.searchParams.delete("paged");
+    }
+    return url.href;
+  }
+  function nextBatchListPageUrl(document2, baseUrl = document2?.baseURI) {
+    if (!document2) return "";
+    const selectors = [
+      "#pgt .pg a.nxt[href]",
+      ".pg a.nxt[href]",
+      "a.nxt[href]",
+      ".archive-pagination .pagination-next a[href]",
+      ".archive-pagination a.next[href]",
+      ".pagination a.next[href]",
+      '.archive-pagination a[rel="next"][href]',
+      'a[rel="next"][href]'
+    ];
+    let link = null;
+    for (const selector of selectors) {
+      link = document2.querySelector(selector);
+      if (link) break;
+    }
+    if (!link) {
+      link = [...document2.querySelectorAll(
+        ".pg a[href], .archive-pagination a[href], .pagination a[href]"
+      )].find((anchor) => /^(?:下一页|下一頁|next|older(?: posts?)?|»|›|→)(?:\s*[»›→])?$/i.test(String(anchor.textContent || "").trim()));
+    }
+    if (!link) return "";
+    try {
+      const url = new URL(link.getAttribute("href"), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function parseBatchListPage(html, pageUrl, document2) {
+    const Parser = document2?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (!Parser) throw new Error("\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u89E3\u6790\u5206\u9875\u5185\u5BB9");
+    const page = new Parser().parseFromString(html, "text/html");
+    if (!page.head) throw new Error("\u5206\u9875\u5185\u5BB9\u65E0\u6548");
+    const base = page.createElement("base");
+    base.href = pageUrl;
+    page.head.prepend(base);
+    return page;
+  }
+  async function scanBatchProgressPages({
+    startUrl,
+    currentUrl,
+    currentDocument,
+    historyIds,
+    loadPage,
+    collectThreads,
+    getId,
+    getScope,
+    maxPages = 120,
+    onProgress = () => {
+    },
+    cancelled = () => false
+  }) {
+    const history = new Set(historyIds);
+    if (!history.size) return { status: "no-history", checked: 0 };
+    const scope = getScope(startUrl);
+    if (!scope) return { status: "invalid-scope", checked: 0 };
+    let pageUrl = startUrl;
+    let previous = null;
+    let checked = 0;
+    let visitedFound = false;
+    let candidate = null;
+    const seen = /* @__PURE__ */ new Set();
+    while (pageUrl && checked < maxPages) {
+      if (cancelled()) return { status: "cancelled", checked };
+      const normalized = new URL(pageUrl, startUrl).href;
+      if (seen.has(normalized) || getScope(normalized) !== scope) break;
+      seen.add(normalized);
+      let page;
+      if (normalized === currentUrl) {
+        page = currentDocument;
+      } else {
+        const html = await loadPage(normalized);
+        if (cancelled()) return { status: "cancelled", checked };
+        page = parseBatchListPage(html, normalized, currentDocument);
+      }
+      const threads = collectThreads(page);
+      if (!threads.length) {
+        return { status: "unreadable", checked, pageUrl: normalized };
+      }
+      const opened = threads.filter((thread) => {
+        const id = getId(thread.url);
+        return id && history.has(id);
+      }).length;
+      const unopened = threads.length - opened;
+      visitedFound ||= opened > 0;
+      checked += 1;
+      onProgress({ checked, opened, unopened, url: normalized });
+      const ratio = opened / threads.length;
+      if (opened && unopened) {
+        const strength = Math.min(opened, unopened) / threads.length;
+        if (!candidate || strength > candidate.strength) {
+          candidate = { status: "found", url: normalized, checked, opened, unopened, strength };
+        }
+      }
+      if (previous) {
+        const delta = Math.abs(ratio - previous.ratio);
+        if (delta >= 0.5) {
+          const preferred = previous.opened && previous.unopened ? previous : { url: normalized, checked, opened, unopened };
+          return {
+            status: "found",
+            url: preferred.url,
+            checked: preferred.checked,
+            opened: preferred.opened,
+            unopened: preferred.unopened,
+            inspected: checked
+          };
+        }
+      }
+      previous = { ratio, url: normalized, checked, opened, unopened };
+      const next = nextBatchListPageUrl(page, normalized);
+      if (!next || next === normalized || getScope(next) !== scope || seen.has(next)) {
+        return candidate ? { ...candidate, inspected: checked, approximate: true } : { status: "end", checked, visitedFound };
+      }
+      pageUrl = next;
+    }
+    if (candidate) return { ...candidate, inspected: checked, approximate: true };
+    return { status: checked >= maxPages ? "limit" : "end", checked, visitedFound };
+  }
+
   // src/torrent.js
   var TORRENT_SOURCES = Object.freeze([
     (hash) => `https://itorrents.net/torrent/${hash}.torrent`,
@@ -1291,11 +1428,15 @@ ${settings.password}`;
   var AGAGHHH_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:agaghhh-batch-open-history";
   var AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = "x1080x-ex:agaghhh-batch-open-history-color";
   var AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:agaghhh-batch-open-unopened-only";
+  var AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = "x1080x-ex:agaghhh-batch-progress-locator-enabled";
+  var AGAGHHH_BATCH_PROGRESS_MAP_KEY = "x1080x-ex:agaghhh-batch-progress-map";
   var HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-history-enabled";
   var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = "x1080x-ex:hdblog-batch-open-history-limit";
   var HDBLOG_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:hdblog-batch-open-history";
   var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = "x1080x-ex:hdblog-batch-open-history-color";
   var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:hdblog-batch-open-unopened-only";
+  var HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = "x1080x-ex:hdblog-batch-progress-locator-enabled";
+  var HDBLOG_BATCH_PROGRESS_MAP_KEY = "x1080x-ex:hdblog-batch-progress-map";
   var DEFAULT_BATCH_OPEN_HISTORY_LIMIT = 5e3;
   var DEFAULT_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
   var BATCH_OPEN_HISTORY_ATTR = "data-x1080x-batch-opened";
@@ -1305,6 +1446,7 @@ ${settings.password}`;
   var DEFAULT_DOMAINS = "agaghhh.cc\nhdblog.me";
   var BUTTON_ID = "x1080x-ex-download";
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
+  var BATCH_PROGRESS_BUTTON_ID = "x1080x-ex-batch-progress-locator";
   var BATCH_TOOLBAR_ID = "x1080x-ex-open-page-toolbar";
   var REQUEST_TIMEOUT2 = 6e4;
   var PIXHOST_PLACEHOLDER_MAX_BYTES = 32 * 1024;
@@ -1329,6 +1471,7 @@ ${settings.password}`;
     pauseMax: 5e3
   });
   var batchOpenState = null;
+  var batchProgressScanState = null;
   function getConfiguredDomains() {
     const stored = GM_getValue(STORAGE_KEY, null);
     if (stored === null || stored === void 0) return parseDomainList(DEFAULT_DOMAINS);
@@ -1395,6 +1538,8 @@ ${domains.join("\n")}
         historyKey: AGAGHHH_BATCH_OPEN_HISTORY_KEY,
         colorKey: AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
         unopenedOnlyKey: AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY,
+        progressLocatorEnabledKey: AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY,
+        progressMapKey: AGAGHHH_BATCH_PROGRESS_MAP_KEY,
         kind: "agaghhh"
       };
     }
@@ -1405,6 +1550,8 @@ ${domains.join("\n")}
         historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY,
         colorKey: HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
         unopenedOnlyKey: HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY,
+        progressLocatorEnabledKey: HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY,
+        progressMapKey: HDBLOG_BATCH_PROGRESS_MAP_KEY,
         kind: "hdblog"
       };
     }
@@ -1419,6 +1566,11 @@ ${domains.join("\n")}
     const config = batchOpenHistoryConfig();
     if (!config || typeof GM_getValue !== "function" || !isBatchOpenHistoryEnabled()) return false;
     return GM_getValue(config.unopenedOnlyKey, false) === true;
+  }
+  function isBatchProgressLocatorEnabled() {
+    const config = batchOpenHistoryConfig();
+    if (!config || typeof GM_getValue !== "function" || !isBatchOpenHistoryEnabled()) return false;
+    return GM_getValue(config.progressLocatorEnabledKey, true) !== false;
   }
   function batchOpenHistoryLimit() {
     const config = batchOpenHistoryConfig();
@@ -1456,6 +1608,73 @@ ${domains.join("\n")}
     const stored = GM_getValue(config.historyKey, []);
     const values = Array.isArray(stored) ? stored : [];
     return [...new Set(values.filter((value) => typeof value === "string" && (/^(?:tid|post):\d+$/.test(value) || /^url:\//.test(value))))];
+  }
+  function batchProgressScopeKey(value = location.href) {
+    const config = batchOpenHistoryConfig();
+    if (!config) return "";
+    try {
+      const url = new URL(value, location.href);
+      url.hash = "";
+      if (config.kind === "agaghhh") {
+        const fid = url.searchParams.get("fid") || url.pathname.match(/forum[-_](\d+)(?:[-_]\d+)?(?:\.html)?/i)?.[1] || "";
+        if (fid) return `${url.origin}/forum:${fid}`;
+        url.searchParams.delete("page");
+        url.searchParams.sort();
+        return url.href;
+      }
+      url.searchParams.delete("paged");
+      url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, "/");
+      url.searchParams.sort();
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+  function readBatchProgressMap() {
+    const config = batchOpenHistoryConfig();
+    if (!config || typeof GM_getValue !== "function") return {};
+    const stored = GM_getValue(config.progressMapKey, {});
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  }
+  function nextBatchListPageUrl2(document2) {
+    if (!document2) return "";
+    const selectors = [
+      "a.nxt[href]",
+      ".pg a.nxt[href]",
+      'a[rel="next"][href]',
+      ".archive-pagination .pagination-next a[href]",
+      ".archive-pagination a.next[href]",
+      ".pagination a.next[href]"
+    ];
+    let link = null;
+    for (const selector of selectors) {
+      link = document2.querySelector(selector);
+      if (link) break;
+    }
+    if (!link) {
+      link = [...document2.querySelectorAll("a[href]")].find((anchor) => /^(?:下一页|next|older posts?|older)$/i.test(normalizedLabel(anchor.textContent)));
+    }
+    if (!link) return "";
+    try {
+      return new URL(link.getAttribute("href"), document2.baseURI).href;
+    } catch {
+      return "";
+    }
+  }
+  function rememberBatchProgressTarget(url) {
+    const config = batchOpenHistoryConfig();
+    const scope = batchProgressScopeKey();
+    if (!config || !scope || !url || !isBatchProgressLocatorEnabled() || typeof GM_setValue !== "function") return false;
+    const map = readBatchProgressMap();
+    map[scope] = { url, updatedAt: Date.now() };
+    const entries = Object.entries(map).sort((left, right) => Number(right[1]?.updatedAt || 0) - Number(left[1]?.updatedAt || 0)).slice(0, 100);
+    GM_setValue(config.progressMapKey, Object.fromEntries(entries));
+    refreshBatchProgressLocatorButton();
+    return true;
+  }
+  function rememberBatchProgressForCurrentPage(document2, completed) {
+    const target = completed ? nextBatchListPageUrl2(document2) || location.href : location.href;
+    return rememberBatchProgressTarget(target);
   }
   function collectBatchOpenThreads(document2) {
     const threads = collectForumThreadLinks(document2);
@@ -1702,6 +1921,7 @@ ${domains.join("\n")}
       timeoutId: null
     };
     batchOpenState = state;
+    rememberBatchProgressForCurrentPage(document, false);
     const failures = [];
     let opened = 0;
     const timing = batchOpenTiming();
@@ -1736,6 +1956,8 @@ ${domains.join("\n")}
     } finally {
       endBatchOpenGuard();
       const wasCancelled = state.cancelled;
+      const completedPage = !wasCancelled && failures.length === 0 && opened === threads.length;
+      rememberBatchProgressForCurrentPage(document, completedPage);
       batchOpenState = null;
       button.textContent = wasCancelled ? `\u5DF2\u505C\u6B62\uFF08\u5DF2\u6253\u5F00 ${opened}/${threads.length}\uFF09` : failures.length ? `\u5B8C\u6210\uFF08\u6253\u5F00 ${opened}\uFF0C\u5931\u8D25 ${failures.length}\uFF09` : `\u2713 \u5DF2\u6309\u987A\u5E8F\u6253\u5F00 ${opened} \u4E2A\u4E3B\u9898`;
       button.style.background = failures.length ? "#b36b22" : "#398bd4";
@@ -2091,6 +2313,146 @@ ${failures.join("\n")}
     button.addEventListener("click", () => void downloadAll(button));
     host.prepend(button);
   }
+  function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
+    if (!button || batchProgressScanState) return;
+    const historyCount = readBatchOpenHistory().length;
+    button.textContent = "\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6";
+    button.title = historyCount ? `\u8DE8\u9875\u67E5\u627E\u5DF2\u6253\u5F00\u4E0E\u672A\u6253\u5F00\u4E3B\u9898\u76F8\u90BB\u7684\u5206\u9875\uFF08\u73B0\u6709 ${historyCount} \u6761\u811A\u672C\u8BB0\u5F55\uFF09` : "\u8FD8\u6CA1\u6709\u4FDD\u5B58\u7684\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\uFF0C\u6D4F\u89C8\u5668\u81EA\u5DF1\u7684 :visited \u8BB0\u5F55\u4E0D\u80FD\u81EA\u52A8\u8BFB\u53D6";
+    button.style.background = "#6d7d87";
+  }
+  async function requestBatchListPageHtml(url) {
+    let lastError = null;
+    if (typeof window.fetch === "function") {
+      try {
+        const response = await window.fetch(url, { credentials: "include" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.text();
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (typeof GM_xmlhttpRequest !== "function") {
+      throw lastError || new Error("\u7F3A\u5C11\u53EF\u7528\u7684\u5206\u9875\u8BFB\u53D6\u63A5\u53E3");
+    }
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        timeout: 15e3,
+        onload: (response) => {
+          if (response.status < 200 || response.status >= 400) {
+            reject(new Error(`HTTP ${response.status}`));
+          } else {
+            resolve(response.responseText || "");
+          }
+        },
+        ontimeout: () => reject(new Error("\u8BFB\u53D6\u5206\u9875\u8D85\u65F6")),
+        onerror: (error) => reject(new Error(error?.error || "\u65E0\u6CD5\u8BFB\u53D6\u5206\u9875"))
+      });
+    });
+  }
+  async function locateCurrentBatchProgress(button) {
+    if (batchProgressScanState) {
+      batchProgressScanState.cancelled = true;
+      button.textContent = "\u6B63\u5728\u505C\u6B62\u67E5\u627E\u2026";
+      return;
+    }
+    if (!isBatchProgressLocatorEnabled()) return;
+    const historyIds = readBatchOpenHistory();
+    if (!historyIds.length) {
+      window.alert("\u6CA1\u6709\u53EF\u7528\u7684\u811A\u672C\u6253\u5F00\u8BB0\u5F55\u3002\u8BF7\u5148\u5F00\u542F\u201C\u4FDD\u5B58\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u5E76\u4F7F\u7528\u6279\u91CF\u6253\u5F00\uFF1BChrome \u7684 :visited \u7D2B\u8272\u94FE\u63A5\u65E0\u6CD5\u7531\u811A\u672C\u8BFB\u53D6\u3002");
+      return;
+    }
+    const scan = { cancelled: false };
+    batchProgressScanState = scan;
+    button.style.background = "#b36b22";
+    button.textContent = "\u6B63\u5728\u67E5\u627E\u5206\u9875\uFF08\u518D\u6B21\u70B9\u51FB\u505C\u6B62\uFF09";
+    try {
+      const config = batchOpenHistoryConfig();
+      const result = await scanBatchProgressPages({
+        startUrl: firstBatchListPageUrl(location.href, config.kind),
+        currentUrl: location.href,
+        currentDocument: document,
+        historyIds,
+        loadPage: requestBatchListPageHtml,
+        collectThreads: collectForumThreadLinks,
+        getId: batchOpenHistoryId,
+        getScope: batchProgressScopeKey,
+        maxPages: 120,
+        onProgress: ({ checked, opened, unopened }) => {
+          button.textContent = `\u505C\u6B62\u67E5\u627E \xB7 \u7B2C ${checked} \u9875\uFF08\u5DF2\u5F00 ${opened} / \u672A\u5F00 ${unopened}\uFF09`;
+        },
+        cancelled: () => scan.cancelled
+      });
+      if (scan.cancelled || result.status === "cancelled") return;
+      if (result.status === "found") {
+        button.textContent = `\u5DF2\u5B9A\u4F4D\u5230\u7B2C ${result.checked} \u9875`;
+        rememberBatchProgressTarget(result.url);
+        if (result.url !== location.href) window.location.assign(result.url);
+        else {
+          const firstUnopened = collectForumThreadLinks(document).find((thread) => {
+            const id = batchOpenHistoryId(thread.url);
+            return !id || !new Set(historyIds).has(id);
+          });
+          firstUnopened?.link?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        }
+        return;
+      }
+      if (result.status === "unreadable") {
+        window.alert(`\u7B2C ${result.checked + 1} \u9875\u672A\u8BFB\u53D6\u5230\u4E3B\u9898\uFF08\u53EF\u80FD\u9700\u8981\u767B\u5F55\u6216\u89E6\u53D1\u4E86\u7F51\u7AD9\u9A8C\u8BC1\uFF09\uFF0C\u4E0D\u80FD\u53EF\u9760\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u3002
+${result.pageUrl}`);
+      } else if (result.status === "limit") {
+        window.alert("\u5DF2\u68C0\u67E5\u524D 120 \u9875\uFF0C\u4ECD\u672A\u627E\u5230\u5DF2\u6253\u5F00\u4E0E\u672A\u6253\u5F00\u4E3B\u9898\u7684\u4EA4\u754C\u5904\u3002\u8BF7\u5728\u66F4\u63A5\u8FD1\u5386\u53F2\u8FDB\u5EA6\u7684\u5217\u8868\u9875\u5C1D\u8BD5\uFF0C\u6216\u589E\u52A0\u626B\u63CF\u4E0A\u9650\u3002");
+      } else if (result.status === "end") {
+        window.alert(result.visitedFound ? "\u5DF2\u68C0\u67E5\u5B8C\u80FD\u8BBF\u95EE\u7684\u5206\u9875\uFF0C\u6CA1\u6709\u627E\u5230\u660E\u786E\u7684\u5DF2\u6253\u5F00/\u672A\u6253\u5F00\u5206\u754C\u9875\u3002" : "\u5DF2\u68C0\u67E5\u5B8C\u80FD\u8BBF\u95EE\u7684\u5206\u9875\uFF0C\u4F46\u6CA1\u6709\u5728\u8FD9\u4E9B\u4E3B\u9898\u4E2D\u627E\u5230\u811A\u672C\u4FDD\u5B58\u7684\u6253\u5F00\u8BB0\u5F55\u3002");
+      } else {
+        window.alert("\u65E0\u6CD5\u8BC6\u522B\u5F53\u524D\u5217\u8868\u7684\u5206\u9875\u4F4D\u7F6E\u3002");
+      }
+    } catch (error) {
+      if (!scan.cancelled) {
+        window.alert(`\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u5931\u8D25\uFF1A${error?.message || error}\u3002\u8BF7\u786E\u8BA4\u4E24\u4E2A\u7AD9\u70B9\u5DF2\u767B\u5F55\u4E14\u5206\u9875\u53EF\u4EE5\u6B63\u5E38\u6253\u5F00\u3002`);
+      }
+    } finally {
+      if (batchProgressScanState === scan) batchProgressScanState = null;
+      refreshBatchProgressLocatorButton(button);
+    }
+  }
+  function addBatchProgressLocatorButton(host, prependButton = false) {
+    if (!host || document.getElementById(BATCH_PROGRESS_BUTTON_ID)) return;
+    if (!isBatchProgressLocatorEnabled()) return;
+    const button = document.createElement("button");
+    button.id = BATCH_PROGRESS_BUTTON_ID;
+    button.type = "button";
+    Object.assign(button.style, {
+      float: "right",
+      position: "relative",
+      zIndex: "20",
+      margin: "0 8px 6px 0",
+      padding: "7px 13px",
+      border: "1px solid #5f6f7a",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#6d7d87",
+      cursor: "pointer",
+      fontSize: "14px",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      if (!batchProgressScanState) button.style.background = "#56656e";
+    });
+    button.addEventListener("mouseleave", () => {
+      if (!batchProgressScanState) button.style.background = "#6d7d87";
+    });
+    button.addEventListener("click", () => void locateCurrentBatchProgress(button));
+    refreshBatchProgressLocatorButton(button);
+    if (prependButton) {
+      const batchButton = document.getElementById(BATCH_BUTTON_ID);
+      if (batchButton?.parentElement === host) batchButton.after(button);
+      else host.prepend(button);
+    } else {
+      host.append(button);
+    }
+  }
   function addBatchOpenButton() {
     if (document.getElementById(BATCH_BUTTON_ID)) return;
     const threads = collectForumThreadLinks(document);
@@ -2145,6 +2507,7 @@ ${failures.join("\n")}
     } else {
       host.append(button);
     }
+    addBatchProgressLocatorButton(host, prependButton);
   }
   registerSettingsMenu();
   if (isAllowedHost(location.hostname, getConfiguredDomains())) {
@@ -3209,6 +3572,7 @@ ${failures.join("\n")}
   var HDBLOG_BATCH_OPEN_HISTORY_KEY2 = "x1080x-ex:hdblog-batch-open-history";
   var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2 = "x1080x-ex:hdblog-batch-open-history-color";
   var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2 = "x1080x-ex:hdblog-batch-open-unopened-only";
+  var HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-progress-locator-enabled";
   var DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT = 5e3;
   var DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
   var DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS = 800;
@@ -4153,6 +4517,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (typeof GM_getValue !== "function") return false;
     return GM_getValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2, false) === true;
   }
+  function isHdblogBatchProgressLocatorEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2, true) !== false;
+  }
   function getHdblogBatchOpenHistoryLimit() {
     if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
     const numeric = Number(GM_getValue(
@@ -4297,6 +4665,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
           <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
           <span><strong>\u53EA\u6253\u5F00\u672A\u6253\u5F00\u7684\u4E3B\u9898</strong><small style="display:block;margin-top:2px;color:#666">\u6279\u91CF\u6253\u5F00\u65F6\u8DF3\u8FC7\u5DF2\u7ECF\u4FDD\u5B58\u5728\u201C\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u4E2D\u7684\u6587\u7AE0\u3002</small></span>
         </label>
+        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+          <input data-setting="batch-progress-locator" type="checkbox" style="margin-top:3px">
+          <span><strong>\u663E\u793A\u201C\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u201D\u6309\u94AE</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u6279\u91CF\u6253\u5F00\u6309\u94AE\u65C1\u663E\u793A\u5165\u53E3\uFF0C\u8DF3\u5230\u5DF2\u6253\u5F00\u8BB0\u5F55\u4E0E\u672A\u6253\u5F00\u6587\u7AE0\u76F8\u90BB\u7684\u5206\u9875\u4F4D\u7F6E\u3002</small></span>
+        </label>
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">\u6700\u591A\u4FDD\u5B58</span>
           <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u4FDD\u5B58\u6761\u6570"
@@ -4347,6 +4719,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
     const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
     const batchUnopenedOnlyInput = panel.querySelector('[data-setting="batch-open-unopened-only"]');
+    const batchProgressLocatorInput = panel.querySelector('[data-setting="batch-progress-locator"]');
     const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
     const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
     const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
@@ -4369,6 +4742,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
     batchHistoryInput.checked = isHdblogBatchOpenHistoryEnabled();
     batchUnopenedOnlyInput.checked = isHdblogBatchOpenUnopenedOnlyEnabled();
+    batchProgressLocatorInput.checked = isHdblogBatchProgressLocatorEnabled();
     batchHistoryLimitInput.value = String(getHdblogBatchOpenHistoryLimit());
     batchHistoryColorInput.value = getHdblogBatchOpenHistoryColor();
     searchFilterInput.checked = isHdblogSearchFilterEnabled();
@@ -4385,6 +4759,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       batchIntervalResetButton.disabled = batchIntervalDisabled;
       batchHistoryInput.disabled = batchIntervalDisabled;
       batchUnopenedOnlyInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
+      batchProgressLocatorInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
       batchHistoryLimitInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
     };
     syncDependentFields();
@@ -4451,6 +4826,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
         GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2, batchHistoryInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2, batchUnopenedOnlyInput.checked);
+        GM_setValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2, batchProgressLocatorInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2, batchHistoryLimit);
         GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2, batchHistoryColorInput.value);
         if (typeof GM_getValue === "function") {
@@ -5769,6 +6145,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var AGAGHHH_BATCH_OPEN_HISTORY_KEY2 = "x1080x-ex:agaghhh-batch-open-history";
   var AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY2 = "x1080x-ex:agaghhh-batch-open-history-color";
   var AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY2 = "x1080x-ex:agaghhh-batch-open-unopened-only";
+  var AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2 = "x1080x-ex:agaghhh-batch-progress-locator-enabled";
   var DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT = 5e3;
   var DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
   var DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
@@ -5788,6 +6165,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var SEARCH_BUTTON_ID2 = "x1080x-ex-agaghhh-hdblog-search";
   var COPY_BUTTON_ID2 = "x1080x-ex-agaghhh-copy-code";
   var BATCH_BUTTON_ID2 = "x1080x-ex-open-page";
+  var BATCH_PROGRESS_BUTTON_ID2 = "x1080x-ex-batch-progress-locator";
   var BATCH_TOOLBAR_ID2 = "x1080x-ex-open-page-toolbar";
   var AV_WIKI_ORIGIN2 = "https://av-wiki.net";
   var AV_WIKI_TIMEOUT = 2e4;
@@ -5842,6 +6220,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function isAgaghhhBatchOpenUnopenedOnlyEnabled() {
     if (typeof GM_getValue !== "function") return false;
     return GM_getValue(AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY2, false) === true;
+  }
+  function isAgaghhhBatchProgressLocatorEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2, true) !== false;
   }
   function getAgaghhhBatchOpenHistoryLimit() {
     if (typeof GM_getValue !== "function") return DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_LIMIT;
@@ -6362,6 +6744,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
           <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
           <span><strong>\u6279\u91CF\u53EA\u6253\u5F00\u672A\u6253\u5F00\u4E3B\u9898</strong><small style="display:block;margin-top:2px;color:#666">\u5F00\u542F\u540E\uFF0C\u6279\u91CF\u6253\u5F00\u65F6\u8DF3\u8FC7\u5DF2\u7ECF\u4FDD\u5B58\u5728\u201C\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u4E2D\u7684\u4E3B\u9898\u3002</small></span>
         </label>
+        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+          <input data-setting="batch-progress-locator" type="checkbox" style="margin-top:3px">
+          <span><strong>\u663E\u793A\u201C\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u201D\u6309\u94AE</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u6279\u91CF\u6253\u5F00\u6309\u94AE\u65C1\u663E\u793A\u5165\u53E3\uFF0C\u8DF3\u5230\u5DF2\u6253\u5F00\u8BB0\u5F55\u4E0E\u672A\u6253\u5F00\u4E3B\u9898\u76F8\u90BB\u7684\u5206\u9875\u4F4D\u7F6E\u3002</small></span>
+        </label>
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">\u6700\u591A\u4FDD\u5B58</span>
           <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u4FDD\u5B58\u6761\u6570"
@@ -6430,6 +6816,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
     const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
     const batchUnopenedOnlyInput = panel.querySelector('[data-setting="batch-open-unopened-only"]');
+    const batchProgressLocatorInput = panel.querySelector('[data-setting="batch-progress-locator"]');
     const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
     const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
     const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
@@ -6449,6 +6836,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
     batchHistoryInput.checked = isAgaghhhBatchOpenHistoryEnabled();
     batchUnopenedOnlyInput.checked = isAgaghhhBatchOpenUnopenedOnlyEnabled();
+    batchProgressLocatorInput.checked = isAgaghhhBatchProgressLocatorEnabled();
     batchHistoryLimitInput.value = String(getAgaghhhBatchOpenHistoryLimit());
     batchHistoryColorInput.value = getAgaghhhBatchOpenHistoryColor();
     downloadInput.checked = isAgaghhhDownloadEnabled();
@@ -6471,6 +6859,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       const detailsDisabled = !batchInput.checked || !batchHistoryInput.checked;
       batchHistoryInput.disabled = !batchInput.checked;
       batchUnopenedOnlyInput.disabled = detailsDisabled;
+      batchProgressLocatorInput.disabled = detailsDisabled;
       batchHistoryLimitInput.disabled = detailsDisabled;
       batchHistoryColorInput.disabled = false;
       batchHistoryColorResetButton.disabled = false;
@@ -6533,6 +6922,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY2, batchHistoryInput.checked);
         GM_setValue(AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY2, batchUnopenedOnlyInput.checked);
+        GM_setValue(AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2, batchProgressLocatorInput.checked);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY2, batchHistoryLimit);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY2, batchHistoryColorInput.value);
         if (typeof GM_getValue === "function") {
@@ -6586,7 +6976,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (installAgaghhhSearchAutoRedirect(document2, locationObject)) return;
     if (!isAgaghhhBatchOpenEnabled()) {
       document2.getElementById(BATCH_BUTTON_ID2)?.remove();
+      document2.getElementById(BATCH_PROGRESS_BUTTON_ID2)?.remove();
       document2.getElementById(BATCH_TOOLBAR_ID2)?.remove();
+    } else if (!isAgaghhhBatchOpenHistoryEnabled() || !isAgaghhhBatchProgressLocatorEnabled()) {
+      document2.getElementById(BATCH_PROGRESS_BUTTON_ID2)?.remove();
     }
     if (isAgaghhhHdblogPreviewEnabled()) {
       void installAgaghhhHdblogPreview(document2, locationObject, gmRequest2);
