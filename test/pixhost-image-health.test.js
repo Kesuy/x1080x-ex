@@ -137,3 +137,57 @@ test('healthy Pixhost Preview is retained and does not trigger fallback', async 
     dom.window.close();
   }
 });
+
+
+test('removed normal Pixhost preview uses healthy 4K on the same HDblog article before JavFree', async () => {
+  const dom = new JSDOM(`<!doctype html><body>
+    <h1 id="thread_subject">EBWH-365 Sample</h1>
+    <div id="postlist"><div id="post_1"><div id="postmessage_1" class="t_f"></div></div></div>
+  </body>`, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=987654' });
+  const normal = 'https://img4.pixhost.to/images/5614/ebwh-365_6m-mp4.jpg';
+  const fourK = 'https://img4.pixhost.to/images/6003/ebwh-365_4k60fps-mp4.jpg';
+  const normalShow = 'https://pixhost.to/show/5614/ebwh-365_6m-mp4.jpg';
+  const fourKShow = 'https://pixhost.to/show/6003/ebwh-365_4k60fps-mp4.jpg';
+  mockImages(dom.window.document, (url) => url === normal ? [258, 126] : [1200, 800]);
+  const requests = [];
+  const gmRequest = (options) => {
+    requests.push(options.url);
+    let html;
+    if (options.url === 'https://hdblog.me/?s=EBWH-365') {
+      html = '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://hdblog.me/988344/ebwh-365/">EBWH-365</a></h2></article></main>';
+    } else if (options.url === 'https://hdblog.me/988344/ebwh-365/') {
+      html = `<main id="genesis-content"><article class="entry"><div class="entry-content">
+        <p>Preview:</p>
+        <p><a href="${fourKShow}"><img src="https://t4.pixhost.to/thumbs/6003/ebwh-365_4k60fps-mp4.jpg"></a></p>
+        <p><a href="${normalShow}"><img src="https://t4.pixhost.to/thumbs/5614/ebwh-365_6m-mp4.jpg"></a></p>
+        <p>BTFile:</p>
+      </div></article></main>`;
+    } else if (options.url === normalShow || options.url === fourKShow) {
+      const url = options.url === normalShow ? normal : fourK;
+      html = `<html><body><img class="image-img" src="${url}"></body></html>`;
+    } else {
+      throw new Error('JavFree should not be queried when the 4K backup is valid');
+    }
+    options.onload({ status: 200, finalUrl: options.url, responseText: html });
+  };
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (_key, fallback) => fallback;
+  try {
+    const section = await installAgaghhhHdblogPreview(
+      dom.window.document, dom.window.location, gmRequest
+    );
+    assert.ok(section);
+    assert.equal(section.querySelector('img')?.src, fourK);
+    assert.equal(section.querySelectorAll('img').length, 1);
+    assert.deepEqual(requests, [
+      'https://hdblog.me/?s=EBWH-365',
+      'https://hdblog.me/988344/ebwh-365/',
+      normalShow,
+      fourKShow,
+    ]);
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+    dom.window.close();
+  }
+});
