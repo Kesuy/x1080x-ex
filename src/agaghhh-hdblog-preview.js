@@ -320,7 +320,7 @@ function inPreviewRange(range, node) {
   return !range.boundary || !isAfter(range.boundary, node);
 }
 
-export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequest) {
+export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequest, healthDocument = null) {
   const range = previewRange(document);
   if (!range) return [];
 
@@ -403,12 +403,17 @@ export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequ
     return urls;
   };
 
+  const verify = async (urls) => {
+    if (!healthDocument || !urls.length) return urls;
+    const checked = await filterPixhostUnavailableImageUrls({ imageUrls: urls }, healthDocument);
+    return checked.imageUrls;
+  };
   const { standard, fourK } = partitionPreviewCandidates(candidates);
   if (standard.length) {
-    const standardUrls = await resolveCandidates(standard);
+    const standardUrls = await verify(await resolveCandidates(standard));
     if (standardUrls.length) return standardUrls;
   }
-  return fourK.length ? resolveCandidates(fourK) : [];
+  return fourK.length ? verify(await resolveCandidates(fourK)) : [];
 }
 
 export function hdblogSearchCodeForThreadCode(code) {
@@ -423,7 +428,8 @@ export function hdblogSearchCodeForThreadCode(code) {
 export async function fetchHdblogPreviewForCode(
   code,
   gmRequest = globalThis.GM_xmlhttpRequest,
-  hostDocument = globalThis.document
+  hostDocument = globalThis.document,
+  verifyImages = false
 ) {
   const normalizedCode = String(code || '').trim().toUpperCase();
   if (!normalizedCode) return { code: '', articleUrl: '', imageUrls: [], blocked: [], remaining: [] };
@@ -444,7 +450,9 @@ export async function fetchHdblogPreviewForCode(
   const articleResponse = await requestText(articleUrl, gmRequest, searchUrl);
   const articleDocument = parseHtml(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
   const imageUrls = articleDocument
-    ? await collectHdblogPreviewImageUrls(articleDocument, articleUrl, gmRequest)
+    ? await collectHdblogPreviewImageUrls(
+      articleDocument, articleUrl, gmRequest, verifyImages ? hostDocument : null
+    )
     : [];
   return { code: normalizedCode, articleUrl, imageUrls, ...selection };
 }
@@ -541,7 +549,7 @@ export async function installAgaghhhHdblogPreview(
   if (!code) return null;
   let result = null;
   try {
-    result = await fetchHdblogPreviewForCode(code, gmRequest, document);
+    result = await fetchHdblogPreviewForCode(code, gmRequest, document, true);
   } catch (error) {
     console.warn('[x1080x-ex] hdblog preview lookup failed', {
       code,
@@ -549,10 +557,8 @@ export async function installAgaghhhHdblogPreview(
     });
   }
 
-  // Pixhost often responds with a 200-status "Picture removed" image. Treat it
-  // as unavailable before deciding whether to try the configured backup source.
-  result = await filterPixhostUnavailableImageUrls(result, document);
-
+  // HDblog has already verified its images (including the 4K alternative).
+  // When it has no usable Preview, continue through the configured sources.
   if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
     try {
       result = await fetchJavfreePreviewForCode(code, gmRequest, document);
