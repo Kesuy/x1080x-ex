@@ -7,6 +7,7 @@ import {
 import { isHdblogReferUrl } from './hdblog-refer.js';
 import { partitionPreviewCandidates } from './hdblog-preview-variants.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
+import { filterPixhostUnavailableImageUrls } from './preview-image-health.js';
 import {
   isPixhostShowUrl,
   resolvePixhostShowUrl,
@@ -548,6 +549,10 @@ export async function installAgaghhhHdblogPreview(
     });
   }
 
+  // Pixhost often responds with a 200-status "Picture removed" image. Treat it
+  // as unavailable before deciding whether to try the configured backup source.
+  result = await filterPixhostUnavailableImageUrls(result, document);
+
   if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
     try {
       result = await fetchJavfreePreviewForCode(code, gmRequest, document);
@@ -559,6 +564,8 @@ export async function installAgaghhhHdblogPreview(
     }
   }
 
+  result = await filterPixhostUnavailableImageUrls(result, document);
+
   if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
     try {
       result = await fetchOfficialPreviewFallbackForCode(code, gmRequest, document);
@@ -569,5 +576,6 @@ export async function installAgaghhhHdblogPreview(
       });
     }
   }
+  result = await filterPixhostUnavailableImageUrls(result, document);
   return renderAgaghhhHdblogPreview(document, result);
 }
