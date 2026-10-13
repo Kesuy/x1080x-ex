@@ -63,7 +63,7 @@ test('x1080x settings exposes every independent agaghhh feature switch', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   withGm(new Map(), () => {
     const panel = openX1080xSettingsPanel(dom.window.document);
-    for (const key of ['batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'javfree-preview-fallback', 'real-actress']) {
+    for (const key of ['batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-progress-locator', 'batch-open-history-limit', 'batch-open-history-color', 'download', 'download-guard', 'cross-search', 'hdblog-preview', 'javfree-preview-fallback', 'real-actress']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });
@@ -240,7 +240,7 @@ test('hdblog settings exposes layout, cross-search, preview, batch-open and sear
   const dom = hdblogArticleDom();
   withGm(new Map(), () => {
     const panel = openHdblogSettingsPanel(dom.window.document);
-    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'javfree-preview-fallback', 'deleted-javfree-search', 'batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter', 'browse-filter']) {
+    for (const key of ['layout-enabled', 'show-downloads', 'show-image-download', 'download-guard', 'cross-search', 'expand-preview', 'javfree-preview-fallback', 'deleted-javfree-search', 'batch-open', 'batch-open-history', 'batch-open-unopened-only', 'batch-progress-locator', 'batch-open-history-limit', 'batch-open-history-color', 'search-filter', 'browse-filter']) {
       assert.ok(panel.querySelector(`[data-setting="${key}"]`), key);
     }
   });

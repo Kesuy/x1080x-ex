@@ -34,6 +34,7 @@ export const HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:hdblog-batch-open-
 export const HDBLOG_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:hdblog-batch-open-history';
 export const HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:hdblog-batch-open-history-color';
 export const HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:hdblog-batch-open-unopened-only';
+export const HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = 'x1080x-ex:hdblog-batch-progress-locator-enabled';
 export const DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT = 5000;
 export const DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR = '#bd10e0';
 export const DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS = 800;
@@ -1088,6 +1089,11 @@ export function isHdblogBatchOpenUnopenedOnlyEnabled() {
   return GM_getValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY, false) === true;
 }
 
+export function isHdblogBatchProgressLocatorEnabled() {
+  if (typeof GM_getValue !== 'function') return true;
+  return GM_getValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY, true) !== false;
+}
+
 export function getHdblogBatchOpenHistoryLimit() {
   if (typeof GM_getValue !== 'function') return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
   const numeric = Number(GM_getValue(
@@ -1239,6 +1245,10 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
           <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
           <span><strong>只打开未打开的主题</strong><small style="display:block;margin-top:2px;color:#666">批量打开时跳过已经保存在“批量打开记录”中的文章。</small></span>
         </label>
+        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+          <input data-setting="batch-progress-locator" type="checkbox" style="margin-top:3px">
+          <span><strong>显示“定位浏览进度”按钮</strong><small style="display:block;margin-top:2px;color:#666">在批量打开按钮旁显示入口，跳到已打开记录与未打开文章相邻的分页位置。</small></span>
+        </label>
         <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-weight:600">最多保存</span>
           <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="批量打开记录保存条数"
@@ -1290,6 +1300,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
   const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
   const batchUnopenedOnlyInput = panel.querySelector('[data-setting="batch-open-unopened-only"]');
+  const batchProgressLocatorInput = panel.querySelector('[data-setting="batch-progress-locator"]');
   const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
   const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
   const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
@@ -1313,6 +1324,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   batchIntervalMaxInput.value = String(batchInterval.delayMax / 1000);
   batchHistoryInput.checked = isHdblogBatchOpenHistoryEnabled();
   batchUnopenedOnlyInput.checked = isHdblogBatchOpenUnopenedOnlyEnabled();
+  batchProgressLocatorInput.checked = isHdblogBatchProgressLocatorEnabled();
   batchHistoryLimitInput.value = String(getHdblogBatchOpenHistoryLimit());
   batchHistoryColorInput.value = getHdblogBatchOpenHistoryColor();
   searchFilterInput.checked = isHdblogSearchFilterEnabled();
@@ -1330,6 +1342,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     batchIntervalResetButton.disabled = batchIntervalDisabled;
     batchHistoryInput.disabled = batchIntervalDisabled;
     batchUnopenedOnlyInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
+    batchProgressLocatorInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
     batchHistoryLimitInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
   };
   syncDependentFields();
@@ -1405,6 +1418,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
       GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY, batchHistoryInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY, batchUnopenedOnlyInput.checked);
+      GM_setValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY, batchProgressLocatorInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
       GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
       if (typeof GM_getValue === 'function') {
