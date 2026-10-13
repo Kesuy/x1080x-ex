@@ -12,6 +12,7 @@ import {
   beginDownloadGuard,
   isDownloadGuardEnabled,
 } from './download-guard.js';
+import { makePreviewGestureFriendly } from './preview-gesture.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
@@ -484,6 +485,7 @@ function styleHdblogPreviewImage(image, fullUrl) {
   image.style.setProperty('max-height', 'none', 'important');
   image.style.setProperty('object-fit', 'contain', 'important');
   image.style.setProperty('margin', '12px auto', 'important');
+  makePreviewGestureFriendly(image);
   return true;
 }
 
