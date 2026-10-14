@@ -3,6 +3,7 @@ import {
   installAgaghhhEnhancement,
   installX1080xSettingsMenu,
 } from './agaghhh-enhancement.js';
+import { installFc2cmadbEnhancement } from './fc2cmadb.js';
 import { installHdblogArticleEnhancement } from './hdblog-article.js';
 import { installHdblogImageHostSettings } from './hdblog-image-hosts.js';
 import { installHdblogPreviewImages } from './hdblog-preview.js';
@@ -11,6 +12,7 @@ import { installHdblogSearchEnhancement } from './hdblog-search.js';
 import { installQbittorrentSettings } from './qbittorrent-settings.js';
 import { installHdblogJavfreeFallback, installJavfreeEnhancement } from './javfree.js';
 
+installFc2cmadbEnhancement();
 installX1080xSettingsMenu();
 installAgaghhhEnhancement();
 installQbittorrentSettings();
