@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.20
+// @version      1.10.21
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1443,7 +1443,7 @@ ${settings.password}`;
   var BATCH_OPEN_HISTORY_STYLE_ID = "x1080x-ex-batch-open-history-style";
   var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = "x1080x-ex:hdblog-batch-open-interval-min-ms";
   var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:hdblog-batch-open-interval-max-ms";
-  var DEFAULT_DOMAINS = "agaghhh.cc\nhdblog.me";
+  var DEFAULT_DOMAINS = "agaghhh.cc\nhdblog.me\nfc2cmadb.com";
   var BUTTON_ID = "x1080x-ex-download";
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
   var BATCH_PROGRESS_BUTTON_ID = "x1080x-ex-batch-progress-locator";
@@ -1476,7 +1476,7 @@ ${settings.password}`;
     const stored = GM_getValue(STORAGE_KEY, null);
     if (stored === null || stored === void 0) return parseDomainList(DEFAULT_DOMAINS);
     const domains = parseDomainList(stored);
-    const isLegacyDefault = domains.length === 1 && domains[0] === "agaghhh.cc";
+    const isLegacyDefault = domains.length === 1 && domains[0] === "agaghhh.cc" || domains.length === 2 && domains.includes("agaghhh.cc") && domains.includes("hdblog.me");
     return isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains;
   }
   function saveDomains(domains) {
@@ -7061,6 +7061,80 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
   }
 
+  // src/fc2cmadb.js
+  var FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY = "x1080x-ex:fc2cmadb-hdblog-search-enabled";
+  var LINK_ATTR = "data-x1080x-fc2cmadb-hdblog-search";
+  function isFc2cmadbUrl(value) {
+    try {
+      const host = new URL(value).hostname.toLowerCase().replace(/\.$/, "");
+      return host === "fc2cmadb.com" || host.endsWith(".fc2cmadb.com");
+    } catch {
+      return false;
+    }
+  }
+  function buildFc2cmadbHdblogSearchUrl(value) {
+    const code = String(value ?? "").trim();
+    return /^\d{5,12}$/.test(code) ? "https://hdblog.me/?s=" + code : "";
+  }
+  function isFc2cmadbHdblogSearchEnabled() {
+    return typeof GM_getValue !== "function" || GM_getValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, true) !== false;
+  }
+  function enhanceFc2cmadbArticleCodes(documentObject) {
+    if (!documentObject || !isFc2cmadbHdblogSearchEnabled()) return 0;
+    let changed = 0;
+    for (const figure of documentObject.querySelectorAll("figure")) {
+      const badge = figure.querySelector(":scope > span.absolute.top-0.left-0");
+      const cover = figure.querySelector(':scope > a[href*="/articles/"]');
+      if (!badge || !cover) continue;
+      const code = String(badge.textContent || "").trim();
+      const searchUrl = buildFc2cmadbHdblogSearchUrl(code);
+      if (!searchUrl) continue;
+      try {
+        const articleUrl = new URL(cover.getAttribute("href"), documentObject.baseURI);
+        const articleMatch = articleUrl.pathname.match(/^\/articles\/(\d+)\/?$/);
+        if (!isFc2cmadbUrl(articleUrl.href) || !articleMatch || articleMatch[1] !== code) continue;
+      } catch {
+        continue;
+      }
+      const link = documentObject.createElement("a");
+      link.className = badge.className;
+      link.textContent = code;
+      link.href = searchUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.title = "\u5728 HDBLOG \u641C\u7D22 FC2-PPV-" + code;
+      link.setAttribute("aria-label", "\u5728 HDBLOG \u641C\u7D22\u756A\u53F7 " + code);
+      link.setAttribute(LINK_ATTR, code);
+      link.style.cursor = "pointer";
+      link.style.zIndex = "2";
+      link.style.textDecoration = "underline";
+      badge.replaceWith(link);
+      changed += 1;
+    }
+    return changed;
+  }
+  function installFc2cmadbEnhancement(windowObject = globalThis.window) {
+    if (!windowObject || !isFc2cmadbUrl(windowObject.location?.href)) return null;
+    const documentObject = windowObject.document;
+    if (typeof GM_registerMenuCommand === "function") {
+      const enabled = isFc2cmadbHdblogSearchEnabled();
+      GM_registerMenuCommand(
+        "\u2699\uFE0F FC2CMADB\uFF1A\u756A\u53F7\u641C\u7D22 HDBLOG\uFF08" + (enabled ? "\u5DF2\u5F00\u542F\uFF0C\u70B9\u51FB\u5173\u95ED" : "\u5DF2\u5173\u95ED\uFF0C\u70B9\u51FB\u5F00\u542F") + "\uFF09",
+        () => {
+          if (typeof GM_setValue !== "function") return;
+          GM_setValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, !enabled);
+          windowObject.alert?.("FC2CMADB \u756A\u53F7\u641C\u7D22\u8BBE\u7F6E\u5DF2\u4FDD\u5B58\uFF0C\u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002");
+        }
+      );
+    }
+    if (!documentObject?.body || !isFc2cmadbHdblogSearchEnabled()) return null;
+    const apply = () => enhanceFc2cmadbArticleCodes(documentObject);
+    apply();
+    const observer = new windowObject.MutationObserver(apply);
+    observer.observe(documentObject.body, { childList: true, subtree: true });
+    return observer;
+  }
+
   // src/qbittorrent-settings.js
   var SETTINGS_PANEL_ID2 = "x1080x-ex-settings-panel";
   var QB_SECTION_ATTR = "data-x1080x-qb-settings";
@@ -7171,6 +7245,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
 
   // src/index.js
+  installFc2cmadbEnhancement();
   installX1080xSettingsMenu();
   installAgaghhhEnhancement();
   installQbittorrentSettings();
