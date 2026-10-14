@@ -40,7 +40,7 @@ const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
 const BATCH_OPEN_HISTORY_STYLE_ID = 'x1080x-ex-batch-open-history-style';
 const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
 const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
-const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me';
+const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me\nfc2cmadb.com';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_PROGRESS_BUTTON_ID = 'x1080x-ex-batch-progress-locator';
@@ -74,7 +74,8 @@ function getConfiguredDomains() {
   const stored = GM_getValue(STORAGE_KEY, null);
   if (stored === null || stored === undefined) return parseDomainList(DEFAULT_DOMAINS);
   const domains = parseDomainList(stored);
-  const isLegacyDefault = domains.length === 1 && domains[0] === 'agaghhh.cc';
+  const isLegacyDefault = (domains.length === 1 && domains[0] === 'agaghhh.cc')
+    || (domains.length === 2 && domains.includes('agaghhh.cc') && domains.includes('hdblog.me'));
   return isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains;
 }
 
