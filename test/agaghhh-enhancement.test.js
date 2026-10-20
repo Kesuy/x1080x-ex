@@ -248,7 +248,9 @@ test('新域名设置页统一显示 x1080x 名称', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://1080xin.com/' });
   withGmValues(new Map(), () => {
     const panel = openX1080xSettingsPanel(dom.window.document);
-    assert.match(panel.textContent, /x1080x 增强功能/);
+    assert.match(panel.querySelector('h2')?.textContent || '', /x1080x 设置/);
+    assert.ok(panel.querySelector('[data-settings-tab="batch"]'));
+    assert.ok(panel.querySelector('[data-settings-tab="download"]'));
     assert.doesNotMatch(panel.textContent, /agaghhh\.cc/);
     assert.match(panel.textContent, /x1080x 论坛搜索/);
   });
