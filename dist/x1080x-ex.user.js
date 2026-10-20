@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.21
+// @version      1.10.22
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -443,6 +443,181 @@
     return jobs;
   }
 
+  // src/settings-layout.js
+  var STYLE = `
+.sx-title { margin:0; padding:20px 24px 16px; font-size:20px; line-height:1.35; font-weight:700; border-bottom:1px solid #e5e7eb; flex:none; }
+.sx-workspace { display:flex; min-height:0; flex:1; overflow:hidden; }
+.sx-nav { display:flex; flex-direction:column; width:176px; min-width:176px; gap:4px; padding:16px 10px; overflow-y:auto; background:#f8fafc; border-right:1px solid #e5e7eb; box-sizing:border-box; }
+.sx-nav button { appearance:none; display:block; border:0; border-radius:7px; padding:11px 12px; width:100%; background:transparent; color:#334155; text-align:left; font:600 13px/1.4 system-ui,sans-serif; cursor:pointer; }
+.sx-nav button[aria-selected="true"] { background:#e8f1ff; color:#155bb5; box-shadow:inset 3px 0 #2563eb; }
+.sx-nav button:hover:not([aria-selected="true"]) { background:#eef2f7; }
+.sx-content { min-width:0; flex:1; padding:18px 24px 24px; overflow-y:auto; box-sizing:border-box; }
+.sx-group[hidden] { display:none !important; }
+.sx-group-title { font-size:17px; font-weight:700; line-height:1.45; margin:0 0 5px; }
+.sx-group-desc { color:#64748b; font-size:12px; margin:0 0 18px; }
+.sx-group-body > label, .sx-group-body > div { margin-bottom:16px !important; }
+.sx-group-body > label:not([data-search-filter-keywords-row]):not([data-keywords-row]) { padding:9px 10px; border:1px solid #eef0f3; border-radius:7px; background:#fff; }
+.sx-group-body label, .sx-group-body div { box-sizing:border-box; }
+.sx-group-body input[type="number"], .sx-group-body input[type="text"], .sx-group-body input[type="url"], .sx-group-body input[type="password"], .sx-group-body textarea { max-width:100%; }
+.sx-group-body input:disabled, .sx-group-body textarea:disabled { opacity:.55; cursor:not-allowed; }
+.sx-group-body small { line-height:1.55; }
+.sx-group-body > [data-batch-open-interval-row], .sx-group-body > [data-batch-open-history-row], .sx-group-body > [data-keywords-row], .sx-group-body > [data-search-filter-keywords-row] { margin-left:0 !important; padding:13px 14px; border-radius:8px; border:1px solid #e6eaf0; background:#f8fafc; }
+.sx-group-body > [data-download-guard-row] { margin-left:0 !important; }
+.sx-footer { padding:13px 24px; border-top:1px solid #e5e7eb; background:#fff; margin:0 !important; flex:none; }
+.sx-footer button { border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:#334155; cursor:pointer; }
+.sx-footer button[type="submit"] { background:#2563eb; border-color:#2563eb; color:#fff; }
+.sx-footer button:hover { filter:brightness(.96); }
+@media (max-width:650px) {
+  .sx-title { padding:15px 17px; }
+  .sx-workspace { flex-direction:column; }
+  .sx-nav { width:100%; min-width:0; flex:none; flex-direction:row; overflow-x:auto; overflow-y:hidden; padding:10px; border-right:0; border-bottom:1px solid #e5e7eb; }
+  .sx-nav button { width:auto; flex:none; white-space:nowrap; padding:9px 13px; }
+  .sx-nav button[aria-selected="true"] { box-shadow:inset 0 -3px #2563eb; }
+  .sx-content { padding:16px; }
+  .sx-footer { padding:11px 16px; }
+}
+`;
+  function createSection(document2, key, title, description) {
+    const section = document2.createElement("section");
+    section.className = "sx-group";
+    section.dataset.settingsSection = key;
+    const heading = document2.createElement("h3");
+    heading.className = "sx-group-title";
+    heading.textContent = title;
+    section.append(heading);
+    const summary = document2.createElement("p");
+    summary.className = "sx-group-desc";
+    summary.textContent = description;
+    section.append(summary);
+    const body = document2.createElement("div");
+    body.className = "sx-group-body";
+    section.append(body);
+    return { section, body };
+  }
+  function appendSection(form, spec) {
+    const document2 = form.ownerDocument;
+    const nav = form.querySelector("[data-settings-nav]");
+    const content = form.querySelector("[data-settings-content]");
+    if (!nav || !content) return null;
+    const { section, body } = createSection(document2, spec.key, spec.title, spec.description);
+    const button = document2.createElement("button");
+    button.type = "button";
+    button.dataset.settingsTab = spec.key;
+    button.textContent = spec.title;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", "false");
+    button.id = "sx-tab-" + spec.key;
+    section.setAttribute("role", "tabpanel");
+    section.setAttribute("aria-labelledby", button.id);
+    nav.append(button);
+    content.append(section);
+    button.addEventListener("click", () => activateSettingsSection(form, spec.key));
+    return { section, body, button };
+  }
+  function activateSettingsSection(form, key) {
+    const group = [...form.querySelectorAll("[data-settings-section]")].find((item) => item.dataset.settingsSection === key);
+    if (!group) return false;
+    for (const panel of form.querySelectorAll("[data-settings-section]")) {
+      panel.hidden = panel !== group;
+    }
+    for (const tab of form.querySelectorAll("[data-settings-tab]")) {
+      const selected = tab.dataset.settingsTab === key;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    }
+    const content = form.querySelector("[data-settings-content]");
+    if (content) content.scrollTop = 0;
+    return true;
+  }
+  function organizeSettingsPanel(form, sections) {
+    if (!form || form.querySelector("[data-settings-workspace]")) return false;
+    const document2 = form.ownerDocument;
+    const heading = form.querySelector(":scope > h2");
+    const footer = form.querySelector(":scope > div:last-child");
+    if (!heading || !footer || !footer.querySelector('[data-action="cancel"]')) return false;
+    const sourceRoots = [...form.children].filter((node) => node !== heading && node !== footer && node.tagName === "DIV");
+    const findRow = (setting) => {
+      let node = form.querySelector('[data-setting="' + setting + '"]');
+      if (!node) return null;
+      while (node.parentElement && !sourceRoots.includes(node.parentElement) && node.parentElement !== form) {
+        node = node.parentElement;
+      }
+      return node;
+    };
+    const groups = sections.map((spec) => ({
+      ...spec,
+      rows: spec.settings.map(findRow).filter(Boolean)
+    }));
+    const found = groups.reduce((sum, group) => sum + group.rows.length, 0);
+    if (!found) return false;
+    const originalRows = sourceRoots.flatMap(
+      (root) => [...root.children].filter((node) => node.querySelector?.("[data-setting]") || node.hasAttribute?.("data-setting"))
+    );
+    const assignedRows = new Set(groups.flatMap((group) => group.rows));
+    const missing = originalRows.filter((row) => !assignedRows.has(row));
+    if (missing.length) {
+      groups.push({ key: "more", title: "\u5176\u4ED6\u9009\u9879", description: "\u7AD9\u70B9\u7684\u5176\u4ED6\u914D\u7F6E\u9879", rows: missing });
+    }
+    const css = document2.createElement("style");
+    css.textContent = STYLE;
+    const workspace = document2.createElement("div");
+    workspace.className = "sx-workspace";
+    workspace.dataset.settingsWorkspace = "1";
+    const nav = document2.createElement("nav");
+    nav.className = "sx-nav";
+    nav.dataset.settingsNav = "1";
+    nav.setAttribute("role", "tablist");
+    nav.setAttribute("aria-label", "\u8BBE\u7F6E\u5206\u7C7B");
+    const content = document2.createElement("div");
+    content.className = "sx-content";
+    content.dataset.settingsContent = "1";
+    workspace.append(nav, content);
+    nav.addEventListener("keydown", (event) => {
+      const tabs = [...nav.querySelectorAll("[data-settings-tab]")];
+      const active = tabs.indexOf(nav.getRootNode()?.activeElement || document2.activeElement);
+      const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"];
+      if (active < 0 || !keys.includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (active + (["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[next].click();
+      tabs[next].focus();
+    });
+    form.style.width = "min(850px, 100%)";
+    form.style.maxHeight = "calc(100vh - 32px)";
+    form.style.height = "min(690px, calc(100vh - 32px))";
+    form.style.overflow = "hidden";
+    form.style.display = "flex";
+    form.style.flexDirection = "column";
+    form.style.padding = "0";
+    form.style.background = "#fff";
+    heading.className = "sx-title";
+    footer.className = "sx-footer";
+    form.replaceChildren(css, heading, workspace, footer);
+    for (const spec of groups) {
+      const created = appendSection(form, spec);
+      for (const row of spec.rows) {
+        if (row.parentNode !== created.body) created.body.append(row);
+      }
+    }
+    activateSettingsSection(form, groups[0].key);
+    form.addEventListener("focusin", (event) => {
+      const group = event.target?.closest?.("[data-settings-section]");
+      if (group && group.hidden) activateSettingsSection(form, group.dataset.settingsSection);
+    });
+    form.addEventListener("invalid", (event) => {
+      const group = event.target?.closest?.("[data-settings-section]");
+      if (group && group.hidden) activateSettingsSection(form, group.dataset.settingsSection);
+    }, true);
+    return true;
+  }
+  function addSettingsExtraSection(form, spec, element) {
+    if (!form?.querySelector("[data-settings-workspace]")) return false;
+    const existing = form.querySelector('[data-settings-section="' + spec.key + '"]');
+    const group = existing ? { body: existing.querySelector(".sx-group-body") } : appendSection(form, spec);
+    group.body.append(element);
+    return true;
+  }
+
   // src/hdblog-image-hosts.js
   var HDBLOG_IMAGE_HOSTS_KEY = "x1080x-ex:hdblog-image-hosts";
   var DEFAULT_HDBLOG_IMAGE_HOSTS = Object.freeze([
@@ -506,7 +681,13 @@
     help.style.cssText = "display:block;margin-top:5px;color:#666";
     help.textContent = `\u5185\u7F6E\u517C\u5BB9\uFF1A${DEFAULT_HDBLOG_IMAGE_HOSTS.join("\u3001")}\u3002\u53EF\u586B\u4E3B\u57DF\u540D\u6216\u5B8C\u6574 URL\uFF1B\u811A\u672C\u4E5F\u4F1A\u81EA\u52A8\u8BC6\u522B\u5E38\u89C1 /show/ \u56FE\u7247\u5C55\u793A\u9875\u3002`;
     label.append(title, textarea, help);
-    panel.insertBefore(label, panel.lastElementChild || null);
+    if (!addSettingsExtraSection(panel, {
+      key: "image-hosts",
+      title: "\u56FE\u5E8A\u8BBE\u7F6E",
+      description: "\u6269\u5C55 Preview \u56FE\u7247\u7684\u6765\u6E90\u57DF\u540D"
+    }, label)) {
+      panel.insertBefore(label, panel.lastElementChild || null);
+    }
     if (panel.getAttribute(IMAGE_HOSTS_BOUND_ATTR) !== "1") {
       panel.setAttribute(IMAGE_HOSTS_BOUND_ATTR, "1");
       panel.addEventListener("submit", () => {
@@ -664,6 +845,36 @@
     }).catch((error) => error?.status === 404 || error?.status === 410 ? "" : fallback);
     resolutionCache.set(absoluteShowUrl, promise);
     return promise;
+  }
+
+  // src/site-domains.js
+  var AGAGHHH_PRIMARY_DOMAIN_KEY = "x1080x-ex:agaghhh-primary-domain";
+  var DEFAULT_AGAGHHH_PRIMARY_DOMAIN = "1080xin.com";
+  var LEGACY_AGAGHHH_DOMAIN = "agaghhh.cc";
+  function parseAgaghhhPrimaryDomain(value) {
+    const domains = parseDomainList(value);
+    if (domains.length !== 1) return "";
+    const host = domains[0];
+    if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(host)) return "";
+    return host;
+  }
+  function getAgaghhhPrimaryDomain() {
+    const stored = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_PRIMARY_DOMAIN_KEY, DEFAULT_AGAGHHH_PRIMARY_DOMAIN) : DEFAULT_AGAGHHH_PRIMARY_DOMAIN;
+    return parseAgaghhhPrimaryDomain(stored) || DEFAULT_AGAGHHH_PRIMARY_DOMAIN;
+  }
+  function getAgaghhhDomains() {
+    return [.../* @__PURE__ */ new Set([
+      getAgaghhhPrimaryDomain(),
+      DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
+      LEGACY_AGAGHHH_DOMAIN
+    ])];
+  }
+  function isAgaghhhHost(locationObject = globalThis.location) {
+    const host = typeof locationObject === "string" ? locationObject : locationObject?.hostname;
+    return isAllowedHost(host, getAgaghhhDomains());
+  }
+  function getAgaghhhOrigin() {
+    return `https://${getAgaghhhPrimaryDomain()}`;
   }
 
   // src/batch-progress-locator.js
@@ -1443,7 +1654,7 @@ ${settings.password}`;
   var BATCH_OPEN_HISTORY_STYLE_ID = "x1080x-ex-batch-open-history-style";
   var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = "x1080x-ex:hdblog-batch-open-interval-min-ms";
   var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:hdblog-batch-open-interval-max-ms";
-  var DEFAULT_DOMAINS = "agaghhh.cc\nhdblog.me\nfc2cmadb.com";
+  var DEFAULT_DOMAINS = "1080xin.com\nagaghhh.cc\nhdblog.me\nfc2cmadb.com";
   var BUTTON_ID = "x1080x-ex-download";
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
   var BATCH_PROGRESS_BUTTON_ID = "x1080x-ex-batch-progress-locator";
@@ -1473,17 +1684,34 @@ ${settings.password}`;
   var batchOpenState = null;
   var batchProgressScanState = null;
   function getConfiguredDomains() {
-    const stored = GM_getValue(STORAGE_KEY, null);
-    if (stored === null || stored === void 0) return parseDomainList(DEFAULT_DOMAINS);
-    const domains = parseDomainList(stored);
-    const isLegacyDefault = domains.length === 1 && domains[0] === "agaghhh.cc" || domains.length === 2 && domains.includes("agaghhh.cc") && domains.includes("hdblog.me");
-    return isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains;
+    const stored = typeof GM_getValue === "function" ? GM_getValue(STORAGE_KEY, null) : null;
+    const domains = stored === null || stored === void 0 ? parseDomainList(DEFAULT_DOMAINS) : parseDomainList(stored);
+    const isLegacyDefault = domains.length === 1 && domains[0] === LEGACY_AGAGHHH_DOMAIN || domains.length === 2 && domains.includes(LEGACY_AGAGHHH_DOMAIN) && domains.includes("hdblog.me");
+    return [.../* @__PURE__ */ new Set([
+      ...isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains,
+      ...getAgaghhhDomains()
+    ])];
   }
   function saveDomains(domains) {
     GM_setValue(STORAGE_KEY, domains.join("\n"));
   }
   function registerSettingsMenu() {
     if (window.top !== window.self) return;
+    GM_registerMenuCommand("\u{1F310} \u8BBE\u7F6E x1080x \u7AD9\u70B9\u57DF\u540D", () => {
+      const input = window.prompt(
+        "\u8BF7\u8F93\u5165 x1080x \u7AD9\u70B9\u5F53\u524D\u4F7F\u7528\u7684\u57DF\u540D\uFF08\u5982 1080xin.com\uFF09\u3002\u8DE8\u7AD9\u641C\u7D22\u53CA\u6D4F\u89C8\u8FDB\u5EA6\u94FE\u63A5\u5C06\u4F7F\u7528\u8BE5\u5730\u5740\uFF0C\u65E7\u57DF\u540D\u4ECD\u53EF\u8BC6\u522B\uFF1A",
+        getAgaghhhPrimaryDomain()
+      );
+      if (input === null) return;
+      const domain = parseAgaghhhPrimaryDomain(input);
+      if (!domain) {
+        window.alert("\u8BF7\u8F93\u5165\u6709\u6548\u7684\u7AD9\u70B9\u57DF\u540D\uFF0C\u4F8B\u5982 1080xin.com");
+        return;
+      }
+      GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+      window.alert(`x1080x \u7AD9\u70B9\u57DF\u540D\u5DF2\u4FDD\u5B58\uFF1A${domain}
+\u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002\u539F\u6709\u6D4F\u89C8\u8BB0\u5F55\u5C06\u7EE7\u7EED\u4FDD\u7559\u3002`);
+    });
     GM_registerMenuCommand("\u2699\uFE0F \u8BBE\u7F6E\u5339\u914D\u57DF\u540D", () => {
       const current = getConfiguredDomains().join("\n");
       const input = window.prompt(
@@ -1512,6 +1740,7 @@ ${domains.join("\n")}
     });
     GM_registerMenuCommand("\u21A9\uFE0F \u91CD\u7F6E\u9ED8\u8BA4\u57DF\u540D", () => {
       saveDomains(parseDomainList(DEFAULT_DOMAINS));
+      GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
       window.alert(`\u5DF2\u6062\u590D\u9ED8\u8BA4\u57DF\u540D\uFF1A${DEFAULT_DOMAINS}`);
     });
   }
@@ -1521,7 +1750,7 @@ ${domains.join("\n")}
   function isBatchOpenEnabledForCurrentHost() {
     if (typeof GM_getValue !== "function") return true;
     const host = currentHost();
-    if (host === "agaghhh.cc" || host.endsWith(".agaghhh.cc")) {
+    if (isAgaghhhHost(host)) {
       return GM_getValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, true) !== false;
     }
     if (host === "hdblog.me" || host.endsWith(".hdblog.me")) {
@@ -1531,7 +1760,7 @@ ${domains.join("\n")}
   }
   function batchOpenHistoryConfig() {
     const host = currentHost();
-    if (host === "agaghhh.cc" || host.endsWith(".agaghhh.cc")) {
+    if (isAgaghhhHost(host)) {
       return {
         enabledKey: AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY,
         limitKey: AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
@@ -1617,10 +1846,11 @@ ${domains.join("\n")}
       url.hash = "";
       if (config.kind === "agaghhh") {
         const fid = url.searchParams.get("fid") || url.pathname.match(/forum[-_](\d+)(?:[-_]\d+)?(?:\.html)?/i)?.[1] || "";
-        if (fid) return `${url.origin}/forum:${fid}`;
+        const legacyOrigin = `https://${LEGACY_AGAGHHH_DOMAIN}`;
+        if (fid) return `${legacyOrigin}/forum:${fid}`;
         url.searchParams.delete("page");
         url.searchParams.sort();
-        return url.href;
+        return legacyOrigin + url.pathname + url.search;
       }
       url.searchParams.delete("paged");
       url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, "/");
@@ -2513,7 +2743,12 @@ ${result.pageUrl}`);
   if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     const expandHdblogPreview = typeof GM_getValue !== "function" || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
     if (expandHdblogPreview) expandHdblogPreviewImages();
-    if (isThreadPage()) addDownloadButton();
+    if (isThreadPage()) {
+      if (isAgaghhhHost(location) && isBatchOpenHistoryEnabled()) {
+        rememberBatchOpenedThread(location.href);
+      }
+      addDownloadButton();
+    }
     if (isBatchOpenPage()) {
       applyBatchOpenHistory(document);
       if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
@@ -3001,7 +3236,7 @@ ${result.pageUrl}`);
   function buildJavfreeAgaghhhSearchUrl(code) {
     const normalized = String(code || "").trim().toUpperCase();
     if (!normalized) return "";
-    return "https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=" + encodeURIComponent(normalized) + "&orderby=lastpost&ascdesc=desc";
+    return getAgaghhhOrigin() + "/search.php?mod=forum&searchsubmit=yes&srchtxt=" + encodeURIComponent(normalized) + "&orderby=lastpost&ascdesc=desc";
   }
   function openJavfreeAgaghhhSearch(document2, code) {
     const url = buildJavfreeAgaghhhSearchUrl(code);
@@ -3064,8 +3299,8 @@ ${result.pageUrl}`);
     button.id = JAVFREE_AGAGHHH_SEARCH_BUTTON_ID;
     button.type = "button";
     button.textContent = "\u{1F50D}";
-    button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 agaghhh.cc \u641C\u7D22";
-    button.setAttribute("aria-label", "\u5728 agaghhh.cc \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+    button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 x1080x \u641C\u7D22";
+    button.setAttribute("aria-label", "\u5728 x1080x \u641C\u7D22\u5F53\u524D\u756A\u53F7");
     styleJavfreeActionButton(button);
     button.addEventListener("click", () => {
       openJavfreeAgaghhhSearch(document2, javfreeCodeFromDocument(document2, locationObject));
@@ -3295,7 +3530,7 @@ ${result.pageUrl}`);
     </label>
     <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
       <input data-setting="agaghhh-search" type="checkbox" style="margin-top:3px">
-      <span><strong>agaghhh.cc \u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u8BC6\u522B\u5F53\u524D\u756A\u53F7\uFF0C\u5E76\u5728 agaghhh.cc \u8BBA\u575B\u4E2D\u641C\u7D22\u3002</small></span>
+      <span><strong>x1080x \u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u8BC6\u522B\u5F53\u524D\u756A\u53F7\uFF0C\u5E76\u5728 x1080x \u7AD9\u70B9\u641C\u7D22\u3002</small></span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
       <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
@@ -3309,6 +3544,26 @@ ${result.pageUrl}`);
       <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
     </div>`;
+    organizeSettingsPanel(form, [
+      {
+        "key": "search",
+        "title": "\u641C\u7D22\u529F\u80FD",
+        "description": "\u81EA\u52A8\u8DF3\u8F6C\u4E0E\u8DE8\u7AD9\u641C\u7D22",
+        "settings": [
+          "search-auto-redirect",
+          "agaghhh-search"
+        ]
+      },
+      {
+        "key": "buttons",
+        "title": "\u6587\u7AE0\u64CD\u4F5C",
+        "description": "\u5FEB\u901F\u590D\u5236\u756A\u53F7\u53CA\u4E0B\u8F7D\u9884\u89C8\u56FE",
+        "settings": [
+          "copy-code",
+          "preview-download"
+        ]
+      }
+    ]);
     const redirectInput = form.querySelector('[data-setting="search-auto-redirect"]');
     const agaghhhSearchInput = form.querySelector('[data-setting="agaghhh-search"]');
     const copyCodeInput = form.querySelector('[data-setting="copy-code"]');
@@ -3873,7 +4128,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function buildAgaghhhSearchUrl(code) {
     const keyword = hdblogAgaghhhSearchKeyword(code);
     if (!keyword) return "";
-    return `https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
+    return `${getAgaghhhOrigin()}/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
   }
   function openSearchTab(document2, url) {
     if (!url) return;
@@ -4365,8 +4620,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     searchButton.id = SEARCH_BUTTON_ID;
     searchButton.type = "button";
     searchButton.textContent = "\u{1F50D}";
-    searchButton.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 agaghhh.cc \u641C\u7D22";
-    searchButton.setAttribute("aria-label", "\u5728 agaghhh.cc \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+    searchButton.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 x1080x \u641C\u7D22";
+    searchButton.setAttribute("aria-label", "\u5728 x1080x \u641C\u7D22\u5F53\u524D\u756A\u53F7");
     Object.assign(searchButton.style, {
       display: "inline-flex",
       alignItems: "center",
@@ -4588,7 +4843,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     });
     panel.innerHTML = `
-    <h2 style="margin:0 0 18px;font-size:20px">x1080x-ex \xB7 hdblog \u8BBE\u7F6E</h2>
+    <h2 style="margin:0 0 18px;font-size:20px">HDBLOG \u8BBE\u7F6E</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">\u6587\u7AE0\u5E03\u5C40</div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
@@ -4619,7 +4874,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="cross-search" type="checkbox">
-        \u663E\u793A\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF0C\u641C\u7D22 agaghhh.cc\uFF09
+        \u663E\u793A\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF0C\u641C\u7D22 x1080x\uFF09
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="copy-code" type="checkbox">
@@ -4696,13 +4951,74 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         <span style="display:block;font-weight:600;margin-bottom:6px">\u5C4F\u853D\u5173\u952E\u8BCD\uFF08\u641C\u7D22 / \u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF09</span>
         <textarea data-setting="keywords" rows="5" placeholder="\u7559\u7A7A = \u4E0D\u5C4F\u853D"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u641C\u7D22\u4E0E\u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF0C\u8BE5\u89C4\u5219\u4E5F\u4F9B agaghhh \u7684 hdblog Preview \u641C\u7D22\u590D\u7528\u3002</small>
+        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u641C\u7D22\u4E0E\u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF0C\u8BE5\u89C4\u5219\u4E5F\u4F9B x1080x \u7684 hdblog Preview \u641C\u7D22\u590D\u7528\u3002</small>
       </label>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
       <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
     </div>`;
+    organizeSettingsPanel(panel, [
+      {
+        "key": "layout",
+        "title": "\u6587\u7AE0\u5E03\u5C40",
+        "description": "\u4E3B\u5185\u5BB9\u533A\u663E\u793A\u5BBD\u5EA6\u4E0E\u9875\u9762\u5E03\u5C40",
+        "settings": [
+          "layout-enabled",
+          "width"
+        ]
+      },
+      {
+        "key": "download",
+        "title": "\u4E0B\u8F7D\u4E0E\u6309\u94AE",
+        "description": "\u4E0B\u8F7D\u533A\u57DF\u3001\u56FE\u7247\u4E0B\u8F7D\u548C\u5E38\u7528\u64CD\u4F5C",
+        "settings": [
+          "show-downloads",
+          "show-image-download",
+          "download-guard",
+          "cross-search",
+          "copy-code"
+        ]
+      },
+      {
+        "key": "preview",
+        "title": "\u9884\u89C8\u4E0E\u4FEE\u590D",
+        "description": "\u56FE\u7247\u5C55\u5F00\u4E0E\u5931\u6548\u6587\u7AE0\u7684\u540E\u5907\u641C\u7D22",
+        "settings": [
+          "expand-preview",
+          "javfree-preview-fallback",
+          "deleted-javfree-search"
+        ]
+      },
+      {
+        "key": "batch",
+        "title": "\u6279\u91CF\u6253\u5F00",
+        "description": "\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u4E3B\u9898\u4E0E\u65F6\u95F4\u95F4\u9694",
+        "settings": [
+          "batch-open",
+          "batch-open-interval-min"
+        ]
+      },
+      {
+        "key": "history",
+        "title": "\u6D4F\u89C8\u8BB0\u5F55",
+        "description": "\u4FDD\u5B58\u5DF2\u8BBF\u95EE\u7684\u4E3B\u9898\u3001\u8FDB\u5EA6\u5B9A\u4F4D\u548C\u989C\u8272\u6807\u8BB0",
+        "settings": [
+          "batch-open-history",
+          "batch-open-unopened-only"
+        ]
+      },
+      {
+        "key": "filter",
+        "title": "\u5173\u952E\u8BCD\u8FC7\u6EE4",
+        "description": "\u641C\u7D22\u9875\u548C\u666E\u901A\u5217\u8868\u9875\u7684\u5173\u952E\u8BCD\u5C4F\u853D",
+        "settings": [
+          "search-filter",
+          "browse-filter",
+          "keywords"
+        ]
+      }
+    ]);
     const layoutInput = panel.querySelector('[data-setting="layout-enabled"]');
     const widthInput = panel.querySelector('[data-setting="width"]');
     const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
@@ -5672,13 +5988,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       imageUrls: []
     };
   }
-  function isAgaghhhHost(locationObject) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
-  }
   function injectOfficialPreviewFallbackSetting(document2 = globalThis.document) {
     const overlay = document2?.getElementById("x1080x-ex-settings-panel");
-    const form = overlay?.querySelector("form");
+    const form = overlay?.shadowRoot?.querySelector("form") || overlay?.querySelector("form");
     const master = form?.querySelector('[data-setting="hdblog-preview"]');
     if (!form || !master) return false;
     const masterLabel = master.closest("label");
@@ -6242,10 +6554,6 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function normalizeText7(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
-  function isAgaghhhHost2(locationObject = globalThis.location) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
-  }
   function legacyDefault() {
     if (typeof GM_getValue !== "function") return true;
     return GM_getValue(LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY, true) !== false;
@@ -6354,7 +6662,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return readBooleanSetting(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY);
   }
   function isAgaghhhForumSearchPage(locationObject = globalThis.location) {
-    if (!isAgaghhhHost2(locationObject)) return false;
+    if (!isAgaghhhHost(locationObject)) return false;
     let url;
     try {
       url = new URL(locationObject?.href || "");
@@ -6370,7 +6678,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function isAgaghhhThreadResultUrl(value, baseUrl) {
     try {
       const url = new URL(value, baseUrl);
-      if (!isAgaghhhHost2({ hostname: url.hostname })) return false;
+      if (!isAgaghhhHost({ hostname: url.hostname })) return false;
       return url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid") || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
     } catch {
       return false;
@@ -6786,7 +7094,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     panel.innerHTML = `
     <h2 style="margin:0 0 18px;font-size:20px">x1080x \u8BBE\u7F6E</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
-      <div style="font-weight:700;margin-bottom:11px">agaghhh.cc \u589E\u5F3A\u529F\u80FD</div>
+      <div style="font-weight:700;margin-bottom:11px">x1080x \u589E\u5F3A\u529F\u80FD</div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="batch-open" type="checkbox" style="margin-top:3px">
         <span><strong>\u6279\u91CF\u6253\u5F00\u5E16\u5B50\u529F\u80FD</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5217\u8868\u9875\u663E\u793A\u201C\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\u201D\u6309\u94AE\u3002</small></span>
@@ -6859,7 +7167,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
-        <span><strong>\u641C\u7D22\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">agaghhh \u8BBA\u575B\u641C\u7D22\u7B2C\u4E00\u9875\u53EA\u6709 1 \u4E2A\u552F\u4E00\u4E3B\u9898\u65F6\uFF0C\u81EA\u52A8\u8FDB\u5165\u8BE5\u4E3B\u9898\uFF1B0 \u4E2A\u6216\u591A\u4E2A\u7ED3\u679C\u4E0D\u8DF3\u8F6C\u3002</small></span>
+        <span><strong>\u641C\u7D22\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">x1080x \u8BBA\u575B\u641C\u7D22\u7B2C\u4E00\u9875\u53EA\u6709 1 \u4E2A\u552F\u4E00\u4E3B\u9898\u65F6\uFF0C\u81EA\u52A8\u8FDB\u5165\u8BE5\u4E3B\u9898\uFF1B0 \u4E2A\u6216\u591A\u4E2A\u7ED3\u679C\u4E0D\u8DF3\u8F6C\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
@@ -6878,6 +7186,57 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
     </div>`;
+    organizeSettingsPanel(panel, [
+      {
+        "key": "batch",
+        "title": "\u6279\u91CF\u6253\u5F00",
+        "description": "\u6279\u91CF\u6253\u5F00\u5E16\u5B50\u53CA\u6253\u5F00\u95F4\u9694\u8BBE\u7F6E",
+        "settings": [
+          "batch-open",
+          "batch-open-interval-min"
+        ]
+      },
+      {
+        "key": "history",
+        "title": "\u6D4F\u89C8\u8BB0\u5F55",
+        "description": "\u5DF2\u6253\u5F00\u6807\u8BB0\u3001\u8DF3\u8FC7\u5DF2\u8BFB\u4E3B\u9898\u548C\u6D4F\u89C8\u8FDB\u5EA6",
+        "settings": [
+          "batch-open-history",
+          "batch-open-unopened-only"
+        ]
+      },
+      {
+        "key": "filter",
+        "title": "\u641C\u7D22\u4E0E\u8FC7\u6EE4",
+        "description": "\u641C\u7D22\u7ED3\u679C\u8FC7\u6EE4\u3001\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C",
+        "settings": [
+          "search-filter",
+          "blocked-keywords",
+          "search-auto-redirect"
+        ]
+      },
+      {
+        "key": "download",
+        "title": "\u4E0B\u8F7D\u4E0E\u6309\u94AE",
+        "description": "\u4E0B\u8F7D\u589E\u5F3A\u3001\u6807\u7B7E\u4FDD\u62A4\u53CA\u6807\u9898\u5FEB\u6377\u64CD\u4F5C",
+        "settings": [
+          "download",
+          "download-guard",
+          "cross-search",
+          "copy-code"
+        ]
+      },
+      {
+        "key": "preview",
+        "title": "\u9884\u89C8\u4E0E\u6F14\u5458",
+        "description": "\u9884\u89C8\u56FE\u540E\u5907\u6E90\u548C\u6F14\u5458\u4FE1\u606F\u8865\u5168",
+        "settings": [
+          "hdblog-preview",
+          "javfree-preview-fallback",
+          "real-actress"
+        ]
+      }
+    ]);
     const batchInput = panel.querySelector('[data-setting="batch-open"]');
     const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
     const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
@@ -7023,7 +7382,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return overlay;
   }
   function installX1080xSettingsMenu(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isAgaghhhHost2(locationObject)) return;
+    if (!document2 || !isAgaghhhHost(locationObject)) return;
     const view = document2.defaultView;
     if (view && view.top !== view) return;
     if (typeof GM_registerMenuCommand !== "function") return;
@@ -7037,7 +7396,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     });
   }
   function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    if (!document2 || !isAgaghhhHost2(locationObject)) return;
+    if (!document2 || !isAgaghhhHost(locationObject)) return;
     if (isAgaghhhForumSearchPage(locationObject) && isAgaghhhSearchFilterEnabled()) {
       filterAgaghhhSearchResults(document2, getAgaghhhBlockedKeywords());
     }
@@ -7139,10 +7498,6 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var SETTINGS_PANEL_ID2 = "x1080x-ex-settings-panel";
   var QB_SECTION_ATTR = "data-x1080x-qb-settings";
   var QB_BOUND_ATTR = "data-x1080x-qb-settings-bound";
-  function isAgaghhhHost3(locationObject = globalThis.location) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "agaghhh.cc" || hostname.endsWith(".agaghhh.cc");
-  }
   function setStatus(element, message, kind = "") {
     if (!element) return;
     element.textContent = message;
@@ -7150,10 +7505,12 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function enhanceQbittorrentSettingsPanel(document2 = globalThis.document, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     const overlay = document2?.getElementById(SETTINGS_PANEL_ID2);
-    const form = overlay?.querySelector("form");
+    const form = overlay?.shadowRoot?.querySelector("form") || overlay?.querySelector("form");
     if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
     const current = getQbSettings();
-    form.style.width = "min(640px, 100%)";
+    if (!form.querySelector("[data-settings-workspace]")) {
+      form.style.width = "min(640px, 100%)";
+    }
     form.setAttribute("autocomplete", "off");
     const section = document2.createElement("div");
     section.setAttribute(QB_SECTION_ATTR, "1");
@@ -7187,8 +7544,16 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       <span data-qb-status style="color:#666;overflow-wrap:anywhere"></span>
     </div>
     <small style="display:block;margin-top:9px;color:#666">\u7528\u6237\u540D\u548C\u5BC6\u7801\u4FDD\u5B58\u5728 Tampermonkey / Violentmonkey \u7684\u811A\u672C\u4E13\u5C5E\u5B58\u50A8\u4E2D\u3002\u5EFA\u8BAE WebUI \u4EC5\u5728\u53EF\u4FE1\u5C40\u57DF\u7F51\u4F7F\u7528\uFF0C\u6216\u4F7F\u7528 HTTPS\u3002</small>`;
-    const actions = form.lastElementChild;
-    form.insertBefore(section, actions || null);
+    if (addSettingsExtraSection(form, {
+      key: "qbittorrent",
+      title: "qBittorrent",
+      description: "\u4E0B\u8F7D\u5931\u8D25\u65F6\u901A\u8FC7 qBittorrent \u83B7\u53D6\u79CD\u5B50\u5143\u6570\u636E"
+    }, section)) {
+      section.style.cssText = "margin:0;padding:0;border:0;background:transparent";
+    } else {
+      const actions = form.lastElementChild;
+      form.insertBefore(section, actions || null);
+    }
     const enabledInput = section.querySelector('[data-setting="qb-enabled"]');
     const urlInput = section.querySelector('[data-setting="qb-url"]');
     const usernameInput = section.querySelector('[data-setting="qb-username"]');
@@ -7235,7 +7600,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return true;
   }
   function installQbittorrentSettings(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    if (!document2?.body || !isAgaghhhHost3(locationObject)) return null;
+    if (!document2?.body || !isAgaghhhHost(locationObject)) return null;
     if (enhanceQbittorrentSettingsPanel(document2, gmRequest2)) return null;
     const Observer = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
     if (typeof Observer !== "function") return null;
