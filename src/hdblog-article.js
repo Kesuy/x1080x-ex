@@ -942,8 +942,8 @@ function installAgaghhhSearchButton(document) {
   searchButton.id = SEARCH_BUTTON_ID;
   searchButton.type = 'button';
   searchButton.textContent = '🔍';
-  searchButton.title = '按当前番号在 agaghhh.cc 搜索';
-  searchButton.setAttribute('aria-label', '在 agaghhh.cc 搜索当前番号');
+  searchButton.title = '按当前番号在 x1080x 搜索';
+  searchButton.setAttribute('aria-label', '在 x1080x 搜索当前番号');
   Object.assign(searchButton.style, {
     display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle',
     margin: '0 0 4px 8px', padding: '5px 8px', minWidth: '34px',
@@ -1200,7 +1200,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="cross-search" type="checkbox">
-        显示跨站搜索按钮（🔍，搜索 agaghhh.cc）
+        显示跨站搜索按钮（🔍，搜索 x1080x）
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="copy-code" type="checkbox">
@@ -1277,7 +1277,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <span style="display:block;font-weight:600;margin-bottom:6px">屏蔽关键词（搜索 / 正常浏览共用）</span>
         <textarea data-setting="keywords" rows="5" placeholder="留空 = 不屏蔽"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 agaghhh 的 hdblog Preview 搜索复用。</small>
+        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 x1080x 的 hdblog Preview 搜索复用。</small>
       </label>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
