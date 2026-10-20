@@ -1170,7 +1170,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
   panel.innerHTML = `
-    <h2 style="margin:0 0 18px;font-size:20px">x1080x-ex · hdblog 设置</h2>
+    <h2 style="margin:0 0 18px;font-size:20px">HDBLOG 设置</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">文章布局</div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
