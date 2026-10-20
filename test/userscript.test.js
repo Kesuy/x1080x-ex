@@ -856,7 +856,7 @@ test('1080xin inherits old batch-open history and records manually visited threa
       dom.window.document.querySelector('a[href*="tid=302"]')?.getAttribute('data-x1080x-batch-opened'), '1'
     );
     assert.match(dom.window.document.querySelector('#x1080x-ex-open-page')?.textContent || '', /未打开主题（1）/);
-    assert.ok([...menus.keys()].some((name) => name.includes('最高优先级')));
+    assert.ok([...menus.keys()].some((name) => name.includes('设置 x1080x 站点域名')));
     assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), ['tid:302']);
   } finally {
     restore();
