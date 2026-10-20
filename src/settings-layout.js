@@ -137,6 +137,18 @@ export function organizeSettingsPanel(form, sections) {
   content.className = 'sx-content';
   content.dataset.settingsContent = '1';
   workspace.append(nav, content);
+  nav.addEventListener('keydown', (event) => {
+    const tabs = [...nav.querySelectorAll('[data-settings-tab]')];
+    const active = tabs.indexOf(document.activeElement);
+    const keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
+    if (active < 0 || !keys.includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? tabs.length - 1
+      : (active + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[next].click();
+    tabs[next].focus();
+  });
   form.style.width = 'min(850px, 100%)';
   form.style.maxHeight = 'calc(100vh - 32px)';
   form.style.height = 'min(690px, calc(100vh - 32px))';
@@ -160,6 +172,10 @@ export function organizeSettingsPanel(form, sections) {
     const group = event.target?.closest?.('[data-settings-section]');
     if (group && group.hidden) activateSettingsSection(form, group.dataset.settingsSection);
   });
+  form.addEventListener('invalid', (event) => {
+    const group = event.target?.closest?.('[data-settings-section]');
+    if (group && group.hidden) activateSettingsSection(form, group.dataset.settingsSection);
+  }, true);
   return true;
 }
 
