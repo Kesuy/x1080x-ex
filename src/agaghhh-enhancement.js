@@ -680,7 +680,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   panel.innerHTML = `
     <h2 style="margin:0 0 18px;font-size:20px">x1080x 设置</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
-      <div style="font-weight:700;margin-bottom:11px">agaghhh.cc 增强功能</div>
+      <div style="font-weight:700;margin-bottom:11px">x1080x 增强功能</div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="batch-open" type="checkbox" style="margin-top:3px">
         <span><strong>批量打开帖子功能</strong><small style="display:block;margin-top:2px;color:#666">在列表页显示“后台顺序打开本页主题”按钮。</small></span>
@@ -753,7 +753,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
-        <span><strong>搜索单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">agaghhh 论坛搜索第一页只有 1 个唯一主题时，自动进入该主题；0 个或多个结果不跳转。</small></span>
+        <span><strong>搜索单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">x1080x 论坛搜索第一页只有 1 个唯一主题时，自动进入该主题；0 个或多个结果不跳转。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
