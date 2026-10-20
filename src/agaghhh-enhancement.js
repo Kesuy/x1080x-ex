@@ -1,3 +1,4 @@
+import { organizeSettingsPanel } from './settings-layout.js';
 import { parseThreadTitle } from './core.js';
 import { isAgaghhhHost } from './site-domains.js';
 export { isAgaghhhHost };
@@ -772,6 +773,58 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
     </div>`;
+
+  organizeSettingsPanel(panel, [
+  {
+    "key": "batch",
+    "title": "批量打开",
+    "description": "批量打开帖子及打开间隔设置",
+    "settings": [
+      "batch-open",
+      "batch-open-interval-min"
+    ]
+  },
+  {
+    "key": "history",
+    "title": "浏览记录",
+    "description": "已打开标记、跳过已读主题和浏览进度",
+    "settings": [
+      "batch-open-history",
+      "batch-open-unopened-only"
+    ]
+  },
+  {
+    "key": "filter",
+    "title": "搜索与过滤",
+    "description": "搜索结果过滤、单结果自动跳转",
+    "settings": [
+      "search-filter",
+      "blocked-keywords",
+      "search-auto-redirect"
+    ]
+  },
+  {
+    "key": "download",
+    "title": "下载与按钮",
+    "description": "下载增强、标签保护及标题快捷操作",
+    "settings": [
+      "download",
+      "download-guard",
+      "cross-search",
+      "copy-code"
+    ]
+  },
+  {
+    "key": "preview",
+    "title": "预览与演员",
+    "description": "预览图后备源和演员信息补全",
+    "settings": [
+      "hdblog-preview",
+      "javfree-preview-fallback",
+      "real-actress"
+    ]
+  }
+]);
 
   const batchInput = panel.querySelector('[data-setting="batch-open"]');
   const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
