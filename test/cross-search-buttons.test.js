@@ -64,7 +64,7 @@ test('hdblog article shows a search icon beside download and opens agaghhh searc
     assert.ok(download);
     assert.ok(search);
     assert.equal(search.textContent, '🔍');
-    assert.equal(search.getAttribute('aria-label'), '在 agaghhh.cc 搜索当前番号');
+    assert.equal(search.getAttribute('aria-label'), '在 x1080x 搜索当前番号');
     search.click();
     assert.equal(opened[0]?.url, 'https://1080xin.com/search.php?mod=forum&searchsubmit=yes&srchtxt=SVMGM-050&orderby=lastpost&ascdesc=desc');
   });
