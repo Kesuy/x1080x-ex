@@ -824,3 +824,56 @@ test('没有安装磁力脚本时仍能独立下载并校验 torrent', async () 
     dom.window.close();
   }
 });
+
+
+test('1080xin inherits old batch-open history and records manually visited threads', async () => {
+  const dom = new JSDOM(String.raw`
+    <title>1080xin 论坛</title>
+    <div id="pgt"></div>
+    <div id="threadlist"><table>
+      <tbody id="normalthread_303"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=303">未打开</a></th></tr></tbody>
+      <tbody id="normalthread_302"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=302">旧站已打开</a></th></tr></tbody>
+    </table></div>`, { url: 'https://1080xin.com/forum.php?mod=forumdisplay&fid=75' });
+  const restore = installDomGlobals(dom.window);
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+    ['x1080x-ex:agaghhh-batch-open-history', ['tid:302']],
+    ['x1080x-ex:agaghhh-batch-progress-map', {
+      'https://agaghhh.cc/forum:75': {
+        url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75&page=4',
+        updatedAt: 111,
+      },
+    }],
+  ]);
+  const menus = new Map();
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  globalThis.GM_registerMenuCommand = (name, callback) => menus.set(name, callback);
+  try {
+    await import(`../src/userscript.js?replacement-domain=${Date.now()}`);
+    assert.equal(
+      dom.window.document.querySelector('a[href*="tid=302"]')?.getAttribute('data-x1080x-batch-opened'), '1'
+    );
+    assert.match(dom.window.document.querySelector('#x1080x-ex-open-page')?.textContent || '', /未打开主题（1）/);
+    assert.ok([...menus.keys()].some((name) => name.includes('最高优先级')));
+    assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), ['tid:302']);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+
+  const visited = new JSDOM('<!doctype html><body><span id="thread_subject">SVMGM-050</span></body></html>', {
+    url: 'https://1080xin.com/forum.php?mod=viewthread&tid=303',
+  });
+  const restoreVisit = installDomGlobals(visited.window);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  try {
+    await import(`../src/userscript.js?replacement-visit=${Date.now()}`);
+    assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), ['tid:302', 'tid:303']);
+  } finally {
+    restoreVisit();
+    visited.window.close();
+  }
+});

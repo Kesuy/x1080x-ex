@@ -37,15 +37,15 @@ test('hdblog builds agaghhh search URLs and strips uncensored studio names', () 
   assert.equal(hdblogAgaghhhSearchKeyword('FC2-PPV 4906444'), '4906444');
   assert.equal(
     buildAgaghhhSearchUrl('SVMGM-050'),
-    'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=SVMGM-050&orderby=lastpost&ascdesc=desc'
+    'https://1080xin.com/search.php?mod=forum&searchsubmit=yes&srchtxt=SVMGM-050&orderby=lastpost&ascdesc=desc'
   );
   assert.equal(
     buildAgaghhhSearchUrl('1pondo 121125_001'),
-    'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=121125_001&orderby=lastpost&ascdesc=desc'
+    'https://1080xin.com/search.php?mod=forum&searchsubmit=yes&srchtxt=121125_001&orderby=lastpost&ascdesc=desc'
   );
   assert.equal(
     buildAgaghhhSearchUrl('FC2-PPV-4906444'),
-    'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=4906444&orderby=lastpost&ascdesc=desc'
+    'https://1080xin.com/search.php?mod=forum&searchsubmit=yes&srchtxt=4906444&orderby=lastpost&ascdesc=desc'
   );
 });
 
@@ -66,7 +66,7 @@ test('hdblog article shows a search icon beside download and opens agaghhh searc
     assert.equal(search.textContent, '🔍');
     assert.equal(search.getAttribute('aria-label'), '在 agaghhh.cc 搜索当前番号');
     search.click();
-    assert.equal(opened[0]?.url, 'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=SVMGM-050&orderby=lastpost&ascdesc=desc');
+    assert.equal(opened[0]?.url, 'https://1080xin.com/search.php?mod=forum&searchsubmit=yes&srchtxt=SVMGM-050&orderby=lastpost&ascdesc=desc');
   });
 });
 

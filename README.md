@@ -1,6 +1,6 @@
 # x1080x-ex
 
-面向 `agaghhh.cc` / `hdblog.me` 的 Tampermonkey 增强脚本。
+面向 `1080xin.com`（兼容原 `agaghhh.cc`）/ `hdblog.me` 的 Tampermonkey 增强脚本。
 
 ## 主要功能
 
@@ -37,7 +37,7 @@
 
 ## 设置
 
-### agaghhh.cc
+### 1080xin.com / agaghhh.cc
 
 通过 **⚙️ x1080x 设置** 可独立控制：
 
@@ -94,12 +94,15 @@
 
 默认支持：
 
-- `agaghhh.cc`
+- `1080xin.com`（agaghhh 默认主域名，最高优先级）
+- `agaghhh.cc`（原域名，保留兼容）
 - `hdblog.me`
 - `javfree.me`
 - `fc2cmadb.com`
 
-Tampermonkey 菜单可使用 **设置匹配域名 / 添加当前域名 / 重置默认域名** 管理站点域名。
+Tampermonkey 菜单新增 **⭐ 设置 agaghhh 主域名（最高优先级）**：更换域名时调整这一项，站点增强和跨站搜索优先使用新域名，同时保留原域名的功能识别。原有 **设置匹配域名 / 添加当前域名 / 重置默认域名** 仍然可用。
+
+**历史记录兼容**：新旧域名共用原有 Tampermonkey `x1080x-ex:agaghhh-batch-open-history`（TID）存储记录，不会清空原数据；跨域“定位浏览进度”会复用原有分页记录，并将旧站点链接映射到新主域名。启用保存批量打开记录后，也会将新访问的主题写入脚本历史。Chrome 原生 `:visited` 历史无法从 Tampermonkey 跨域读取，升级前未保存到脚本中的手动访问不能自动补录。
 
 ## 本地开发
 
