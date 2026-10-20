@@ -139,7 +139,7 @@ export function organizeSettingsPanel(form, sections) {
   workspace.append(nav, content);
   nav.addEventListener('keydown', (event) => {
     const tabs = [...nav.querySelectorAll('[data-settings-tab]')];
-    const active = tabs.indexOf(document.activeElement);
+    const active = tabs.indexOf(nav.getRootNode()?.activeElement || document.activeElement);
     const keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
     if (active < 0 || !keys.includes(event.key)) return;
     event.preventDefault();
