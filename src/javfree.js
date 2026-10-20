@@ -1,3 +1,4 @@
+import { organizeSettingsPanel } from './settings-layout.js';
 import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
@@ -645,6 +646,27 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
       <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
     </div>`;
+
+  organizeSettingsPanel(form, [
+  {
+    "key": "search",
+    "title": "搜索功能",
+    "description": "自动跳转与跨站搜索",
+    "settings": [
+      "search-auto-redirect",
+      "agaghhh-search"
+    ]
+  },
+  {
+    "key": "buttons",
+    "title": "文章操作",
+    "description": "快速复制番号及下载预览图",
+    "settings": [
+      "copy-code",
+      "preview-download"
+    ]
+  }
+]);
 
   const redirectInput = form.querySelector('[data-setting="search-auto-redirect"]');
   const agaghhhSearchInput = form.querySelector('[data-setting="agaghhh-search"]');
