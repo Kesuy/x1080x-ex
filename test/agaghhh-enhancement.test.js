@@ -243,3 +243,14 @@ test('turning off download enhancement does not remove the batch-open feature', 
   assert.equal(dom.window.document.getElementById('x1080x-ex-download'), null);
   assert.ok(dom.window.document.getElementById('x1080x-ex-open-page'));
 });
+
+test('新域名设置页统一显示 x1080x 名称', () => {
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://1080xin.com/' });
+  withGmValues(new Map(), () => {
+    const panel = openX1080xSettingsPanel(dom.window.document);
+    assert.match(panel.textContent, /x1080x 增强功能/);
+    assert.doesNotMatch(panel.textContent, /agaghhh\.cc/);
+    assert.match(panel.textContent, /x1080x 论坛搜索/);
+  });
+  dom.window.close();
+});
