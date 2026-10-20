@@ -376,8 +376,8 @@ function installJavfreeAgaghhhSearchButton(document, locationObject) {
   button.id = JAVFREE_AGAGHHH_SEARCH_BUTTON_ID;
   button.type = 'button';
   button.textContent = '🔍';
-  button.title = '按当前番号在 agaghhh.cc 搜索';
-  button.setAttribute('aria-label', '在 agaghhh.cc 搜索当前番号');
+  button.title = '按当前番号在 x1080x 搜索';
+  button.setAttribute('aria-label', '在 x1080x 搜索当前番号');
   styleJavfreeActionButton(button);
   button.addEventListener('click', () => {
     openJavfreeAgaghhhSearch(document, javfreeCodeFromDocument(document, locationObject));
@@ -631,7 +631,7 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
     </label>
     <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
       <input data-setting="agaghhh-search" type="checkbox" style="margin-top:3px">
-      <span><strong>agaghhh.cc 搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">详情页识别当前番号，并在 agaghhh.cc 论坛中搜索。</small></span>
+      <span><strong>x1080x 搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">详情页识别当前番号，并在 x1080x 站点搜索。</small></span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
       <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
