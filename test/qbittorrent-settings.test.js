@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { enhanceQbittorrentSettingsPanel } from '../src/qbittorrent-settings.js';
+import { enhanceQbittorrentSettingsPanel, installQbittorrentSettings } from '../src/qbittorrent-settings.js';
 
 function withGmStorage(values, callback) {
   const oldGet = globalThis.GM_getValue;
@@ -48,4 +48,17 @@ test('在 x1080x 设置面板中注入 qBittorrent 回退配置', () => {
     assert.ok(section.querySelector('[data-action="qb-test"]'));
     assert.equal(enhanceQbittorrentSettingsPanel(dom.window.document, () => {}), false);
   });
+});
+
+test('新旧站点域名都能加载 x1080x qBittorrent 设置', () => {
+  for (const host of ['1080xin.com', 'agaghhh.cc']) {
+    const dom = new JSDOM('<!doctype html><body><div id="x1080x-ex-settings-panel"><form><div></div></form></div></body>', {
+      url: `https://${host}/`,
+    });
+    withGmStorage(new Map(), () => {
+      installQbittorrentSettings(dom.window.document, dom.window.location, () => {});
+      assert.ok(dom.window.document.querySelector('[data-x1080x-qb-settings]'), host);
+    });
+    dom.window.close();
+  }
 });

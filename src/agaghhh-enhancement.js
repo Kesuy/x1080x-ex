@@ -1,4 +1,7 @@
+import { organizeSettingsPanel } from './settings-layout.js';
 import { parseThreadTitle } from './core.js';
+import { isAgaghhhHost } from './site-domains.js';
+export { isAgaghhhHost };
 import { copyCodeWithButtonFeedback } from './clipboard.js';
 import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
 import {
@@ -48,11 +51,6 @@ const REAL_ACTRESS_BYPASS_ATTR = 'data-x1080x-real-actress-bypass';
 
 function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
-}
-
-export function isAgaghhhHost(locationObject = globalThis.location) {
-  const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'agaghhh.cc' || hostname.endsWith('.agaghhh.cc');
 }
 
 function legacyDefault() {
@@ -683,7 +681,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
   panel.innerHTML = `
     <h2 style="margin:0 0 18px;font-size:20px">x1080x 设置</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
-      <div style="font-weight:700;margin-bottom:11px">agaghhh.cc 增强功能</div>
+      <div style="font-weight:700;margin-bottom:11px">x1080x 增强功能</div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="batch-open" type="checkbox" style="margin-top:3px">
         <span><strong>批量打开帖子功能</strong><small style="display:block;margin-top:2px;color:#666">在列表页显示“后台顺序打开本页主题”按钮。</small></span>
@@ -756,7 +754,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
-        <span><strong>搜索单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">agaghhh 论坛搜索第一页只有 1 个唯一主题时，自动进入该主题；0 个或多个结果不跳转。</small></span>
+        <span><strong>搜索单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">x1080x 论坛搜索第一页只有 1 个唯一主题时，自动进入该主题；0 个或多个结果不跳转。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
@@ -775,6 +773,58 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
     </div>`;
+
+  organizeSettingsPanel(panel, [
+  {
+    "key": "batch",
+    "title": "批量打开",
+    "description": "批量打开帖子及打开间隔设置",
+    "settings": [
+      "batch-open",
+      "batch-open-interval-min"
+    ]
+  },
+  {
+    "key": "history",
+    "title": "浏览记录",
+    "description": "已打开标记、跳过已读主题和浏览进度",
+    "settings": [
+      "batch-open-history",
+      "batch-open-unopened-only"
+    ]
+  },
+  {
+    "key": "filter",
+    "title": "搜索与过滤",
+    "description": "搜索结果过滤、单结果自动跳转",
+    "settings": [
+      "search-filter",
+      "blocked-keywords",
+      "search-auto-redirect"
+    ]
+  },
+  {
+    "key": "download",
+    "title": "下载与按钮",
+    "description": "下载增强、标签保护及标题快捷操作",
+    "settings": [
+      "download",
+      "download-guard",
+      "cross-search",
+      "copy-code"
+    ]
+  },
+  {
+    "key": "preview",
+    "title": "预览与演员",
+    "description": "预览图后备源和演员信息补全",
+    "settings": [
+      "hdblog-preview",
+      "javfree-preview-fallback",
+      "real-actress"
+    ]
+  }
+]);
 
   const batchInput = panel.querySelector('[data-setting="batch-open"]');
   const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');

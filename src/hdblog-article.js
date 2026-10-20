@@ -1,3 +1,5 @@
+import { organizeSettingsPanel } from './settings-layout.js';
+import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
 import { partitionPreviewCandidates } from './hdblog-preview-variants.js';
@@ -372,7 +374,7 @@ export function hdblogAgaghhhSearchKeyword(code) {
 export function buildAgaghhhSearchUrl(code) {
   const keyword = hdblogAgaghhhSearchKeyword(code);
   if (!keyword) return '';
-  return `https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
+  return `${getAgaghhhOrigin()}/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
 }
 
 function openSearchTab(document, url) {
@@ -941,8 +943,8 @@ function installAgaghhhSearchButton(document) {
   searchButton.id = SEARCH_BUTTON_ID;
   searchButton.type = 'button';
   searchButton.textContent = '🔍';
-  searchButton.title = '按当前番号在 agaghhh.cc 搜索';
-  searchButton.setAttribute('aria-label', '在 agaghhh.cc 搜索当前番号');
+  searchButton.title = '按当前番号在 x1080x 搜索';
+  searchButton.setAttribute('aria-label', '在 x1080x 搜索当前番号');
   Object.assign(searchButton.style, {
     display: 'inline-flex', alignItems: 'center', verticalAlign: 'middle',
     margin: '0 0 4px 8px', padding: '5px 8px', minWidth: '34px',
@@ -1168,7 +1170,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
   panel.innerHTML = `
-    <h2 style="margin:0 0 18px;font-size:20px">x1080x-ex · hdblog 设置</h2>
+    <h2 style="margin:0 0 18px;font-size:20px">HDBLOG 设置</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">文章布局</div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
@@ -1199,7 +1201,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="cross-search" type="checkbox">
-        显示跨站搜索按钮（🔍，搜索 agaghhh.cc）
+        显示跨站搜索按钮（🔍，搜索 x1080x）
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
         <input data-setting="copy-code" type="checkbox">
@@ -1276,13 +1278,75 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <span style="display:block;font-weight:600;margin-bottom:6px">屏蔽关键词（搜索 / 正常浏览共用）</span>
         <textarea data-setting="keywords" rows="5" placeholder="留空 = 不屏蔽"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 agaghhh 的 hdblog Preview 搜索复用。</small>
+        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 x1080x 的 hdblog Preview 搜索复用。</small>
       </label>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
       <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
     </div>`;
+
+  organizeSettingsPanel(panel, [
+  {
+    "key": "layout",
+    "title": "文章布局",
+    "description": "主内容区显示宽度与页面布局",
+    "settings": [
+      "layout-enabled",
+      "width"
+    ]
+  },
+  {
+    "key": "download",
+    "title": "下载与按钮",
+    "description": "下载区域、图片下载和常用操作",
+    "settings": [
+      "show-downloads",
+      "show-image-download",
+      "download-guard",
+      "cross-search",
+      "copy-code"
+    ]
+  },
+  {
+    "key": "preview",
+    "title": "预览与修复",
+    "description": "图片展开与失效文章的后备搜索",
+    "settings": [
+      "expand-preview",
+      "javfree-preview-fallback",
+      "deleted-javfree-search"
+    ]
+  },
+  {
+    "key": "batch",
+    "title": "批量打开",
+    "description": "后台顺序打开主题与时间间隔",
+    "settings": [
+      "batch-open",
+      "batch-open-interval-min"
+    ]
+  },
+  {
+    "key": "history",
+    "title": "浏览记录",
+    "description": "保存已访问的主题、进度定位和颜色标记",
+    "settings": [
+      "batch-open-history",
+      "batch-open-unopened-only"
+    ]
+  },
+  {
+    "key": "filter",
+    "title": "关键词过滤",
+    "description": "搜索页和普通列表页的关键词屏蔽",
+    "settings": [
+      "search-filter",
+      "browse-filter",
+      "keywords"
+    ]
+  }
+]);
 
   const layoutInput = panel.querySelector('[data-setting="layout-enabled"]');
   const widthInput = panel.querySelector('[data-setting="width"]');

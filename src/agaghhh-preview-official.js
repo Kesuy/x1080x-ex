@@ -1,3 +1,4 @@
+import { isAgaghhhHost } from './site-domains.js';
 const AV_WIKI_ORIGIN = 'https://av-wiki.net';
 const FANZA_IMAGE_ORIGIN = 'https://pics.dmm.co.jp';
 const FANZA_REFERER = 'https://www.dmm.co.jp/';
@@ -298,14 +299,9 @@ export async function fetchOfficialPreviewFallbackForCode(
   };
 }
 
-function isAgaghhhHost(locationObject) {
-  const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'agaghhh.cc' || hostname.endsWith('.agaghhh.cc');
-}
-
 export function injectOfficialPreviewFallbackSetting(document = globalThis.document) {
   const overlay = document?.getElementById('x1080x-ex-settings-panel');
-  const form = overlay?.querySelector('form');
+  const form = overlay?.shadowRoot?.querySelector('form') || overlay?.querySelector('form');
   const master = form?.querySelector('[data-setting="hdblog-preview"]');
   if (!form || !master) return false;
 

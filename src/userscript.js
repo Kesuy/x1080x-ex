@@ -5,6 +5,16 @@ import {
   parseDomainList,
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
+import {
+  AGAGHHH_PRIMARY_DOMAIN_KEY,
+  DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
+  LEGACY_AGAGHHH_DOMAIN,
+  getAgaghhhDomains,
+  getAgaghhhPrimaryDomain,
+  isAgaghhhHost,
+  parseAgaghhhPrimaryDomain,
+  toAgaghhhPrimaryUrl,
+} from './site-domains.js';
 import { firstBatchListPageUrl, scanBatchProgressPages } from './batch-progress-locator.js';
 import { requestTorrentBytes } from './torrent.js';
 import {
@@ -40,7 +50,7 @@ const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
 const BATCH_OPEN_HISTORY_STYLE_ID = 'x1080x-ex-batch-open-history-style';
 const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
 const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
-const DEFAULT_DOMAINS = 'agaghhh.cc\nhdblog.me\nfc2cmadb.com';
+const DEFAULT_DOMAINS = '1080xin.com\nagaghhh.cc\nhdblog.me\nfc2cmadb.com';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_PROGRESS_BUTTON_ID = 'x1080x-ex-batch-progress-locator';
@@ -71,12 +81,16 @@ let batchOpenState = null;
 let batchProgressScanState = null;
 
 function getConfiguredDomains() {
-  const stored = GM_getValue(STORAGE_KEY, null);
-  if (stored === null || stored === undefined) return parseDomainList(DEFAULT_DOMAINS);
-  const domains = parseDomainList(stored);
-  const isLegacyDefault = (domains.length === 1 && domains[0] === 'agaghhh.cc')
-    || (domains.length === 2 && domains.includes('agaghhh.cc') && domains.includes('hdblog.me'));
-  return isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains;
+  const stored = typeof GM_getValue === 'function' ? GM_getValue(STORAGE_KEY, null) : null;
+  const domains = stored === null || stored === undefined
+    ? parseDomainList(DEFAULT_DOMAINS)
+    : parseDomainList(stored);
+  const isLegacyDefault = (domains.length === 1 && domains[0] === LEGACY_AGAGHHH_DOMAIN)
+    || (domains.length === 2 && domains.includes(LEGACY_AGAGHHH_DOMAIN) && domains.includes('hdblog.me'));
+  return [...new Set([
+    ...(isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains),
+    ...getAgaghhhDomains(),
+  ])];
 }
 
 function saveDomains(domains) {
@@ -85,6 +99,20 @@ function saveDomains(domains) {
 
 function registerSettingsMenu() {
   if (window.top !== window.self) return;
+  GM_registerMenuCommand('🌐 设置 x1080x 站点域名', () => {
+    const input = window.prompt(
+      '请输入 x1080x 站点当前使用的域名（如 1080xin.com）。跨站搜索及浏览进度链接将使用该地址，旧域名仍可识别：',
+      getAgaghhhPrimaryDomain()
+    );
+    if (input === null) return;
+    const domain = parseAgaghhhPrimaryDomain(input);
+    if (!domain) {
+      window.alert('请输入有效的站点域名，例如 1080xin.com');
+      return;
+    }
+    GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+    window.alert(`x1080x 站点域名已保存：${domain}\n刷新页面后生效。原有浏览记录将继续保留。`);
+  });
   GM_registerMenuCommand('⚙️ 设置匹配域名', () => {
     const current = getConfiguredDomains().join('\n');
     const input = window.prompt(
@@ -112,6 +140,7 @@ function registerSettingsMenu() {
 
   GM_registerMenuCommand('↩️ 重置默认域名', () => {
     saveDomains(parseDomainList(DEFAULT_DOMAINS));
+    GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
     window.alert(`已恢复默认域名：${DEFAULT_DOMAINS}`);
   });
 }
@@ -123,7 +152,7 @@ function currentHost() {
 function isBatchOpenEnabledForCurrentHost() {
   if (typeof GM_getValue !== 'function') return true;
   const host = currentHost();
-  if (host === 'agaghhh.cc' || host.endsWith('.agaghhh.cc')) {
+  if (isAgaghhhHost(host)) {
     return GM_getValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, true) !== false;
   }
   if (host === 'hdblog.me' || host.endsWith('.hdblog.me')) {
@@ -134,7 +163,7 @@ function isBatchOpenEnabledForCurrentHost() {
 
 function batchOpenHistoryConfig() {
   const host = currentHost();
-  if (host === 'agaghhh.cc' || host.endsWith('.agaghhh.cc')) {
+  if (isAgaghhhHost(host)) {
     return {
       enabledKey: AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY,
       limitKey: AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
@@ -239,10 +268,12 @@ function batchProgressScopeKey(value = location.href) {
       const fid = url.searchParams.get('fid')
         || url.pathname.match(/forum[-_](\d+)(?:[-_]\d+)?(?:\.html)?/i)?.[1]
         || '';
-      if (fid) return `${url.origin}/forum:${fid}`;
+      // Original key namespace preserves saved progress across host changes.
+      const legacyOrigin = `https://${LEGACY_AGAGHHH_DOMAIN}`;
+      if (fid) return `${legacyOrigin}/forum:${fid}`;
       url.searchParams.delete('page');
       url.searchParams.sort();
-      return url.href;
+      return legacyOrigin + url.pathname + url.search;
     }
     url.searchParams.delete('paged');
     url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
@@ -264,7 +295,10 @@ function batchProgressTarget() {
   const scope = batchProgressScopeKey();
   if (!scope) return '';
   const entry = readBatchProgressMap()[scope];
-  return typeof entry?.url === 'string' ? entry.url : '';
+  if (typeof entry?.url !== 'string') return '';
+  return batchOpenHistoryConfig()?.kind === 'agaghhh'
+    ? toAgaghhhPrimaryUrl(entry.url)
+    : entry.url;
 }
 
 function nextBatchListPageUrl(document) {
@@ -1278,7 +1312,12 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   const expandHdblogPreview = typeof GM_getValue !== 'function'
     || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
   if (expandHdblogPreview) expandHdblogPreviewImages();
-  if (isThreadPage()) addDownloadButton();
+  if (isThreadPage()) {
+    if (isAgaghhhHost(location) && isBatchOpenHistoryEnabled()) {
+      rememberBatchOpenedThread(location.href);
+    }
+    addDownloadButton();
+  }
   if (isBatchOpenPage()) {
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();

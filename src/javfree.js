@@ -1,3 +1,5 @@
+import { organizeSettingsPanel } from './settings-layout.js';
+import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
@@ -304,7 +306,7 @@ function javfreeCodeFromDocument(document, locationObject = document?.location) 
 export function buildJavfreeAgaghhhSearchUrl(code) {
   const normalized = String(code || '').trim().toUpperCase();
   if (!normalized) return '';
-  return 'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt='
+  return getAgaghhhOrigin() + '/search.php?mod=forum&searchsubmit=yes&srchtxt='
     + encodeURIComponent(normalized)
     + '&orderby=lastpost&ascdesc=desc';
 }
@@ -375,8 +377,8 @@ function installJavfreeAgaghhhSearchButton(document, locationObject) {
   button.id = JAVFREE_AGAGHHH_SEARCH_BUTTON_ID;
   button.type = 'button';
   button.textContent = '🔍';
-  button.title = '按当前番号在 agaghhh.cc 搜索';
-  button.setAttribute('aria-label', '在 agaghhh.cc 搜索当前番号');
+  button.title = '按当前番号在 x1080x 搜索';
+  button.setAttribute('aria-label', '在 x1080x 搜索当前番号');
   styleJavfreeActionButton(button);
   button.addEventListener('click', () => {
     openJavfreeAgaghhhSearch(document, javfreeCodeFromDocument(document, locationObject));
@@ -630,7 +632,7 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
     </label>
     <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
       <input data-setting="agaghhh-search" type="checkbox" style="margin-top:3px">
-      <span><strong>agaghhh.cc 搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">详情页识别当前番号，并在 agaghhh.cc 论坛中搜索。</small></span>
+      <span><strong>x1080x 搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">详情页识别当前番号，并在 x1080x 站点搜索。</small></span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
       <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
@@ -644,6 +646,27 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
       <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
     </div>`;
+
+  organizeSettingsPanel(form, [
+  {
+    "key": "search",
+    "title": "搜索功能",
+    "description": "自动跳转与跨站搜索",
+    "settings": [
+      "search-auto-redirect",
+      "agaghhh-search"
+    ]
+  },
+  {
+    "key": "buttons",
+    "title": "文章操作",
+    "description": "快速复制番号及下载预览图",
+    "settings": [
+      "copy-code",
+      "preview-download"
+    ]
+  }
+]);
 
   const redirectInput = form.querySelector('[data-setting="search-auto-redirect"]');
   const agaghhhSearchInput = form.querySelector('[data-setting="agaghhh-search"]');

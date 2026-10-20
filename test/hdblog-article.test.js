@@ -128,7 +128,7 @@ test('ERROR-404 page uses URL slug code for agaghhh search instead of ERROR-404'
     assert.ok(button);
     button.click();
     assert.deepEqual(opened, [{
-      url: 'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=PJAM-034&orderby=lastpost&ascdesc=desc',
+      url: 'https://1080xin.com/search.php?mod=forum&searchsubmit=yes&srchtxt=PJAM-034&orderby=lastpost&ascdesc=desc',
       options: { active: true, insert: true, setParent: true },
     }]);
   } finally {

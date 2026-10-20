@@ -1,3 +1,5 @@
+import { addSettingsExtraSection } from './settings-layout.js';
+
 export const HDBLOG_IMAGE_HOSTS_KEY = 'x1080x-ex:hdblog-image-hosts';
 
 export const DEFAULT_HDBLOG_IMAGE_HOSTS = Object.freeze([
@@ -78,7 +80,13 @@ function enhanceHdblogSettingsPanel(document) {
   help.textContent = `内置兼容：${DEFAULT_HDBLOG_IMAGE_HOSTS.join('、')}。可填主域名或完整 URL；脚本也会自动识别常见 /show/ 图片展示页。`;
 
   label.append(title, textarea, help);
-  panel.insertBefore(label, panel.lastElementChild || null);
+  if (!addSettingsExtraSection(panel, {
+    key: 'image-hosts',
+    title: '图床设置',
+    description: '扩展 Preview 图片的来源域名',
+  }, label)) {
+    panel.insertBefore(label, panel.lastElementChild || null);
+  }
 
   if (panel.getAttribute(IMAGE_HOSTS_BOUND_ATTR) !== '1') {
     panel.setAttribute(IMAGE_HOSTS_BOUND_ATTR, '1');

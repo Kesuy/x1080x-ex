@@ -1,3 +1,5 @@
+import { isAgaghhhHost } from './site-domains.js';
+import { addSettingsExtraSection } from './settings-layout.js';
 import {
   getQbSettings,
   saveQbSettings,
@@ -7,11 +9,6 @@ import {
 const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
 const QB_SECTION_ATTR = 'data-x1080x-qb-settings';
 const QB_BOUND_ATTR = 'data-x1080x-qb-settings-bound';
-
-function isAgaghhhHost(locationObject = globalThis.location) {
-  const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'agaghhh.cc' || hostname.endsWith('.agaghhh.cc');
-}
 
 function setStatus(element, message, kind = '') {
   if (!element) return;
@@ -24,11 +21,13 @@ export function enhanceQbittorrentSettingsPanel(
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
   const overlay = document?.getElementById(SETTINGS_PANEL_ID);
-  const form = overlay?.querySelector('form');
+  const form = overlay?.shadowRoot?.querySelector('form') || overlay?.querySelector('form');
   if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
 
   const current = getQbSettings();
-  form.style.width = 'min(640px, 100%)';
+  if (!form.querySelector('[data-settings-workspace]')) {
+    form.style.width = 'min(640px, 100%)';
+  }
   form.setAttribute('autocomplete', 'off');
 
   const section = document.createElement('div');
@@ -64,8 +63,16 @@ export function enhanceQbittorrentSettingsPanel(
     </div>
     <small style="display:block;margin-top:9px;color:#666">用户名和密码保存在 Tampermonkey / Violentmonkey 的脚本专属存储中。建议 WebUI 仅在可信局域网使用，或使用 HTTPS。</small>`;
 
-  const actions = form.lastElementChild;
-  form.insertBefore(section, actions || null);
+  if (addSettingsExtraSection(form, {
+    key: 'qbittorrent',
+    title: 'qBittorrent',
+    description: '下载失败时通过 qBittorrent 获取种子元数据',
+  }, section)) {
+    section.style.cssText = 'margin:0;padding:0;border:0;background:transparent';
+  } else {
+    const actions = form.lastElementChild;
+    form.insertBefore(section, actions || null);
+  }
 
   const enabledInput = section.querySelector('[data-setting="qb-enabled"]');
   const urlInput = section.querySelector('[data-setting="qb-url"]');
