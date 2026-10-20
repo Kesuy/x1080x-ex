@@ -301,7 +301,7 @@ export async function fetchOfficialPreviewFallbackForCode(
 
 export function injectOfficialPreviewFallbackSetting(document = globalThis.document) {
   const overlay = document?.getElementById('x1080x-ex-settings-panel');
-  const form = overlay?.querySelector('form');
+  const form = overlay?.shadowRoot?.querySelector('form') || overlay?.querySelector('form');
   const master = form?.querySelector('[data-setting="hdblog-preview"]');
   if (!form || !master) return false;
 
