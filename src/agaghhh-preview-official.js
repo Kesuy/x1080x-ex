@@ -1,3 +1,4 @@
+import { isAgaghhhHost } from './site-domains.js';
 const AV_WIKI_ORIGIN = 'https://av-wiki.net';
 const FANZA_IMAGE_ORIGIN = 'https://pics.dmm.co.jp';
 const FANZA_REFERER = 'https://www.dmm.co.jp/';
@@ -296,11 +297,6 @@ export async function fetchOfficialPreviewFallbackForCode(
     referer: '',
     imageUrls: [],
   };
-}
-
-function isAgaghhhHost(locationObject) {
-  const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'agaghhh.cc' || hostname.endsWith('.agaghhh.cc');
 }
 
 export function injectOfficialPreviewFallbackSetting(document = globalThis.document) {

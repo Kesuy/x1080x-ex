@@ -1,3 +1,4 @@
+import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
@@ -304,7 +305,7 @@ function javfreeCodeFromDocument(document, locationObject = document?.location) 
 export function buildJavfreeAgaghhhSearchUrl(code) {
   const normalized = String(code || '').trim().toUpperCase();
   if (!normalized) return '';
-  return 'https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt='
+  return getAgaghhhOrigin() + '/search.php?mod=forum&searchsubmit=yes&srchtxt='
     + encodeURIComponent(normalized)
     + '&orderby=lastpost&ascdesc=desc';
 }

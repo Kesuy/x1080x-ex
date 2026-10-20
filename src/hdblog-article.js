@@ -1,3 +1,4 @@
+import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
 import { partitionPreviewCandidates } from './hdblog-preview-variants.js';
@@ -372,7 +373,7 @@ export function hdblogAgaghhhSearchKeyword(code) {
 export function buildAgaghhhSearchUrl(code) {
   const keyword = hdblogAgaghhhSearchKeyword(code);
   if (!keyword) return '';
-  return `https://agaghhh.cc/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
+  return `${getAgaghhhOrigin()}/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
 }
 
 function openSearchTab(document, url) {

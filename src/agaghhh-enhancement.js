@@ -1,4 +1,6 @@
 import { parseThreadTitle } from './core.js';
+import { isAgaghhhHost } from './site-domains.js';
+export { isAgaghhhHost };
 import { copyCodeWithButtonFeedback } from './clipboard.js';
 import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
 import {
@@ -48,11 +50,6 @@ const REAL_ACTRESS_BYPASS_ATTR = 'data-x1080x-real-actress-bypass';
 
 function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
-}
-
-export function isAgaghhhHost(locationObject = globalThis.location) {
-  const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'agaghhh.cc' || hostname.endsWith('.agaghhh.cc');
 }
 
 function legacyDefault() {
