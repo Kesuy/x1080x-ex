@@ -63,11 +63,13 @@ export function enhanceQbittorrentSettingsPanel(
     </div>
     <small style="display:block;margin-top:9px;color:#666">用户名和密码保存在 Tampermonkey / Violentmonkey 的脚本专属存储中。建议 WebUI 仅在可信局域网使用，或使用 HTTPS。</small>`;
 
-  if (!addSettingsExtraSection(form, {
+  if (addSettingsExtraSection(form, {
     key: 'qbittorrent',
     title: 'qBittorrent',
     description: '下载失败时通过 qBittorrent 获取种子元数据',
   }, section)) {
+    section.style.cssText = 'margin:0;padding:0;border:0;background:transparent';
+  } else {
     const actions = form.lastElementChild;
     form.insertBefore(section, actions || null);
   }
