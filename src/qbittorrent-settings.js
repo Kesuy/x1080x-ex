@@ -1,3 +1,4 @@
+import { isAgaghhhHost } from './site-domains.js';
 import {
   getQbSettings,
   saveQbSettings,
@@ -7,11 +8,6 @@ import {
 const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
 const QB_SECTION_ATTR = 'data-x1080x-qb-settings';
 const QB_BOUND_ATTR = 'data-x1080x-qb-settings-bound';
-
-function isAgaghhhHost(locationObject = globalThis.location) {
-  const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'agaghhh.cc' || hostname.endsWith('.agaghhh.cc');
-}
 
 function setStatus(element, message, kind = '') {
   if (!element) return;
