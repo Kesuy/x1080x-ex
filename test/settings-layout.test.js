@@ -46,6 +46,16 @@ test('x1080x groups settings without replacing live form controls and saves shar
   assert.equal(form.querySelector('[data-settings-section="history"]').hidden, false);
   assert.equal(form.querySelector('[data-settings-section="batch"]').hidden, true);
   history.checked = true;
+  // Arrow keys switch categories, and invalid fields reveal their category.
+  const historyTab = form.querySelector('[data-settings-tab="history"]');
+  historyTab.focus();
+  historyTab.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+    key: 'ArrowRight', bubbles: true, cancelable: true,
+  }));
+  assert.equal(form.querySelector('[data-settings-section="filter"]').hidden, false);
+  const hiddenNumber = form.querySelector('[data-setting="batch-open-interval-min"]');
+  hiddenNumber.dispatchEvent(new dom.window.Event('invalid', { bubbles: false, cancelable: true }));
+  assert.equal(form.querySelector('[data-settings-section="batch"]').hidden, false);
   form.querySelector('[data-settings-tab="download"]').click();
   download.checked = false;
   form.querySelector('[data-settings-tab="history"]').click();
