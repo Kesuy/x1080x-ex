@@ -25,7 +25,9 @@ export function enhanceQbittorrentSettingsPanel(
   if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
 
   const current = getQbSettings();
-  form.style.width = 'min(640px, 100%)';
+  if (!form.querySelector('[data-settings-workspace]')) {
+    form.style.width = 'min(640px, 100%)';
+  }
   form.setAttribute('autocomplete', 'off');
 
   const section = document.createElement('div');
