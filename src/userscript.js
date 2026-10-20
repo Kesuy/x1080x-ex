@@ -99,19 +99,19 @@ function saveDomains(domains) {
 
 function registerSettingsMenu() {
   if (window.top !== window.self) return;
-  GM_registerMenuCommand('⭐ 设置 agaghhh 主域名（最高优先级）', () => {
+  GM_registerMenuCommand('🌐 设置 x1080x 站点域名', () => {
     const input = window.prompt(
-      '设置 agaghhh 站点当前主域名（优先用于站点功能、跨站搜索及浏览进度）。旧域名和 1080xin.com 始终保留为兼容别名：',
+      '请输入 x1080x 站点当前使用的域名（如 1080xin.com）。跨站搜索及浏览进度链接将使用该地址，旧域名仍可识别：',
       getAgaghhhPrimaryDomain()
     );
     if (input === null) return;
     const domain = parseAgaghhhPrimaryDomain(input);
     if (!domain) {
-      window.alert('请输入单个有效域名，例如 1080xin.com');
+      window.alert('请输入有效的站点域名，例如 1080xin.com');
       return;
     }
     GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
-    window.alert(`主域名已设为 ${domain}，旧站点功能和历史记录共用。刷新页面后生效。`);
+    window.alert(`x1080x 站点域名已保存：${domain}\n刷新页面后生效。原有浏览记录将继续保留。`);
   });
   GM_registerMenuCommand('⚙️ 设置匹配域名', () => {
     const current = getConfiguredDomains().join('\n');
