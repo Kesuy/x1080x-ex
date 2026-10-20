@@ -1,3 +1,4 @@
+import { organizeSettingsPanel } from './settings-layout.js';
 import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
@@ -1284,6 +1285,68 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
       <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
     </div>`;
+
+  organizeSettingsPanel(panel, [
+  {
+    "key": "layout",
+    "title": "文章布局",
+    "description": "主内容区显示宽度与页面布局",
+    "settings": [
+      "layout-enabled",
+      "width"
+    ]
+  },
+  {
+    "key": "download",
+    "title": "下载与按钮",
+    "description": "下载区域、图片下载和常用操作",
+    "settings": [
+      "show-downloads",
+      "show-image-download",
+      "download-guard",
+      "cross-search",
+      "copy-code"
+    ]
+  },
+  {
+    "key": "preview",
+    "title": "预览与修复",
+    "description": "图片展开与失效文章的后备搜索",
+    "settings": [
+      "expand-preview",
+      "javfree-preview-fallback",
+      "deleted-javfree-search"
+    ]
+  },
+  {
+    "key": "batch",
+    "title": "批量打开",
+    "description": "后台顺序打开主题与时间间隔",
+    "settings": [
+      "batch-open",
+      "batch-open-interval-min"
+    ]
+  },
+  {
+    "key": "history",
+    "title": "浏览记录",
+    "description": "保存已访问的主题、进度定位和颜色标记",
+    "settings": [
+      "batch-open-history",
+      "batch-open-unopened-only"
+    ]
+  },
+  {
+    "key": "filter",
+    "title": "关键词过滤",
+    "description": "搜索页和普通列表页的关键词屏蔽",
+    "settings": [
+      "search-filter",
+      "browse-filter",
+      "keywords"
+    ]
+  }
+]);
 
   const layoutInput = panel.querySelector('[data-setting="layout-enabled"]');
   const widthInput = panel.querySelector('[data-setting="width"]');
