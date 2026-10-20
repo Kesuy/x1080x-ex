@@ -1,4 +1,5 @@
 import { isAgaghhhHost } from './site-domains.js';
+import { addSettingsExtraSection } from './settings-layout.js';
 import {
   getQbSettings,
   saveQbSettings,
@@ -20,7 +21,7 @@ export function enhanceQbittorrentSettingsPanel(
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
   const overlay = document?.getElementById(SETTINGS_PANEL_ID);
-  const form = overlay?.querySelector('form');
+  const form = overlay?.shadowRoot?.querySelector('form') || overlay?.querySelector('form');
   if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
 
   const current = getQbSettings();
@@ -60,8 +61,14 @@ export function enhanceQbittorrentSettingsPanel(
     </div>
     <small style="display:block;margin-top:9px;color:#666">用户名和密码保存在 Tampermonkey / Violentmonkey 的脚本专属存储中。建议 WebUI 仅在可信局域网使用，或使用 HTTPS。</small>`;
 
-  const actions = form.lastElementChild;
-  form.insertBefore(section, actions || null);
+  if (!addSettingsExtraSection(form, {
+    key: 'qbittorrent',
+    title: 'qBittorrent',
+    description: '下载失败时通过 qBittorrent 获取种子元数据',
+  }, section)) {
+    const actions = form.lastElementChild;
+    form.insertBefore(section, actions || null);
+  }
 
   const enabledInput = section.querySelector('[data-setting="qb-enabled"]');
   const urlInput = section.querySelector('[data-setting="qb-url"]');
