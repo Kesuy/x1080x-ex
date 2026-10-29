@@ -256,3 +256,51 @@ test('新域名设置页统一显示 x1080x 名称', () => {
   });
   dom.window.close();
 });
+
+test('新版详情页搜索、复制、下载按钮统一放在收藏左侧，并在 React 重绘后恢复', async () => {
+  const makeHeader = () => `<header class="thread-header">
+    <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+      <button class="button secondary dock-side small">收藏</button>
+      <button class="button dock-main small">回复主题</button>
+    </div></span></div>
+    <h1><span class="topic-tags">有码HD</span>FNS-267 [BT] 示例标题</h1>
+    <button id="x1080x-ex-download" type="button">⬇ 下载资源</button>
+  </header>`;
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <div class="panel detail-panel">${makeHeader()}</div>
+    <article class="post" id="first-post"><div class="post-text">内容</div></article>
+  </body></html>`, { url: 'https://1080xin.com/resources/7OvLVLtpZ0qy7wEUHSsi7D' });
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => (
+    key === 'x1080x-ex:agaghhh-hdblog-preview-enabled' ? false
+      : key === 'x1080x-ex:agaghhh-real-actress-enabled' ? false
+        : fallback
+  );
+  try {
+    installAgaghhhEnhancement(dom.window.document, dom.window.location, () => {});
+    const doc = dom.window.document;
+    const group = doc.getElementById('x1080x-ex-resource-actions');
+    assert.ok(group);
+    assert.equal(group.nextElementSibling, doc.querySelector('.thread-actions .dock-side'));
+    assert.deepEqual([...group.children].map((button) => button.id), [
+      'x1080x-ex-download',
+      'x1080x-ex-agaghhh-hdblog-search',
+      'x1080x-ex-agaghhh-copy-code',
+    ]);
+
+    doc.querySelector('.thread-header').outerHTML = makeHeader();
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 20));
+    const restoredGroup = doc.getElementById('x1080x-ex-resource-actions');
+    assert.ok(restoredGroup);
+    assert.equal(restoredGroup.nextElementSibling, doc.querySelector('.thread-actions .dock-side'));
+    assert.deepEqual([...restoredGroup.children].map((button) => button.id), [
+      'x1080x-ex-download',
+      'x1080x-ex-agaghhh-hdblog-search',
+      'x1080x-ex-agaghhh-copy-code',
+    ]);
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+    dom.window.close();
+  }
+});
