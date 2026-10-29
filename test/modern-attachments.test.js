@@ -32,41 +32,31 @@ test('collects the original x1080x ZIP attachment with no invented download URL'
   assert.equal(files[0].button.closest('.attachment').getAttribute('data-slot-id'), '4bLI6T1ydu8yKs7WDHAxjf');
 });
 
-test('a RAR attachment is forwarded to the original website button after user confirmation', () => {
+test('a RAR attachment is forwarded directly to the original website button without an extra prompt', () => {
   const dom = mkDoc(attachment('demo.rar', 'rar-slot'));
   const doc = dom.window.document;
   let count = 0;
   doc.querySelector('.file-get button').addEventListener('click', () => { count += 1; });
-  let promptText = '';
-  dom.window.confirm = (message) => { promptText = message; return true; };
-  const result = requestModernNativeAttachmentDownload(doc, dom.window);
+  dom.window.confirm = () => { throw new Error('userscript must not display a confirmation'); };
+  dom.window.prompt = () => { throw new Error('userscript must not display a prompt'); };
+  const result = requestModernNativeAttachmentDownload(doc);
   assert.equal(result.status, 'triggered');
-  assert.equal(result.name, 'demo.rar');
+  assert.equal(result.total, 1);
+  assert.deepEqual(result.names, ['demo.rar']);
   assert.equal(count, 1);
-  assert.match(promptText, /demo\.rar/);
-  assert.match(promptText, /下载次数/);
 });
 
-test('rejecting the confirmation consumes no download clicks', () => {
-  const dom = mkDoc(attachment('demo.rar', 'rar-slot'));
-  let count = 0;
-  dom.window.document.querySelector('.file-get button').addEventListener('click', () => { count += 1; });
-  dom.window.confirm = () => false;
-  assert.equal(requestModernNativeAttachmentDownload(dom.window.document, dom.window).status, 'cancelled');
-  assert.equal(count, 0);
-});
-
-test('multiple ZIP/RAR attachments require explicit single selection, never bulk-click the charged buttons', () => {
+test('multiple ZIP/RAR attachments are passed to the native site controls once each without prompts', () => {
   const dom = mkDoc(attachment('a.zip', 'a') + attachment('b.rar', 'b'));
   const clicks = [];
   dom.window.document.querySelectorAll('.file-get button').forEach((button, index) => {
     button.addEventListener('click', () => clicks.push(index));
   });
-  dom.window.prompt = () => '2';
-  dom.window.confirm = () => true;
-  const result = requestModernNativeAttachmentDownload(dom.window.document, dom.window);
-  assert.equal(result.name, 'b.rar');
-  assert.deepEqual(clicks, [1]);
+  dom.window.prompt = () => { throw new Error('no selection prompt'); };
+  dom.window.confirm = () => { throw new Error('no confirmation prompt'); };
+  const result = requestModernNativeAttachmentDownload(dom.window.document);
+  assert.equal(result.status, 'triggered');
+  assert.deepEqual(clicks, [0, 1]);
 });
 
 test('no modern attachment is discovered in unrelated posts or magnet-only resources', () => {
