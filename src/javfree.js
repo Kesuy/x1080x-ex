@@ -306,9 +306,8 @@ function javfreeCodeFromDocument(document, locationObject = document?.location) 
 export function buildJavfreeAgaghhhSearchUrl(code) {
   const normalized = String(code || '').trim().toUpperCase();
   if (!normalized) return '';
-  return getAgaghhhOrigin() + '/search.php?mod=forum&searchsubmit=yes&srchtxt='
-    + encodeURIComponent(normalized)
-    + '&orderby=lastpost&ascdesc=desc';
+  const fc2 = normalized.match(/^FC2[-_ ]*(?:PPV[-_ ]*)?(\d{5,9})$/i);
+  return `${getAgaghhhOrigin()}/search?q=${encodeURIComponent(fc2 ? fc2[1] : normalized)}`;
 }
 
 function openJavfreeAgaghhhSearch(document, code) {
