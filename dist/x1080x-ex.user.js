@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.29
-// @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
+// @version      1.10.31
+// @description  一键下载主楼资源，增强 hdblog 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues
@@ -8744,6 +8744,442 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return observer;
   }
 
+  // src/sehuatang.js
+  var PREFIX = "x1080x-ex:sehuatang-";
+  var SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + "attachments-enabled";
+  var SHT_DOWNLOAD_ENABLED_KEY = PREFIX + "attachment-download-enabled";
+  var SHT_REPLY_ENABLED_KEY = PREFIX + "quick-reply-enabled";
+  var SHT_HIDDEN_NOTICE_ENABLED_KEY = PREFIX + "reply-hidden-notice-enabled";
+  var SHT_REPLY_PHRASE_KEY = PREFIX + "reply-phrase";
+  var SHT_POSITION_KEY = PREFIX + "toolbar-position";
+  var DEFAULT_SHT_REPLY_PHRASE = "\u611F\u8C22\u697C\u4E3B\u5206\u4EAB\uFF0C\u8F9B\u82E6\u4E86\uFF01";
+  var TOOLBAR_ID = "x1080x-ex-sehuatang-toolbar";
+  var PANEL_ID = "x1080x-ex-sehuatang-settings";
+  var LOCATE_HASH = "#x1080x-ex-locate-attachments";
+  var DOWNLOAD_HASH = "#x1080x-ex-download-attachments";
+  function read(key, fallback) {
+    return typeof GM_getValue === "function" ? GM_getValue(key, fallback) : fallback;
+  }
+  function save(key, value) {
+    if (typeof GM_setValue === "function") GM_setValue(key, value);
+  }
+  function isSehuatangHost(location2 = globalThis.location) {
+    return /^(www\.)?sehuatang\.org$/i.test(location2?.hostname || "");
+  }
+  function getSehuatangSettings() {
+    const phrase = read(SHT_REPLY_PHRASE_KEY, DEFAULT_SHT_REPLY_PHRASE);
+    return {
+      attachments: read(SHT_ATTACHMENTS_ENABLED_KEY, true) !== false,
+      download: read(SHT_DOWNLOAD_ENABLED_KEY, true) !== false,
+      reply: read(SHT_REPLY_ENABLED_KEY, true) !== false,
+      hiddenNotice: read(SHT_HIDDEN_NOTICE_ENABLED_KEY, true) !== false,
+      phrase: typeof phrase === "string" ? phrase : DEFAULT_SHT_REPLY_PHRASE
+    };
+  }
+  function isThread(location2) {
+    return /^\/thread-\d+-\d+-\d+\.html$/i.test(location2.pathname) || location2.pathname.endsWith("/forum.php") && new URLSearchParams(location2.search).get("mod") === "viewthread" && /^\d+$/.test(new URLSearchParams(location2.search).get("tid") || "");
+  }
+  function originalPost(document2) {
+    const floor = [...document2.querySelectorAll('#postlist [id^="postnum"]')].find((node) => /^(楼主|樓主|1\s*#|1\s*楼)$/.test(node.textContent.trim()));
+    const id = floor?.id.replace(/^postnum/, "");
+    return id ? document2.getElementById("post_" + id) || document2.getElementById("pid" + id) : null;
+  }
+  function hasSehuatangReplyHiddenContent(document2) {
+    const post = originalPost(document2);
+    if (!post) return false;
+    const body = post.querySelector('[id^="postmessage_"]');
+    return [...body?.querySelectorAll(".locked") || []].some((node) => {
+      if (node.closest('.quote, blockquote, .tip, [id$="_menu"]')) return false;
+      const text = node.textContent.replace(/\s+/g, "");
+      if (!/[隐隱]藏/.test(text) || !/回[复覆復]/.test(text)) return false;
+      for (let element = node; element && post.contains(element); element = element.parentElement) {
+        const style = document2.defaultView?.getComputedStyle(element);
+        if (element.hidden || style?.display === "none" || style?.visibility === "hidden") return false;
+      }
+      return true;
+    });
+  }
+  function collectSehuatangAttachments(document2) {
+    const post = originalPost(document2);
+    if (!post) return [];
+    const seen = /* @__PURE__ */ new Set();
+    return [...post.querySelectorAll("a[href]")].flatMap((link) => {
+      if (link.querySelector("img") || link.closest('[id$="_menu"], .tip, .pattimg')) return [];
+      let url;
+      try {
+        url = new URL(link.getAttribute("href"), document2.baseURI);
+      } catch {
+        return [];
+      }
+      const aid = url.searchParams.get("aid");
+      if (url.origin !== document2.location.origin || !aid || !(url.pathname.endsWith("/attachment.php") || url.pathname.endsWith("/forum.php") && url.searchParams.get("mod") === "attachment") || seen.has(aid)) return [];
+      seen.add(aid);
+      return [{ link, name: link.textContent.trim() || "\u9644\u4EF6 " + seen.size }];
+    });
+  }
+  function sehuatangFirstPageUrl(location2, action = "locate") {
+    const url = new URL(location2.href);
+    url.pathname = url.pathname.replace(/^(\/thread-\d+)-\d+-(\d+\.html)$/i, "$1-1-$2");
+    for (const key of ["page", "authorid", "ordertype", "pid", "goto"]) url.searchParams.delete(key);
+    if (url.pathname.endsWith("/forum.php")) url.searchParams.set("page", "1");
+    url.hash = action === "download" ? DOWNLOAD_HASH : LOCATE_HASH;
+    return url.href;
+  }
+  function createSehuatangButton(document2, text, action) {
+    const node = document2.createElement("button");
+    node.type = "button";
+    node.textContent = text;
+    node.dataset.action = action;
+    return node;
+  }
+  function focusAttachment(link) {
+    link.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    link.focus({ preventScroll: true });
+    link.animate?.([
+      { outline: "4px solid #f59e0b", backgroundColor: "#fef3c7" },
+      { outline: "4px solid #f59e0b", backgroundColor: "#fef3c7", offset: 0.8 },
+      { outline: "0 solid transparent", backgroundColor: "transparent" }
+    ], { duration: 2500 });
+  }
+  function downloadSehuatangAttachment(document2, link) {
+    if (!getSehuatangSettings().download) {
+      return "\u9644\u4EF6\u4E0B\u8F7D\u5DF2\u5173\u95ED\uFF0C\u8BF7\u5728\u300C\u2699\uFE0F 98\u5802\u8BBE\u7F6E\u300D\u4E2D\u5F00\u542F\u3002";
+    }
+    const file = collectSehuatangAttachments(document2).find((file2) => file2.link === link);
+    if (!file) {
+      return "\u9644\u4EF6\u94FE\u63A5\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u697C\u4E3B\u9644\u4EF6\u3002";
+    }
+    const originalDownload = link.getAttribute("download");
+    link.setAttribute("download", file.name);
+    try {
+      link.click();
+    } finally {
+      if (originalDownload === null) link.removeAttribute("download");
+      else link.setAttribute("download", originalDownload);
+    }
+    return "\u5DF2\u89E6\u53D1\u7F51\u7AD9\u9644\u4EF6\u4E0B\u8F7D\uFF0C\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u6216\u7F51\u7AD9\u63D0\u793A\u3002";
+  }
+  function submitSehuatangQuickReply(document2, phrase) {
+    const editor = document2.getElementById("fastpostmessage");
+    const submit = document2.getElementById("fastpostsubmit");
+    const form = document2.getElementById("fastpostform");
+    if (!editor || !submit || !form?.contains(editor) || !form.contains(submit) || editor.disabled || editor.readOnly || submit.disabled) {
+      document2.getElementById("f_pst")?.scrollIntoView?.({ block: "center" });
+      return { submitted: false, message: "\u5FEB\u6377\u56DE\u590D\u4E0D\u53EF\u7528\uFF0C\u8BF7\u5148\u767B\u5F55\u6216\u67E5\u770B\u7F51\u7AD9\u7684\u56DE\u590D\u6743\u9650\u63D0\u793A\u3002" };
+    }
+    const text = String(phrase || "").trim();
+    if (!text) return { submitted: false, message: "\u8BF7\u5148\u5728\u300C\u2699\uFE0F 98\u5802\u8BBE\u7F6E\u300D\u4E2D\u586B\u5199\u56DE\u590D\u77ED\u8BED\u3002" };
+    if (editor.value.trim()) {
+      editor.scrollIntoView?.({ block: "center" });
+      editor.focus({ preventScroll: true });
+      return { submitted: false, message: "\u56DE\u590D\u6846\u5DF2\u6709\u8349\u7A3F\uFF0C\u5DF2\u4FDD\u7559\uFF1B\u8BF7\u5728\u539F\u56DE\u590D\u6846\u68C0\u67E5\u5E76\u53D1\u8868\u3002" };
+    }
+    const view = document2.defaultView;
+    editor.value = text;
+    editor.dispatchEvent(new view.Event("input", { bubbles: true }));
+    editor.dispatchEvent(new view.Event("change", { bubbles: true }));
+    form.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    submit.dispatchEvent(new view.MouseEvent("mouseover", { bubbles: true }));
+    submit.click();
+    return { submitted: true, message: "\u5DF2\u4EA4\u7ED9\u7F51\u7AD9\u53D1\u8868\uFF0C\u8BF7\u67E5\u770B\u539F\u751F\u56DE\u590D\u7ED3\u679C\uFF1B\u5982\u9700\u9A8C\u8BC1\u7801\u8BF7\u624B\u52A8\u5B8C\u6210\u3002" };
+  }
+  function openSehuatangSettings(document2 = globalThis.document) {
+    if (!document2?.body) return null;
+    document2.getElementById(PANEL_ID)?.remove();
+    const settings = getSehuatangSettings();
+    const overlay = document2.createElement("div");
+    overlay.id = PANEL_ID;
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483646",
+      display: "grid",
+      placeItems: "center",
+      padding: "16px",
+      background: "#0006"
+    });
+    const form = document2.createElement("form");
+    Object.assign(form.style, {
+      width: "min(440px, 100%)",
+      maxHeight: "85vh",
+      overflow: "auto",
+      padding: "24px",
+      boxSizing: "border-box",
+      background: "#fff",
+      color: "#222",
+      borderRadius: "12px",
+      font: "14px/1.7 system-ui, sans-serif"
+    });
+    form.innerHTML = `<h2 style="margin:0 0 16px">98\u5802\u8BBE\u7F6E</h2>
+    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="attachments"> \u9644\u4EF6\u5217\u8868\u663E\u793A\u5B9A\u4F4D\u56FE\u6807</label>
+    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="download"> \u9644\u4EF6\u5217\u8868\u663E\u793A\u4E0B\u8F7D\u56FE\u6807</label>
+    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="reply"> \u663E\u793A\u300C\u5FEB\u6377\u56DE\u590D\u300D\u6309\u94AE</label>
+    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="hidden-notice"> \u63D0\u793A\u697C\u4E3B\u56DE\u590D\u540E\u53EF\u89C1\u7684\u9690\u85CF\u5185\u5BB9</label>
+    <label style="display:block">\u56DE\u590D\u77ED\u8BED<textarea data-setting="phrase" rows="3" style="display:block;width:100%;box-sizing:border-box;margin-top:6px"></textarea></label>
+    <p>\u70B9\u51FB\u5FEB\u6377\u56DE\u590D\u4F1A\u7ACB\u5373\u4F7F\u7528\u8BE5\u77ED\u8BED\u53D1\u8868\uFF0C\u5DF2\u6709\u8349\u7A3F\u65F6\u4FDD\u7559\u8349\u7A3F\u3002\u9A8C\u8BC1\u7801\u3001\u6743\u9650\u548C\u9650\u6D41\u4ECD\u7531\u7F51\u7AD9\u5904\u7406\u3002</p>
+    <p>\u6D6E\u52A8\u680F\u76F4\u63A5\u5217\u51FA\u697C\u4E3B\u9644\u4EF6\uFF0C\u6BCF\u4E2A\u6587\u4EF6\u53F3\u4FA7\u63D0\u4F9B\u5B9A\u4F4D\u548C\u4E0B\u8F7D\u56FE\u6807\uFF1B\u60AC\u6D6E\u56FE\u6807\u53EF\u67E5\u770B\u7528\u9014\u3002\u4E0B\u8F7D\u6CBF\u7528\u7F51\u7AD9\u539F\u751F\u94FE\u63A5\u3001\u6743\u9650\u53CA\u4ED8\u8D39\u786E\u8BA4\u3002</p>
+    <p>\u62D6\u52A8\u6D6E\u52A8\u680F\u9876\u90E8\u53EF\u79FB\u52A8\u5E76\u8BB0\u4F4F\u4F4D\u7F6E\uFF0C\u6309\u94AE\u968F\u9875\u9762\u6EDA\u52A8\u4FDD\u6301\u53EF\u89C1\u3002</p>
+    <button type="button" data-action="reset-position">\u91CD\u7F6E\u6309\u94AE\u4F4D\u7F6E</button>
+    <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:20px">
+      <button type="button" data-action="cancel">\u53D6\u6D88</button><button type="submit">\u4FDD\u5B58</button>
+    </div>`;
+    const field = (name) => form.querySelector(`[data-setting="${name}"]`);
+    field("attachments").checked = settings.attachments;
+    field("download").checked = settings.download;
+    field("reply").checked = settings.reply;
+    field("hidden-notice").checked = settings.hiddenNotice;
+    field("phrase").value = settings.phrase;
+    let resetPosition = false;
+    form.querySelector('[data-action="reset-position"]').addEventListener("click", (event) => {
+      resetPosition = true;
+      event.target.textContent = "\u4FDD\u5B58\u540E\u6062\u590D\u9ED8\u8BA4\u4F4D\u7F6E";
+    });
+    form.querySelector('[data-action="cancel"]').addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) overlay.remove();
+    });
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") overlay.remove();
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (field("reply").checked && !field("phrase").value.trim()) {
+        field("phrase").setCustomValidity("\u8BF7\u586B\u5199\u56DE\u590D\u77ED\u8BED\uFF0C\u6216\u5173\u95ED\u5FEB\u6377\u56DE\u590D\u6309\u94AE\u3002");
+        field("phrase").reportValidity();
+        return;
+      }
+      save(SHT_ATTACHMENTS_ENABLED_KEY, field("attachments").checked);
+      save(SHT_DOWNLOAD_ENABLED_KEY, field("download").checked);
+      save(SHT_REPLY_ENABLED_KEY, field("reply").checked);
+      save(SHT_HIDDEN_NOTICE_ENABLED_KEY, field("hidden-notice").checked);
+      save(SHT_REPLY_PHRASE_KEY, field("phrase").value.trim());
+      if (resetPosition) save(SHT_POSITION_KEY, null);
+      overlay.remove();
+      installSehuatangToolbar(document2);
+    });
+    field("phrase").addEventListener("input", () => field("phrase").setCustomValidity(""));
+    field("reply").addEventListener("change", () => field("phrase").setCustomValidity(""));
+    overlay.append(form);
+    document2.body.append(overlay);
+    return overlay;
+  }
+  var installations = /* @__PURE__ */ new WeakMap();
+  function installSehuatangToolbar(document2) {
+    installations.get(document2)?.();
+    document2.getElementById(TOOLBAR_ID)?.remove();
+    const view = document2.defaultView;
+    const settings = getSehuatangSettings();
+    if (!isSehuatangHost(view.location) || !isThread(view.location) || !settings.attachments && !settings.download && !settings.reply && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2))) return null;
+    const host = document2.createElement("div");
+    host.id = TOOLBAR_ID;
+    Object.assign(host.style, { position: "fixed", zIndex: "2147483640", width: "220px", maxWidth: "calc(100vw - 16px)" });
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<style>
+    :host{font:13px/1.5 system-ui,sans-serif;color:#334155;color-scheme:light}
+    *{box-sizing:border-box} .bar{padding:8px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 6px 24px #0f172a26;max-height:calc(100vh - 16px);overflow-y:auto}
+    .handle{cursor:move;touch-action:none;user-select:none;text-align:center;font-size:12px;color:#64748b;padding:2px 0 8px}
+    button{font:inherit;cursor:pointer;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#334155;padding:9px 7px;width:100%;text-align:left;overflow-wrap:anywhere}
+    button:hover{background:#eff6ff;border-color:#93c5fd}button:focus-visible{outline:2px solid #2563eb}
+    .actions{display:flex;justify-content:center}
+    button[data-action="reply"]{width:auto;max-width:100%;min-width:112px;display:inline-flex;align-items:center;justify-content:center;padding:7px 14px;border-radius:999px;font-weight:600;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border-color:#2563eb;box-shadow:0 2px 6px #2563eb26}
+    button[data-action="reply"]:hover{background:linear-gradient(135deg,#2563eb,#1d4ed8)}button:disabled{opacity:.55;cursor:wait}
+    .attachments{margin-bottom:12px}.attachments[hidden]{display:none}
+    .attachment-list{max-height:40vh;overflow-y:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px}
+    .choices:empty{display:none}.files-heading{font-size:12px;color:#64748b;margin-bottom:6px}
+    .attachment-row,.hidden-notice{height:56px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;padding:8px;box-sizing:border-box}
+    .attachment-row+.attachment-row,.choices:not(:empty)+.hidden-notice:not(:empty){border-top:1px solid #e2e8f0}
+    .attachment-name{min-width:0;overflow-wrap:anywhere;font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .file-actions{display:flex;gap:4px}.file-actions button{width:28px;height:28px;padding:5px;display:grid;place-items:center;flex:none}
+    .file-actions svg,.attachment-lock svg{width:16px;height:16px;display:block}
+    .hidden-notice{color:#475569;font-size:12px;line-height:18px}
+    .hidden-notice:empty{display:none}.hidden-notice strong{display:block;font-weight:600}.hidden-notice small{display:block;font-size:11px;color:#64748b;line-height:16px;margin-top:2px}
+    .attachment-lock{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#94a3b8}
+    .status{font-size:12px;max-height:25vh;overflow:auto;overflow-wrap:anywhere}.status:empty{display:none}
+  </style><div class="bar"><div class="handle" title="\u62D6\u52A8\u79FB\u52A8\uFF1B\u53CC\u51FB\u6253\u5F0098\u5802\u8BBE\u7F6E">\u283F 98\u5802\u52A9\u624B</div><section class="attachments" hidden><div class="files-heading"></div><div class="attachment-list"><div class="choices"></div><div class="hidden-notice" role="note"></div></div></section><div class="actions"></div><div class="status" role="status" aria-live="polite"></div></div>`;
+    const actions = root.querySelector(".actions");
+    const choices = root.querySelector(".choices");
+    const attachmentsSection = root.querySelector(".attachments");
+    const filesHeading = root.querySelector(".files-heading");
+    const hiddenNotice = root.querySelector(".hidden-notice");
+    const status = root.querySelector(".status");
+    const handle = root.querySelector(".handle");
+    handle.addEventListener("dblclick", () => openSehuatangSettings(document2));
+    let position = read(SHT_POSITION_KEY, null);
+    let drag = null;
+    const place = () => {
+      const rect = host.getBoundingClientRect();
+      const content = document2.getElementById("ct") || document2.getElementById("wp");
+      const edge = content?.getBoundingClientRect().right;
+      const x = position?.x ?? (edge ? edge + 18 : view.innerWidth - rect.width - 18);
+      const y = position?.y ?? view.innerHeight * 0.36;
+      host.style.left = Math.max(8, Math.min(Number.isFinite(x) ? x : 8, view.innerWidth - rect.width - 8)) + "px";
+      host.style.top = Math.max(8, Math.min(Number.isFinite(y) ? y : 8, view.innerHeight - rect.height - 8)) + "px";
+    };
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      const rect = host.getBoundingClientRect();
+      drag = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+      handle.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (!drag) return;
+      position = { x: drag.left + event.clientX - drag.x, y: drag.top + event.clientY - drag.y };
+      place();
+    });
+    const finishDrag = () => {
+      if (!drag) return;
+      drag = null;
+      position = { x: parseFloat(host.style.left), y: parseFloat(host.style.top) };
+      save(SHT_POSITION_KEY, position);
+    };
+    handle.addEventListener("pointerup", finishDrag);
+    handle.addEventListener("pointercancel", finishDrag);
+    handle.addEventListener("lostpointercapture", finishDrag);
+    view.addEventListener("resize", place);
+    let replyTimer;
+    let attachmentObserver;
+    installations.set(document2, () => {
+      view.removeEventListener("resize", place);
+      view.clearTimeout(replyTimer);
+      attachmentObserver?.disconnect();
+      installations.delete(document2);
+    });
+    const renderAttachments = () => {
+      choices.replaceChildren();
+      hiddenNotice.replaceChildren();
+      attachmentsSection.hidden = true;
+      filesHeading.textContent = "";
+      status.textContent = "";
+      const hiddenReply = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2);
+      if (hiddenReply) {
+        hiddenNotice.innerHTML = '<div><strong>\u56DE\u590D\u540E\u53EF\u89C1</strong><small>\u9690\u85CF\u5185\u5BB9\uFF08\u9644\u4EF6\u6216\u94FE\u63A5\uFF09</small></div><span class="attachment-lock" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg></span>';
+        filesHeading.textContent = "\u697C\u4E3B\u9644\u4EF6";
+        attachmentsSection.hidden = false;
+      }
+      if (!settings.attachments && !settings.download) {
+        place();
+        return;
+      }
+      if (!originalPost(document2)) {
+        const action = settings.attachments ? "locate" : "download";
+        const target = sehuatangFirstPageUrl(view.location, action);
+        const current = new URL(view.location.href);
+        current.hash = action === "download" ? DOWNLOAD_HASH : LOCATE_HASH;
+        if (target !== current.href) {
+          const back = createSehuatangButton(document2, "\u67E5\u770B\u697C\u4E3B\u9644\u4EF6", "original-post");
+          back.title = "\u8FD4\u56DE\u4E3B\u9898\u7B2C\u4E00\u9875\u67E5\u770B\u697C\u4E3B\u9644\u4EF6\u5217\u8868";
+          back.addEventListener("click", () => {
+            const currentSettings = getSehuatangSettings();
+            if (currentSettings.attachments || currentSettings.download) view.location.assign(target);
+          });
+          choices.append(back);
+          filesHeading.textContent = "\u697C\u4E3B\u9644\u4EF6";
+          attachmentsSection.hidden = false;
+        } else status.textContent = "\u5F53\u524D\u9875\u9762\u672A\u627E\u5230\u697C\u4E3B\u6B63\u6587\uFF0C\u8BF7\u67E5\u770B\u7F51\u7AD9\u7684\u6743\u9650\u6216\u9690\u85CF\u5185\u5BB9\u63D0\u793A\u3002";
+        place();
+        return;
+      }
+      const attachments = collectSehuatangAttachments(document2);
+      if (!attachments.length && !hiddenReply) status.textContent = "\u697C\u4E3B\u6682\u65E0\u53EF\u89C1\u6587\u4EF6\u9644\u4EF6\uFF1B\u9690\u85CF\u6216\u4ED8\u8D39\u9644\u4EF6\u8BF7\u6309\u7F51\u7AD9\u63D0\u793A\u64CD\u4F5C\u3002";
+      else if (attachments.length) {
+        filesHeading.textContent = `\u697C\u4E3B\u9644\u4EF6\uFF08${attachments.length}\uFF09`;
+        attachmentsSection.hidden = false;
+        attachments.forEach(({ link, name }) => {
+          const row = document2.createElement("div");
+          row.className = "attachment-row";
+          const filename = document2.createElement("span");
+          filename.className = "attachment-name";
+          filename.textContent = name;
+          filename.title = name;
+          const icons = document2.createElement("div");
+          icons.className = "file-actions";
+          const addIcon = (action, label, path, handler) => {
+            const icon = createSehuatangButton(document2, "", action);
+            icon.title = label;
+            icon.setAttribute("aria-label", label);
+            icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
+            icon.addEventListener("click", handler);
+            icons.append(icon);
+          };
+          if (settings.attachments) addIcon(
+            "attachment",
+            `\u5B9A\u4F4D\u9644\u4EF6\uFF1A${name}`,
+            "M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0ZM15 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
+            () => {
+              if (getSehuatangSettings().attachments) focusAttachment(link);
+            }
+          );
+          if (settings.download) addIcon(
+            "download-attachment",
+            `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${name}`,
+            "M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5",
+            () => {
+              status.textContent = downloadSehuatangAttachment(document2, link);
+              place();
+            }
+          );
+          row.append(filename, icons);
+          choices.append(row);
+        });
+      }
+      place();
+    };
+    if (settings.reply) {
+      const replyButton = createSehuatangButton(document2, "\u{1F4AC} \u5FEB\u6377\u56DE\u590D", "reply");
+      replyButton.title = `\u7ACB\u5373\u53D1\u8868\uFF1A${settings.phrase}`;
+      replyButton.addEventListener("click", () => {
+        if (replyButton.disabled) return;
+        const current = getSehuatangSettings();
+        if (!current.reply) return;
+        const result = submitSehuatangQuickReply(document2, current.phrase);
+        status.textContent = result.message;
+        if (result.submitted) {
+          replyButton.disabled = true;
+          replyTimer = view.setTimeout(() => {
+            replyButton.disabled = false;
+          }, 1e4);
+        }
+        place();
+      });
+      actions.append(replyButton);
+    }
+    document2.body.append(host);
+    if (settings.attachments || settings.download || settings.hiddenNotice) {
+      renderAttachments();
+      const post = originalPost(document2);
+      if (post && typeof view.MutationObserver === "function") {
+        const collect = () => settings.attachments || settings.download ? collectSehuatangAttachments(document2) : [];
+        let previous = collect();
+        let previousHidden = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2);
+        attachmentObserver = new view.MutationObserver(() => {
+          const current = collect();
+          const currentHidden = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2);
+          if (currentHidden === previousHidden && current.length === previous.length && current.every((file, i) => file.link === previous[i].link && file.name === previous[i].name)) return;
+          previous = current;
+          previousHidden = currentHidden;
+          renderAttachments();
+        });
+        attachmentObserver.observe(post, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["href", "class", "style", "hidden"] });
+      }
+    }
+    place();
+    const arrivedToDownload = settings.download && view.location.hash === DOWNLOAD_HASH;
+    if (settings.attachments && view.location.hash === LOCATE_HASH || arrivedToDownload) {
+      view.history.replaceState(view.history.state, "", view.location.pathname + view.location.search);
+    }
+    return host;
+  }
+  function installSehuatangEnhancement(document2 = globalThis.document, location2 = globalThis.location) {
+    if (!document2?.body || !isSehuatangHost(location2)) return null;
+    const view = document2.defaultView;
+    if (view && view.top !== view) return null;
+    if (typeof GM_registerMenuCommand === "function") {
+      GM_registerMenuCommand("\u2699\uFE0F 98\u5802\u8BBE\u7F6E", () => openSehuatangSettings(document2));
+    }
+    return installSehuatangToolbar(document2);
+  }
+
   // src/index.js
   installFc2cmadbEnhancement();
   installX1080xSettingsMenu();
@@ -8756,4 +9192,5 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   void installHdblogJavfreeFallback();
   installHdblogSearchEnhancement();
   installJavfreeEnhancement();
+  installSehuatangEnhancement();
 })();

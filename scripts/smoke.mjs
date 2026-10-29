@@ -136,3 +136,50 @@ assert.equal(dom.window.document.querySelector('a[download]'), null);
 
 dom.window.close();
 console.log('Built userscript smoke test passed: attachment, original cover and Preview all use validated Blob downloads.');
+
+// Exercise the actual bundled entry point on 98堂, including native form dispatch.
+for (const enabled of [true, false]) {
+  const sht = new JSDOM(`<body><div id="postlist"><div id="post_1">
+    <a id="postnum1">楼主</a><div id="postmessage_1"><span id="attach_1"><a href="forum.php?mod=attachment&aid=file">附件.txt</a></span>
+    <div class="locked">如果您要查看本帖隐藏内容请<a href="forum.php?mod=post&action=reply">回复</a></div></div>
+    </div></div><form id="fastpostform"><textarea id="fastpostmessage"></textarea>
+    <button id="fastpostsubmit" type="submit">发表回复</button></form></body>`, {
+    url: 'https://www.sehuatang.org/forum.php?mod=viewthread&tid=123', runScripts: 'outside-only',
+  });
+  const menus = new Map();
+  let requests = 0;
+  let replies = 0;
+  let attachmentClicks = 0;
+  sht.window.GM_getValue = (key, fallback) => key.startsWith('x1080x-ex:sehuatang-')
+    && key.endsWith('-enabled') ? enabled : fallback;
+  sht.window.GM_setValue = () => {};
+  sht.window.GM_registerMenuCommand = (name, callback) => menus.set(name, callback);
+  sht.window.GM_xmlhttpRequest = () => requests++;
+  sht.window.fetch = () => { requests++; throw new Error('Unexpected network request'); };
+  sht.window.document.getElementById('fastpostform').addEventListener('submit', event => {
+    event.preventDefault();
+    replies++;
+  });
+  sht.window.document.querySelector('#attach_1 a').addEventListener('click', event => {
+    event.preventDefault();
+    attachmentClicks++;
+  });
+  sht.window.eval(artifact);
+  assert.ok(menus.has('⚙️ 98堂设置'));
+  const toolbar = sht.window.document.getElementById('x1080x-ex-sehuatang-toolbar');
+  assert.equal(Boolean(toolbar), enabled);
+  assert.equal(replies, 0);
+  assert.equal(attachmentClicks, 0);
+  if (enabled) {
+    assert.equal(toolbar.shadowRoot.querySelectorAll('.attachment-row').length, 1);
+    assert.match(toolbar.shadowRoot.querySelector('.hidden-notice').textContent, /回复后可见/);
+    toolbar.shadowRoot.querySelector('[data-action="download-attachment"]').click();
+    assert.equal(attachmentClicks, 1);
+    toolbar.shadowRoot.querySelector('[data-action="reply"]').click();
+    assert.equal(replies, 1);
+    assert.equal(sht.window.document.getElementById('fastpostmessage').value, '感谢楼主分享，辛苦了！');
+  }
+  assert.equal(requests, 0);
+  sht.window.close();
+}
+console.log('Built userscript smoke test passed: 98堂 independent switches, native attachment download/quick reply and no automatic requests.');
