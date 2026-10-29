@@ -1,13 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { buildHistoryRecovery, planHistoryRecovery, recoveredTitleAliases } from '../src/history-recovery.js';
 import { recoverHistoryFile } from '../scripts/recover-legacy-history.mjs';
+import { prepareHistoryExport, runHistoryExport } from '../scripts/export-legacy-history.mjs';
 
 const row = (tid, title = 'MFYD-220 Example - x1080x.com') => ({ url: `https://agaghhh.cc/forum.php?mod=viewthread&tid=${tid}`, title });
+
+test('export startup reports missing prerequisites and check/cancel never read browser history', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'x1080x-history-test-'));
+  try {
+    const scripts = join(directory, 'scripts');
+    await mkdir(scripts);
+    await assert.rejects(prepareHistoryExport(scripts, '20.19.0'), /Node.js.*太旧/);
+    await assert.rejects(prepareHistoryExport(scripts, '22.12.0'), /Node.js.*太旧/);
+    await assert.rejects(prepareHistoryExport(scripts), /工具文件不完整/);
+    await writeFile(join(scripts, 'recover-legacy-history.mjs'), '');
+    await assert.rejects(prepareHistoryExport(scripts), /旧记录清单/);
+    const folder = join(directory, '.local-history-recovery');
+    await mkdir(folder);
+    await writeFile(join(folder, 'old-history.json'), '\uFEFF["tid:123"]');
+    const prepared = await prepareHistoryExport(scripts, '22.13.0');
+    assert.equal(prepared.folder, folder);
+    assert.deepEqual(await runHistoryExport({ directory: scripts, check: true, select: () => assert.fail('check must not open a picker') }), { ready: true });
+    assert.deepEqual(await runHistoryExport({ directory: scripts, select: () => '' }), { cancelled: true });
+  } finally {
+    const target = await realpath(directory);
+    assert.equal(dirname(target), await realpath(tmpdir()));
+    assert.ok(basename(target).startsWith('x1080x-history-test-'));
+    await rm(target, { recursive: true, force: true });
+  }
+});
 
 test('recovery selects only existing legacy TIDs and valid old forum thread titles', () => {
   const recovery = buildHistoryRecovery([
@@ -57,7 +83,7 @@ test('local history export opens SQLite read-only, emits only matched records an
     const insert = database.prepare('INSERT INTO urls VALUES (?, ?)');
     for (const entry of [row(123), row(999), { url: 'https://unrelated.example/private', title: 'PRIVATE DATA' }]) insert.run(entry.url, entry.title);
     database.close();
-    await writeFile(legacyPath, JSON.stringify(['tid:123']));
+    await writeFile(legacyPath, '\uFEFF' + JSON.stringify(['tid:123']));
     const before = await readFile(historyPath);
     const result = await recoverHistoryFile({ historyPath, legacyPath, outputPath });
     assert.equal(result.recovered, 1);

@@ -16,7 +16,7 @@ export function readForumHistory(databasePath) {
 
 export async function recoverHistoryFile({ historyPath, legacyPath, outputPath }) {
   if ([historyPath, legacyPath].some(input => resolve(input) === resolve(outputPath))) throw new Error('输出文件不能覆盖输入文件');
-  const legacy = JSON.parse(await readFile(legacyPath, 'utf8'));
+  const legacy = JSON.parse((await readFile(legacyPath, 'utf8')).replace(/^\uFEFF/, ''));
   const recovery = buildHistoryRecovery(readForumHistory(historyPath), legacy);
   await writeFile(outputPath, JSON.stringify(recovery, null, 2), { encoding: 'utf8', flag: 'wx' });
   return { recovered: recovery.entries.length, ...recovery.stats };
