@@ -1002,7 +1002,7 @@ test('modern x1080x resource restores the visible blue download button and route
   }
 });
 
-test('modern resource download button reappears if Next.js replaces the title after hydration', async () => {
+test('modern resource download button is anchored below the title and reappears after React replaces it', async () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>FNS-267</title></head><body>
     <div class="panel detail-panel"><header class="thread-header"><h1>FNS-267 [BT] Sample</h1></header></div>
     <article class="post" id="first-post"><div class="post-text">magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</div></article>
@@ -1010,11 +1010,55 @@ test('modern resource download button reappears if Next.js replaces the title af
   const restore = installDomGlobals(dom.window);
   try {
     await import(`../src/userscript.js?modern-hydration=${Date.now()}`);
-    const button = dom.window.document.getElementById('x1080x-ex-download');
+    let title = dom.window.document.querySelector('.thread-header h1');
+    let button = dom.window.document.getElementById('x1080x-ex-download');
     assert.ok(button);
-    dom.window.document.querySelector('.thread-header').innerHTML = '<h1>FNS-267 [BT] Sample</h1>';
-    await waitFor(() => Boolean(dom.window.document.getElementById('x1080x-ex-download')),
-      'download button should be re-inserted after React replaces title');
+    assert.equal(title.nextElementSibling, button, 'download button must sit immediately below the title');
+    dom.window.document.querySelector('.thread-header').innerHTML = '<h1>FNS-267 [BT] Sample (new render)</h1>';
+    await waitFor(() => {
+      title = dom.window.document.querySelector('.thread-header h1');
+      button = dom.window.document.getElementById('x1080x-ex-download');
+      return Boolean(title && button && title.nextElementSibling === button);
+    }, 'download button should be re-anchored after React replaces title');
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+test('legacy TID history migrates by title/code and marks the matching modern resource purple', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>x1080x</title></head><body>
+    <div class="thread-list">
+      <div class="pgt"><div class="pg"><strong>1</strong><button aria-label="下一页" disabled></button></div></div>
+      <article class="thread-row"><div class="thread-line">
+        <a class="resource-title" href="/resources/modernFc2ID">（fc4939392）新版标题与旧标题略有不同</a>
+      </div></article>
+    </div>
+  </body></html>`, { url: 'https://1080xin.com/boards/modernBoardID' });
+  const restore = installDomGlobals(dom.window);
+  const stored = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-history-limit', 5000],
+    ['x1080x-ex:agaghhh-batch-open-history', ['tid:12345']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => stored.has(key) ? stored.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => stored.set(key, value);
+  globalThis.GM_xmlhttpRequest = (options) => {
+    assert.match(options.url, /forum\.php\?mod=viewthread&tid=12345/);
+    queueMicrotask(() => options.onload({
+      status: 200,
+      finalUrl: options.url,
+      responseText: '<!doctype html><html><body><div class="vwthd"><h1 id="thread_subject">(fc4939392) 旧版标题</h1></div></body></html>',
+    }));
+  };
+  try {
+    await import(`../src/userscript.js?legacy-history-migration=${Date.now()}`);
+    await waitFor(() => (
+      dom.window.document.querySelector('a.resource-title')?.getAttribute('data-x1080x-batch-opened') === '1'
+    ), 'the old TID should resolve to FC2 code alias and mark the matching new resource');
+    assert.ok(stored.get('x1080x-ex:agaghhh-history-title-aliases').includes('code:FC2-4939392'));
+    assert.deepEqual(stored.get('x1080x-ex:agaghhh-batch-open-history'), ['tid:12345'],
+      'legacy TID history must remain unchanged');
   } finally {
     restore();
     dom.window.close();
