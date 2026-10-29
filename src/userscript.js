@@ -495,6 +495,20 @@ function batchProgressTarget() {
     : entry.url;
 }
 
+function startAutomaticLegacyHistoryMigration() {
+  if (legacyHistoryMigrationStartedThisPage
+    || !isAgaghhhHost(location)
+    || currentHost() === LEGACY_AGAGHHH_DOMAIN
+    || !/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)
+    || !isBatchOpenHistoryEnabled()) return;
+  legacyHistoryMigrationStartedThisPage = true;
+  void migrateLegacyHistory({ limit: LEGACY_HISTORY_AUTO_MIGRATION_LIMIT })
+    .then((result) => {
+      if (result.matched > 0 && isBatchOpenPage()) applyBatchOpenHistory(document);
+    })
+    .catch((error) => console.warn('[x1080x-ex] legacy history migration failed', error));
+}
+
 function nextBatchListPageUrl(document) {
   return nextListPageUrl(document, document?.baseURI);
 }
@@ -1556,6 +1570,7 @@ function observeModernBoard() {
       return;
     }
     if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
+    startAutomaticLegacyHistoryMigration();
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) {
       addBatchOpenButton();
@@ -1617,5 +1632,6 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
   }
+  startAutomaticLegacyHistoryMigration();
   observeModernBoard();
 }
