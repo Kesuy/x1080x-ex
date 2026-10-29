@@ -926,7 +926,8 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     await waitFor(() => opened.length === 1, 'modern board should open unvisited topic');
     assert.match(opened[0].url, /04KTRwQA2TTlDe3JY9qGYx/);
     assert.equal(opened[0].options.active, false);
-    assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), [`resource:${visited}`, `resource:${remaining}`]);
+    assert.deepEqual(values.get('x1080x-ex:1080xin-resource-history'), [`resource:${visited}`, `resource:${remaining}`]);
+    assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), [`resource:${visited}`], 'old beta data remains untouched');
     assert.equal(values.get('x1080x-ex:agaghhh-batch-progress-map')[`https://agaghhh.cc/boards/6Rj9of8m6shoqhAaXiXJje`].url,
       boardUrl + '?page=2');
 
@@ -937,7 +938,7 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     dom.window.document.body.insertAdjacentHTML('beforeend',
       '<article class="post" id="first-post"><div class="post-text">内容</div></article>');
     await waitFor(
-      () => values.get('x1080x-ex:agaghhh-batch-open-history')?.includes('resource:' + openedFromSpa),
+          () => values.get('x1080x-ex:1080xin-resource-history')?.includes('resource:' + openedFromSpa),
       'client side resource navigation must save visited history'
     );
     dom.window.history.pushState({}, '', boardUrl);
@@ -991,7 +992,7 @@ test('modern x1080x resource restores the visible blue download button and route
     assert.equal(button.previousElementSibling?.tagName, 'H1', 'button is next to title rather than hidden in mobile toolbar');
     assert.match(button.textContent, /下载资源/);
     assert.equal(button.style.display, 'inline-flex');
-    assert.ok(values.get('x1080x-ex:agaghhh-batch-open-history').includes('resource:1Dw4hDQzhfzZdV9ZZWeQWU'));
+    assert.ok(values.get('x1080x-ex:1080xin-resource-history').includes('resource:1Dw4hDQzhfzZdV9ZZWeQWU'));
     button.click();
     await waitFor(() => nativeClicks === 1, 'ZIP download is handed to the original site button exactly once');
     assert.equal(nativeClicks, 1);
