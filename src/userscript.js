@@ -22,6 +22,10 @@ import {
 } from './batch-progress-locator.js';
 import { requestTorrentBytes } from './torrent.js';
 import {
+  collectModernNativeAttachments,
+  requestModernNativeAttachmentDownload,
+} from './modern-attachments.js';
+import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
   beginDownloadGuard,
   isDownloadGuardEnabled,
@@ -31,6 +35,7 @@ import { makePreviewGestureFriendly } from './preview-gesture.js';
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
 const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
+const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
 const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
 const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
 const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interval-max-ms';
@@ -1001,8 +1006,9 @@ async function download(job, { deferImageSave = false } = {}) {
 
 async function downloadAll(button) {
   const jobs = buildDownloadJobs(document);
-  if (!jobs.length) {
-    window.alert('主楼中没有找到附件或可下载图片。');
+  const nativeFiles = collectModernNativeAttachments(document);
+  if (!jobs.length && !nativeFiles.length) {
+    window.alert('主楼中没有找到附件、磁力链或可下载图片。');
     return;
   }
 
@@ -1042,12 +1048,21 @@ async function downloadAll(button) {
       saveBlob(blob, finalName);
     });
 
+    // Modern ZIP/RAR/7z entries have no public attachment URL. Do not
+    // synthesize a download endpoint or consume quota without confirmation.
+    let nativeResult = { status: 'none' };
+    if (nativeFiles.length) {
+      nativeResult = requestModernNativeAttachmentDownload(document, window);
+    }
+
     button.disabled = false;
     button.textContent = failures.length
       ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}）`
-      : skipped
-        ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
-        : '✓ 下载完成';
+      : nativeResult.status === 'triggered'
+        ? '✓ 已触发网站附件下载'
+        : skipped
+          ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
+          : '✓ 下载完成';
     window.setTimeout(() => {
       button.textContent = '⬇';
     }, 2500);
@@ -1065,16 +1080,16 @@ function addDownloadButton() {
   const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
   const title = document.querySelector(modern ? '.thread-header h1' : '#thread_subject');
   const host = modern
-    ? (document.querySelector('.thread-header .thread-header-actions') || title?.closest('.thread-header'))
+    ? title?.closest('.thread-header')
     : (title?.closest('.vwthd, .ts') || title?.parentElement);
   if (!title || !host) return;
 
   const button = document.createElement('button');
   button.id = BUTTON_ID;
   button.type = 'button';
-  button.textContent = '⬇';
+  button.textContent = modern ? '⬇ 下载资源' : '⬇';
   button.title = modern
-    ? '下载正文图片及 Preview；新版附件由网站原生按钮授权下载，不会重复扣次或绕过权限'
+    ? '下载正文图片、Preview、磁力种子；ZIP/RAR 等附件经确认后使用网站原生下载按钮'
     : '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
   Object.assign(button.style, {
     float: 'right',
@@ -1093,8 +1108,17 @@ function addDownloadButton() {
   button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
   button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
   button.addEventListener('click', () => void downloadAll(button));
-  if (modern) host.append(button);
-  else host.prepend(button);
+  if (modern) {
+    // The redesigned header's action span can be clipped/overwritten by React.
+    // Use a visible sibling after the title rather than its small action toolbar.
+    button.style.float = 'none';
+    button.style.display = 'inline-flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+    button.style.width = 'max-content';
+    button.style.margin = '10px 0 10px 4px';
+    title.after(button);
+  } else host.prepend(button);
 }
 
 function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
@@ -1335,12 +1359,18 @@ function observeModernBoard() {
     if (location.href === previousUrl) return false;
     previousUrl = location.href;
     if (isThreadPage() && isBatchOpenHistoryEnabled()) rememberBatchOpenedThread(location.href);
-    if (isThreadPage()) addDownloadButton();
+    if (isThreadPage() && (typeof GM_getValue !== 'function'
+      || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
     window.dispatchEvent(new window.Event('x1080x-ex:routechange'));
     return true;
   };
   const refresh = () => {
     timer = null;
+    if (isThreadPage()) {
+      if (typeof GM_getValue !== 'function'
+        || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
+      return;
+    }
     if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) {
@@ -1358,6 +1388,11 @@ function observeModernBoard() {
   const observer = new window.MutationObserver((mutations) => {
     if (detectRouteChange()) {
       schedule();
+      return;
+    }
+    if (isThreadPage()) {
+      // Hydration may replace the title after the initial document-idle pass.
+      if (!document.getElementById(BUTTON_ID)) schedule();
       return;
     }
     if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
