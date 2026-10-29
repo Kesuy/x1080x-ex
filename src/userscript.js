@@ -42,6 +42,9 @@ const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interv
 const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-history-enabled';
 const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
 const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
+// Separate new /resources IDs from legacy Discuz TIDs so the existing
+// pre-redesign history can never be truncated by new visits.
+const MODERN_RESOURCE_HISTORY_KEY = 'x1080x-ex:1080xin-resource-history';
 const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
 const AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:agaghhh-batch-open-unopened-only';
 const AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-progress-locator-enabled';
@@ -173,10 +176,13 @@ function isBatchOpenEnabledForCurrentHost() {
 function batchOpenHistoryConfig() {
   const host = currentHost();
   if (isAgaghhhHost(host)) {
+    const modern = host !== LEGACY_AGAGHHH_DOMAIN
+      && !/^\/(?:forum|search)\.php$/i.test(location.pathname);
     return {
       enabledKey: AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY,
       limitKey: AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
-      historyKey: AGAGHHH_BATCH_OPEN_HISTORY_KEY,
+      historyKey: modern ? MODERN_RESOURCE_HISTORY_KEY : AGAGHHH_BATCH_OPEN_HISTORY_KEY,
+      modern,
       colorKey: AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
       unopenedOnlyKey: AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY,
       progressLocatorEnabledKey: AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY,
@@ -262,10 +268,17 @@ function readBatchOpenHistory() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function') return [];
   const stored = GM_getValue(config.historyKey, []);
-  const values = Array.isArray(stored) ? stored : [];
+  // Previous beta releases temporarily saved resource IDs in the old TID key.
+  const legacy = config.modern ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : [];
+  const values = [
+    ...(Array.isArray(stored) ? stored : []),
+    ...(Array.isArray(legacy) ? legacy : []),
+  ];
   return [...new Set(values.filter((value) => (
     typeof value === 'string'
-    && (/^(?:tid|post):\d+$/.test(value) || /^resource:[a-z0-9]+$/i.test(value) || /^url:\//.test(value))
+    && (config.modern
+      ? /^resource:[a-z0-9]+$/i.test(value)
+      : (/^(?:tid|post):\d+$/.test(value) || /^resource:[a-z0-9]+$/i.test(value) || /^url:\//.test(value)))
   )))];
 }
 
@@ -1391,8 +1404,11 @@ function observeModernBoard() {
       return;
     }
     if (isThreadPage()) {
-      // Hydration may replace the title after the initial document-idle pass.
-      if (!document.getElementById(BUTTON_ID)) schedule();
+      // Hydration may replace the title after document-idle. Reinsertion is
+      // idempotent; its own mutation won't cause a second download button.
+      if (!document.getElementById(BUTTON_ID)
+        && (typeof GM_getValue !== 'function'
+          || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
       return;
     }
     if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
