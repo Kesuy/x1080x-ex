@@ -7,7 +7,7 @@ function installDomGlobals(window) {
   const names = [
     'window', 'document', 'location', 'URL', 'Blob', 'FileReader', 'AbortController',
     'GM_info', 'GM_getValue', 'GM_setValue', 'GM_registerMenuCommand',
-    'GM_xmlhttpRequest', 'GM_openInTab',
+    'GM_xmlhttpRequest', 'GM_openInTab', 'GM_download',
   ];
   const previous = new Map(names.map((name) => [name, globalThis[name]]));
 
@@ -27,6 +27,7 @@ function installDomGlobals(window) {
   globalThis.GM_setValue = () => {};
   globalThis.GM_registerMenuCommand = () => {};
   globalThis.GM_openInTab = () => {};
+  delete globalThis.GM_download;
 
   return () => {
     for (const [name, value] of previous) {
@@ -84,7 +85,7 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     assert.ok(button);
     assert.ok(progressButton);
     assert.equal(progressButton.textContent, '定位浏览进度');
-    assert.equal(button.textContent, '后台顺序打开本页主题（3）');
+    assert.equal(button.textContent, '批量打开本页（3）');
     assert.equal(
       dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
       '1'
@@ -190,7 +191,7 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     assert.equal(archiveDescription.firstElementChild, button);
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
     assert.equal(dom.window.document.querySelector('#x1080x-ex-open-page-toolbar'), null);
-    assert.equal(button.textContent, '后台顺序打开本页主题（2）');
+    assert.equal(button.textContent, '批量打开本页（2）');
     assert.equal(
       dom.window.document.querySelector('a[href^="/983856/"]').getAttribute('data-x1080x-batch-opened'),
       '1'
@@ -273,7 +274,7 @@ test('agaghhh 开启只打开未打开主题后跳过历史记录', async () => 
     await import(`../src/userscript.js?agaghhh-unopened=${Date.now()}`);
     const button = dom.window.document.querySelector('#x1080x-ex-open-page');
     assert.ok(button);
-    assert.equal(button.textContent, '后台顺序打开未打开主题（2）');
+    assert.equal(button.textContent, '批量打开未浏览（2）');
 
     button.click();
     await waitFor(() => opened.length === 2, 'only unopened agaghhh threads should open');
@@ -286,7 +287,7 @@ test('agaghhh 开启只打开未打开主题后跳过历史记录', async () => 
       ['tid:302', 'tid:303', 'tid:301']
     );
     await waitFor(
-      () => button.textContent === '后台顺序打开未打开主题（0）',
+      () => button.textContent === '批量打开未浏览（0）',
       'agaghhh button should refresh the unopened count'
     );
   } finally {
@@ -332,7 +333,7 @@ test('hdblog 开启只打开未打开主题后跳过历史记录', async () => {
     await import(`../src/userscript.js?hdblog-unopened=${Date.now()}`);
     const button = dom.window.document.querySelector('#x1080x-ex-open-page');
     assert.ok(button);
-    assert.equal(button.textContent, '后台顺序打开未打开主题（1）');
+    assert.equal(button.textContent, '批量打开未浏览（1）');
 
     button.click();
     await waitFor(() => opened.length === 1, 'only unopened hdblog articles should open');
@@ -344,7 +345,7 @@ test('hdblog 开启只打开未打开主题后跳过历史记录', async () => {
       ['post:983856', 'post:983859']
     );
     await waitFor(
-      () => button.textContent === '后台顺序打开未打开主题（0）',
+      () => button.textContent === '批量打开未浏览（0）',
       'hdblog button should refresh the unopened count'
     );
   } finally {
@@ -381,6 +382,12 @@ test('附件和图片先请求 Blob，再用指定 download 文件名保存；�
   const requests = [];
   const saved = [];
   const revoked = [];
+  const releaseDelays = [];
+  const setTimeout = dom.window.setTimeout.bind(dom.window);
+  dom.window.setTimeout = (callback, delay) => {
+    if (delay === 10000) releaseDelays.push(delay);
+    return setTimeout(callback, delay === 10000 ? 0 : delay);
+  };
   let objectUrlIndex = 0;
   dom.window.URL.createObjectURL = () => `blob:test-${++objectUrlIndex}`;
   dom.window.URL.revokeObjectURL = (url) => revoked.push(url);
@@ -455,6 +462,7 @@ test('附件和图片先请求 Blob，再用指定 download 文件名保存；�
       { href: 'blob:test-2', name: 'ABCD-123.jpg' },
     ]);
     assert.deepEqual(revoked, ['blob:test-1', 'blob:test-2']);
+    assert.deepEqual(releaseDelays, [10000, 10000]);
     assert.equal(dom.window.location.href, 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806');
     assert.equal(dom.window.document.querySelector('a[download]'), null);
   } finally {
@@ -855,7 +863,7 @@ test('1080xin inherits old batch-open history and records manually visited threa
     assert.equal(
       dom.window.document.querySelector('a[href*="tid=302"]')?.getAttribute('data-x1080x-batch-opened'), '1'
     );
-    assert.match(dom.window.document.querySelector('#x1080x-ex-open-page')?.textContent || '', /未打开主题（1）/);
+    assert.match(dom.window.document.querySelector('#x1080x-ex-open-page')?.textContent || '', /未浏览（1）/);
     assert.ok([...menus.keys()].some((name) => name.includes('设置 x1080x 站点域名')));
     assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), ['tid:302']);
   } finally {
@@ -918,7 +926,7 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     assert.ok(progress, 'modern board must render progress locator');
     assert.ok(toolbar, 'modern board must render toolbar before pagination');
     assert.equal(toolbar.nextElementSibling?.className, 'pgt');
-    assert.equal(button.textContent, '后台顺序打开未打开主题（1）');
+    assert.equal(button.textContent, '批量打开未浏览（1）');
     assert.equal(dom.window.document.querySelector(`a[href*="${visited}"]`)?.getAttribute('data-x1080x-batch-opened'), '1');
     assert.match(dom.window.document.getElementById('x1080x-ex-batch-open-history-style').textContent, /resource-title.*#bd10e0/s);
 
@@ -952,7 +960,7 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     </article>`);
     await waitFor(() => list.querySelector('a.resource-title[data-x1080x-batch-opened="1"]')?.textContent.includes('新的 DOM'),
       'modern history marks should recover after client-side pagination');
-    await waitFor(() => button.textContent === '后台顺序打开未打开主题（0）',
+    await waitFor(() => button.textContent === '批量打开未浏览（0）',
       'modern bulk open count should follow new list contents');
   } finally {
     dom.window.setTimeout = oldTimeout;
@@ -997,7 +1005,8 @@ test('modern x1080x resource restores the visible blue download button and route
     assert.equal(button.parentElement, group);
     assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'),
       'the action group must be immediately left of favorite');
-    assert.match(button.textContent, /下载资源/);
+    assert.equal(button.textContent, '⬇');
+    assert.equal(button.getAttribute('aria-label'), '下载资源');
     assert.equal(button.style.display, 'inline-flex');
     assert.ok(values.get('x1080x-ex:1080xin-resource-history').includes('resource:1Dw4hDQzhfzZdV9ZZWeQWU'));
     button.click();
@@ -1148,20 +1157,93 @@ test('modern download counts native attachments and uses the image element refer
     assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'));
 
     button.click();
-    assert.equal(button.textContent, '下载中 1/3',
+    assert.equal(button.textContent, '⬇');
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /处理中 1\/3/,
       'two image jobs plus one native attachment should be counted as three total tasks');
     await waitFor(() => nativeClicks === 1, 'native attachment should be triggered after image downloads');
-    await waitFor(() => button.textContent.includes('触发 1 个附件'),
+    await waitFor(() => dom.window.document.getElementById('x1080x-ex-download-status').textContent.includes('站内附件已请求 1'),
       'completion status should account for the native attachment');
     assert.equal(requests.length, 2);
     assert.equal(requests[0].headers?.Referer, 'https://1080xin.com/',
       'cross-origin image request should follow strict-origin-when-cross-origin');
-    assert.equal(requests[1].headers, undefined,
+    await waitFor(() => !button.disabled, 'download job should finish');
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /已处理 3\/3 · 已保存 0 · 已发起 2/);
+    assert.equal(button.textContent, '⬇');
+    assert.equal(requests[1].headers.Referer, '',
       'no-referrer images must not receive a Referer header');
   } finally {
     if (oldGet === undefined) delete globalThis.GM_getValue;
     else globalThis.GM_getValue = oldGet;
     restore();
     dom.window.close();
+  }
+});
+
+test('modern progress counts saved callbacks, reports save failures and stays icon-only', async () => {
+  const dom = new JSDOM(`<header class="thread-header"><h1>FNS-267 [BT] Sample</h1></header>
+    <article id="first-post"><div class="post-text">
+      <img class="body-image" src="https://www.hxmmdd.com/one.webp" referrerpolicy="no-referrer">
+      <img class="body-image" src="https://imgfor80.me/two.jpg" referrerpolicy="no-referrer">
+    </div></article>`, { url: 'https://1080xin.com/resources/testDownload' });
+  const restore = installDomGlobals(dom.window);
+  const saves = [];
+  const alerts = [];
+  dom.window.alert = message => alerts.push(message);
+  globalThis.GM_download = options => { saves.push(options); };
+  globalThis.GM_xmlhttpRequest = options => queueMicrotask(() => options.onload({
+    status: 200, responseHeaders: 'Content-Type: image/jpeg',
+    response: new dom.window.Blob(['image'], { type: 'image/jpeg' }),
+  }));
+  try {
+    await import(`../src/userscript.js?save-progress=${Date.now()}`);
+    const button = dom.window.document.getElementById('x1080x-ex-download');
+    button.click();
+    button.click();
+    await waitFor(() => saves.length === 1, 'first save should start');
+    const status = dom.window.document.getElementById('x1080x-ex-download-status');
+    assert.match(status.textContent, /处理中 0\/2 · 已保存 0/);
+    assert.equal(button.textContent, '⬇');
+    assert.equal(button.disabled, true);
+    saves[0].onload();
+    await waitFor(() => saves.length === 2, 'second save should wait for first callback');
+    assert.match(status.textContent, /处理中 1\/2 · 已保存 1/);
+    saves[1].onerror({ error: 'not_permitted' });
+    await waitFor(() => !button.disabled, 'save failure must release the button');
+    assert.match(status.textContent, /已处理 2\/2 · 已保存 1 · 失败 1/);
+    assert.equal(button.textContent, '⬇');
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0], /下载权限/);
+  } finally {
+    dom.window.close();
+    await Promise.resolve();
+    restore();
+  }
+});
+
+test('modern marks, unopened count and progress locator reuse the durable legacy resolver cache', async () => {
+  const dom = new JSDOM(`<div class="thread-list"><div class="pgt"><div class="pg"><strong>1</strong></div></div>
+    <article class="thread-row"><a class="resource-title" href="/resources/resolvedID">Title without a code</a></article>
+    <article class="thread-row"><a class="resource-title" href="/resources/newID">New unread title</a></article>
+    </div>`, { url: 'https://1080xin.com/boards/testHistory' });
+  const restore = installDomGlobals(dom.window);
+  const stored = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+    ['x1080x-ex:agaghhh-batch-open-history', ['tid:123']],
+    ['x1080x-ex:agaghhh-legacy-history-migration-v1', { resolved: { 123: ['resource:resolvedID'] } }],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => stored.has(key) ? stored.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => stored.set(key, value);
+  globalThis.GM_xmlhttpRequest = () => assert.fail('resolved cache must not be fetched again');
+  try {
+    await import(`../src/userscript.js?cached-history=${Date.now()}`);
+    assert.equal(dom.window.document.querySelector('[href="/resources/resolvedID"]').getAttribute('data-x1080x-batch-opened'), '1');
+    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（1）');
+    assert.match(dom.window.document.getElementById('x1080x-ex-batch-progress-locator').title, /现有 1 条脚本记录/);
+    assert.deepEqual(stored.get('x1080x-ex:agaghhh-batch-open-history'), ['tid:123']);
+  } finally {
+    dom.window.close();
+    await Promise.resolve();
+    restore();
   }
 });

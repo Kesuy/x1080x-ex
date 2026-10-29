@@ -37,8 +37,11 @@ import {
   historyAliasesForTitle,
   legacyThreadUrl,
   legacyTidFromHistoryValue,
+  resolvedLegacyHistoryAliases,
+  isUsableHistoryAlias,
 } from './history-migration.js';
 import { alternateImageUrls } from './image-fallbacks.js';
+import { saveDownloadBlob } from './blob-download.js';
 import { ensureModernResourceActionGroup, placeModernResourceActionButton } from './modern-header-actions.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
@@ -185,7 +188,7 @@ function registerSettingsMenu() {
     void migrateLegacyHistory({ limit: LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT, force: true })
       .then((result) => {
         if (isBatchOpenPage()) applyBatchOpenHistory(document);
-        window.alert(`旧版历史迁移完成。\n本次检查：${result.checked} 条\n新增匹配：${result.matched} 条\n剩余未解析：${result.unresolved} 条\n旧记录未删除。`);
+        window.alert(`旧版历史检查结束。\n本次检查：${result.checked} 条\n新增匹配：${result.matched} 条\n剩余未解析：${result.unresolved} 条\n旧记录未删除。${result.unresolved ? '\n未解析记录只有旧 TID，需要可访问的旧帖或站点新旧 ID 映射才能恢复。' : ''}`);
       })
       .catch((error) => window.alert(`迁移失败：${error?.message || error}`));
   });
@@ -318,13 +321,18 @@ function readBatchOpenHistory() {
   const aliases = config.kind === 'agaghhh'
     ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, [])
     : [];
+  const resolvedAliases = config.kind === 'agaghhh'
+    ? resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {}))
+    : [];
   const values = [
     ...(Array.isArray(stored) ? stored : []),
-    ...(Array.isArray(legacy) ? legacy.filter((value) => /^resource:[a-z0-9]+$/i.test(value)) : []),
+    ...(Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : []),
     ...(Array.isArray(aliases) ? aliases : []),
+    ...resolvedAliases,
   ];
   return [...new Set(values.filter((value) => (
     typeof value === 'string'
+    && (!/^(?:code|title|number):/i.test(value) || isUsableHistoryAlias(value))
     && (config.modern
       ? (/^resource:[a-z0-9]+$/i.test(value) || /^(?:code|title|number):/i.test(value))
       : (/^(?:tid|post):\d+$/.test(value)
@@ -340,47 +348,50 @@ function saveHistoryAliases(aliases) {
   const merged = [...new Set([
     ...(Array.isArray(existing) ? existing : []),
     ...(Array.isArray(aliases) ? aliases : []),
-  ].filter((value) => typeof value === 'string'
-    && /^(?:code|title|number|resource):/i.test(value)))].slice(-20000);
+  ].filter(isUsableHistoryAlias))].slice(-20000);
   GM_setValue(AGAGHHH_HISTORY_ALIASES_KEY, merged);
   return merged.length;
 }
 
-function requestLegacyHistoryAliases(tid) {
-  return new Promise((resolve) => {
-    if (typeof GM_xmlhttpRequest !== 'function') {
-      resolve([]);
-      return;
-    }
-    const url = legacyThreadUrl(tid);
-    if (!url) {
-      resolve([]);
-      return;
-    }
-    GM_xmlhttpRequest({
-      method: 'GET',
-      url,
-      timeout: 15000,
-      onload: (response) => {
-        const aliases = response.status >= 200 && response.status < 400
-          ? extractLegacyHistoryAliases(
-            response.responseText || '',
-            document.defaultView?.DOMParser || globalThis.DOMParser
-          )
-          : [];
-        const finalUrl = response.finalUrl || response.responseURL || '';
-        try {
-          const resourceId = new URL(finalUrl, url).pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
-          if (resourceId) aliases.unshift(`resource:${resourceId}`);
-        } catch {
-          // The title aliases remain useful even if the final URL is unavailable.
-        }
-        resolve([...new Set(aliases)]);
-      },
-      onerror: () => resolve([]),
-      ontimeout: () => resolve([]),
+async function requestLegacyHistoryAliases(tid) {
+  const urls = [...new Set([
+    legacyThreadUrl(tid, `https://${getAgaghhhPrimaryDomain()}`),
+    legacyThreadUrl(tid),
+  ].filter(Boolean))];
+  for (const url of urls) {
+    const result = await new Promise((resolve) => {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        resolve([]);
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        timeout: 15000,
+        onload: (response) => {
+          const aliases = response.status >= 200 && response.status < 400
+            ? extractLegacyHistoryAliases(
+              response.responseText || '',
+              document.defaultView?.DOMParser || globalThis.DOMParser
+            )
+            : [];
+          const finalUrl = response.finalUrl || response.responseURL || '';
+          try {
+            const resourceId = new URL(finalUrl, url).pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
+            if (resourceId && response.status >= 200 && response.status < 400
+              && isAgaghhhHost(new URL(finalUrl, url).hostname)) aliases.unshift(`resource:${resourceId}`);
+          } catch {
+            // The title aliases remain useful even if the final URL is unavailable.
+          }
+          resolve([...new Set(aliases)]);
+        },
+        onerror: () => resolve([]),
+        ontimeout: () => resolve([]),
+      });
     });
-  });
+    if (result.length) return result;
+  }
+  return [];
 }
 
 async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMIT, force = false } = {}) {
@@ -397,11 +408,17 @@ async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMI
     .map(legacyTidFromHistoryValue)
     .filter(Boolean))];
   const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
-  const attemptedAt = state?.attemptedAt && typeof state.attemptedAt === 'object'
+  const attemptedAt = state?.resolverVersion === 2 && state?.attemptedAt && typeof state.attemptedAt === 'object'
     ? { ...state.attemptedAt } : {};
   const resolved = state?.resolved && typeof state.resolved === 'object'
     ? { ...state.resolved } : {};
+  for (const [tid, aliases] of Object.entries(resolved)) {
+    const valid = Array.isArray(aliases) ? aliases.filter(isUsableHistoryAlias) : [];
+    if (valid.length) resolved[tid] = valid;
+    else delete resolved[tid];
+  }
   const now = Date.now();
+  saveHistoryAliases(resolvedLegacyHistoryAliases(state));
   const pending = tids.slice().reverse().filter((tid) => (
     !Array.isArray(resolved[tid])
     && (force || !attemptedAt[tid] || now - Number(attemptedAt[tid]) > 7 * 24 * 60 * 60 * 1000)
@@ -417,7 +434,6 @@ async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMI
 
   legacyHistoryMigrationInProgress = true;
   let matched = 0;
-  let aliasesAdded = [];
   try {
     for (let offset = 0; offset < pending.length; offset += 4) {
       const batch = pending.slice(offset, offset + 4);
@@ -429,16 +445,15 @@ async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMI
         attemptedAt[result.tid] = Date.now();
         if (result.aliases.length) {
           resolved[result.tid] = result.aliases;
-          aliasesAdded.push(...result.aliases);
+          saveHistoryAliases(result.aliases);
           matched += 1;
         }
       }
-      GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { attemptedAt, resolved });
+      GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { resolverVersion: 2, attemptedAt, resolved });
       if (offset + 4 < pending.length) {
         await new Promise((resolve) => window.setTimeout(resolve, 180));
       }
     }
-    saveHistoryAliases(aliasesAdded);
     return {
       checked: pending.length,
       matched,
@@ -507,7 +522,12 @@ function startAutomaticLegacyHistoryMigration() {
   legacyHistoryMigrationStartedThisPage = true;
   void migrateLegacyHistory({ limit: LEGACY_HISTORY_AUTO_MIGRATION_LIMIT })
     .then((result) => {
-      if (result.matched > 0 && isBatchOpenPage()) applyBatchOpenHistory(document);
+      if (result.matched > 0 && isBatchOpenPage()) {
+        applyBatchOpenHistory(document);
+        const button = document.getElementById(BATCH_BUTTON_ID);
+        if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+        refreshBatchProgressLocatorButton();
+      }
     })
     .catch((error) => console.warn('[x1080x-ex] legacy history migration failed', error));
 }
@@ -824,12 +844,12 @@ function cancelBatchOpen() {
 function setBatchButtonIdle(button, count) {
   const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
   const label = unopenedOnly
-    ? `后台顺序打开未打开主题（${count}）`
-    : `后台顺序打开本页主题（${count}）`;
+    ? `批量打开未浏览（${count}）`
+    : `批量打开本页（${count}）`;
   if (button.textContent !== label) button.textContent = label;
   button.title = unopenedOnly
-    ? '按页面顺序仅后台打开未记录为已打开的主题；间隔随机，并定期停顿；再次点击可停止'
-    : '按页面顺序在后台逐个打开普通主题；间隔随机，并定期停顿；再次点击可停止';
+    ? '按列表顺序在后台逐个打开本页未浏览主题（以脚本浏览记录为准）；间隔随机，并定期停顿；再次点击可停止'
+    : '按列表顺序在后台逐个打开本页主题；间隔随机，并定期停顿；再次点击可停止';
   button.style.background = '#398bd4';
 }
 
@@ -1074,7 +1094,9 @@ function requestBlobWithGmXhrOnce(job, referer) {
       url: job.url,
       responseType: 'blob',
       timeout: REQUEST_TIMEOUT,
-      ...(referer ? { headers: { Referer: referer } } : {}),
+      // Omitting the header lets the manager supply its default page Referer.
+      // An explicit empty value is needed for images marked no-referrer.
+      headers: { Referer: referer },
       onload: (response) => {
         validateResponse(response).then(resolve, reject);
       },
@@ -1143,7 +1165,7 @@ function imageRefererPolicyForJob(job) {
 
 async function requestBlobWithGmXhr(job) {
   const sourceReferer = previewRefererForJob(job);
-  const imageReferer = imageRefererPolicyForJob(job);
+  const imageReferer = imageRefererPolicyForJob({ ...job, url: job.sourceUrl || job.url });
   const referers = sourceReferer
     ? [sourceReferer, '', location.href]
     : imageReferer
@@ -1181,7 +1203,7 @@ async function requestImageBlobWithFallbacks(job) {
   let allNotFound = candidates.length > 0;
   for (const url of candidates) {
     try {
-      return await requestBlob({ ...job, url });
+      return await requestBlob({ ...job, sourceUrl: job.url, url });
     } catch (error) {
       lastError = error;
       if (!/HTTP (?:404|410)\b/i.test(String(error?.message || error))) allNotFound = false;
@@ -1206,25 +1228,10 @@ function isLikelyUnavailablePixhostPreview(job, blob) {
   return isPixhostPreview && blob.size > 0 && blob.size <= PIXHOST_PLACEHOLDER_MAX_BYTES;
 }
 
-function saveBlob(blob, name) {
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.hidden = true;
-  anchor.download = name;
-  anchor.href = objectUrl;
-  document.body.append(anchor);
-  try {
-    anchor.click();
-  } finally {
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-  }
-}
-
 async function download(job, { deferImageSave = false } = {}) {
   if (job.kind === 'torrent') {
     const result = await requestTorrentBytes(job.url);
-    saveBlob(new Blob([result.bytes], { type: 'application/x-bittorrent' }), job.name);
+    const saved = await saveDownloadBlob(new Blob([result.bytes], { type: 'application/x-bittorrent' }), job.name);
     console.info('[x1080x-ex] integrated torrent download', {
       name: job.name,
       hash: result.hash,
@@ -1232,7 +1239,7 @@ async function download(job, { deferImageSave = false } = {}) {
       source: new URL(result.sourceUrl).hostname,
       size: result.bytes.byteLength,
     });
-    return { skipped: false };
+    return { skipped: false, ...saved };
   }
 
   let downloadJob = job;
@@ -1288,11 +1295,30 @@ async function download(job, { deferImageSave = false } = {}) {
   if (job.kind === 'image' && deferImageSave) {
     return { skipped: false, blob: result.blob, name: job.name };
   }
-  saveBlob(result.blob, job.name);
-  return { skipped: false };
+  return { skipped: false, ...await saveDownloadBlob(result.blob, job.name) };
+}
+
+function setDownloadStatus(button, text) {
+  button.title = text;
+  if (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) {
+    button.textContent = text;
+    return;
+  }
+  // Keep the action itself icon-only, including progress and error states.
+  let status = document.getElementById('x1080x-ex-download-status');
+  if (!status) {
+    status = document.createElement('span');
+    status.id = 'x1080x-ex-download-status';
+    status.setAttribute('role', 'status');
+    Object.assign(status.style, { fontSize: '12px', marginLeft: '8px', whiteSpace: 'normal' });
+    const host = button.closest('.thread-header')?.querySelector('.thread-header-nums') || button.parentElement;
+    host.append(status);
+  }
+  status.textContent = text;
 }
 
 async function downloadAll(button) {
+  if (button.disabled) return;
   const jobs = buildDownloadJobs(document);
   const nativeFiles = collectModernNativeAttachments(document);
   const totalTasks = jobs.length + nativeFiles.length;
@@ -1308,61 +1334,71 @@ async function downloadAll(button) {
   const failures = [];
   const pendingImages = [];
   let skipped = 0;
+  let processed = 0;
+  let saved = 0;
+  let started = 0;
+  const recordSave = (result) => { if (result?.confirmed) saved += 1; else started += 1; };
+  const progress = () => setDownloadStatus(button, `处理中 ${processed}/${totalTasks} · 已保存 ${saved}${started ? ` · 已发起 ${started}` : ''}`);
 
   try {
+    // Delegate while the user gesture is still active. Native controls may rely
+    // on it, and waiting for slow torrent caches would otherwise delay the ZIP.
+    const nativeResult = requestModernNativeAttachmentDownload(document, nativeFiles);
+    processed += nativeResult.attempted || 0;
+    for (const name of nativeResult.failedNames || []) failures.push(`${name}：未能触发网站下载按钮`);
+    progress();
     console.info('[x1080x-ex] environment', {
       downloadMode: typeof GM_info === 'object' ? GM_info.downloadMode : undefined,
       scriptHandler: typeof GM_info === 'object' ? GM_info.scriptHandler : undefined,
       version: typeof GM_info === 'object' ? GM_info.version : undefined,
     });
-    for (const [index, job] of jobs.entries()) {
-      button.textContent = `下载中 ${index + 1}/${totalTasks}`;
+    for (const job of jobs) {
       try {
         const result = await download(job, { deferImageSave: job.kind === 'image' });
         if (result?.skipped) {
           skipped += 1;
-          button.textContent = `已跳过失效图 ${skipped}`;
         } else if (job.kind === 'image' && result?.blob) {
           pendingImages.push(result);
+          continue;
+        } else {
+          recordSave(result);
         }
       } catch (error) {
         failures.push(`${job.name}：${redactDiagnostic(error?.message || error?.error || '未知错误')}`);
       }
+      processed += 1;
+      progress();
     }
 
-    pendingImages.forEach(({ blob, name }) => {
+    for (const { blob, name } of pendingImages) {
       const finalName = pendingImages.length === 1
         ? name.replace(/ A(?=\.[^.]+$)/i, '')
         : name;
-      saveBlob(blob, finalName);
-    });
-
-    // Modern ZIP/RAR/7z entries have no public attachment URL. Do not
-    // synthesize a download endpoint or consume quota without confirmation.
-    let nativeResult = { status: 'none', total: 0 };
-    if (nativeFiles.length) {
-      button.textContent = `下载中 ${jobs.length}/${totalTasks}（触发 ${nativeFiles.length} 个站内附件）`;
-      nativeResult = requestModernNativeAttachmentDownload(document, window);
+      try {
+        recordSave(await saveDownloadBlob(blob, finalName));
+      } catch (error) {
+        failures.push(`${finalName}：${redactDiagnostic(error?.message || '保存失败')}`);
+      }
+      processed += 1;
+      progress();
     }
 
-    button.disabled = false;
-    button.textContent = failures.length
-      ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}；站内附件已触发 ${nativeResult.total || 0} 个）`
-      : nativeResult.status === 'triggered'
-        ? `✓ 已处理 ${jobs.length} 项资源，触发 ${nativeResult.total || nativeFiles.length} 个附件`
-        : skipped
-          ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
-          : '✓ 下载完成';
-    window.setTimeout(() => {
-      button.textContent = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)
-        ? '⬇ 下载资源'
-        : '⬇';
-    }, 2500);
+    const summary = [`已处理 ${processed}/${totalTasks}`, `已保存 ${saved}`];
+    if (started) summary.push(`已发起 ${started}（请查看浏览器下载列表）`);
+    if (skipped) summary.push(`跳过 ${skipped}`);
+    if (failures.length) summary.push(`失败 ${failures.length}`);
+    if (nativeResult.total) summary.push(`站内附件已请求 ${nativeResult.total}（结果请查看网站提示）`);
+    const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
+    setDownloadStatus(button, !modern && skipped && !failures.length
+      ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
+      : summary.join(' · '));
+    if (!modern) window.setTimeout(() => { button.textContent = '⬇'; }, 2500);
 
     if (failures.length) {
       window.alert(`以下文件下载失败：\n\n${failures.join('\n')}\n\n可检查登录状态或浏览器下载权限后重试。`);
     }
   } finally {
+    button.disabled = false;
     endDownloadGuard();
   }
 }
@@ -1388,9 +1424,10 @@ function addDownloadButton() {
   button = document.createElement('button');
   button.id = BUTTON_ID;
   button.type = 'button';
-  button.textContent = modern ? '⬇ 下载资源' : '⬇';
+  button.textContent = '⬇';
+  button.setAttribute('aria-label', '下载资源');
   button.title = modern
-    ? '下载正文图片、Preview、磁力种子和站内附件；附件直接使用网站原生下载按钮'
+    ? '一键下载主楼图片、预览大图和种子；站内附件使用网站下载按钮，结果见网站提示'
     : '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
   Object.assign(button.style, {
     float: modern ? 'none' : 'right',

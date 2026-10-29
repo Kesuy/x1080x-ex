@@ -6,6 +6,7 @@ import {
   historyAliasesForTitle,
   legacyThreadUrl,
   legacyTidFromHistoryValue,
+  resolvedLegacyHistoryAliases,
 } from '../src/history-migration.js';
 
 test('normalizes modern and legacy FC2 title formats to the same history alias', () => {
@@ -39,6 +40,22 @@ test('extracts aliases from the redesigned resource heading while ignoring categ
 test('legacy TID values and URLs are normalized to a fetchable old thread URL', () => {
   assert.equal(legacyTidFromHistoryValue('tid:12345'), '12345');
   assert.equal(legacyTidFromHistoryValue('url:/forum.php?mod=viewthread&tid=12345'), '12345');
+  assert.equal(legacyTidFromHistoryValue('https://agaghhh.cc/thread-12345-1-1.html'), '12345');
   assert.equal(legacyThreadUrl('12345'), 'https://agaghhh.cc/forum.php?mod=viewthread&tid=12345');
   assert.equal(legacyThreadUrl('bad'), '');
+});
+
+test('generic welcome, login and membership pages cannot resolve a legacy TID', () => {
+  const dom = new JSDOM('');
+  for (const heading of ['歡迎訪問 · x1080x', '請使用下面地址之一訪問論壇', '會員方案與點數儲值', '登录', '404']) {
+    assert.deepEqual(extractLegacyHistoryAliases(`<h1>${heading}</h1>`, dom.window.DOMParser), []);
+  }
+  dom.window.close();
+});
+
+test('reads resolved migration cache even when the alias index was never saved', () => {
+  assert.deepEqual(resolvedLegacyHistoryAliases({ resolved: {
+    123: ['resource:newID', 'code:FNS-267'], 456: ['code:FNS-267'], 789: null,
+    999: ['title:請使用下面地址之一訪問論壇'],
+  } }), ['resource:newID', 'code:FNS-267']);
 });

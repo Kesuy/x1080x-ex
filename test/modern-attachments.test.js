@@ -64,3 +64,14 @@ test('no modern attachment is discovered in unrelated posts or magnet-only resou
   assert.equal(collectModernNativeAttachments(dom.window.document).length, 0);
   assert.equal(requestModernNativeAttachmentDownload(dom.window.document, dom.window).status, 'none');
 });
+
+test('counts only successful native handoffs when a snapshotted button becomes unavailable', () => {
+  const dom = mkDoc(attachment('a.zip', 'a') + attachment('b.zip', 'b'));
+  const files = collectModernNativeAttachments(dom.window.document);
+  files[1].button.disabled = true;
+  const result = requestModernNativeAttachmentDownload(dom.window.document, files);
+  assert.equal(result.total, 1);
+  assert.equal(result.attempted, 2);
+  assert.deepEqual(result.failedNames, ['b.zip']);
+  dom.window.close();
+});

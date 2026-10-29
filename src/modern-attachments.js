@@ -15,18 +15,20 @@ export function collectModernNativeAttachments(document) {
     .filter(Boolean);
 }
 
-export function requestModernNativeAttachmentDownload(document) {
-  const files = collectModernNativeAttachments(document);
+export function requestModernNativeAttachmentDownload(document, files = collectModernNativeAttachments(document)) {
   if (!files.length) return { status: 'none', total: 0 };
 
   // Clicking the original website controls preserves its own login, permission,
   // quota and confirmation behavior. The userscript adds no second prompt.
   const triggered = [];
+  const failedNames = [];
   for (const file of files) {
     try {
+      if (!file.button.isConnected || file.button.disabled) throw new Error('附件按钮已不可用');
       file.button.click();
       triggered.push(file.name);
     } catch (error) {
+      failedNames.push(file.name);
       console.warn('[x1080x-ex] native attachment click failed', {
         name: file.name,
         error: String(error?.message || error),
@@ -35,7 +37,9 @@ export function requestModernNativeAttachmentDownload(document) {
   }
   return {
     status: triggered.length ? 'triggered' : 'failed',
-    total: files.length,
+    total: triggered.length,
+    attempted: files.length,
+    failedNames,
     names: triggered,
   };
 }
