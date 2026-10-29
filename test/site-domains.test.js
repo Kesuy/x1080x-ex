@@ -40,8 +40,8 @@ test('primary override is used in outgoing searches and legacy progress URLs', (
     assert.equal(getAgaghhhPrimaryDomain(), 'forum.example.net');
     assert.equal(isAgaghhhHost({ hostname: 'forum.example.net' }), true);
     assert.equal(isAgaghhhHost({ hostname: '1080xin.com' }), true);
-    assert.match(buildAgaghhhSearchUrl('SVMGM-050'), /^https:\/\/forum\.example\.net\/search\.php/);
-    assert.match(buildJavfreeAgaghhhSearchUrl('SAN-437'), /^https:\/\/forum\.example\.net\/search\.php/);
+    assert.match(buildAgaghhhSearchUrl('SVMGM-050'), /^https:\/\/forum\.example\.net\/search\?q=/);
+    assert.match(buildJavfreeAgaghhhSearchUrl('SAN-437'), /^https:\/\/forum\.example\.net\/search\?q=/);
     assert.equal(
       toAgaghhhPrimaryUrl('https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75&page=3'),
       'https://forum.example.net/forum.php?mod=forumdisplay&fid=75&page=3'
