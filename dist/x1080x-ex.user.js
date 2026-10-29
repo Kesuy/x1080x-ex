@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.27
+// @version      1.10.28
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1845,6 +1845,94 @@ ${settings.password}`;
     return [...new Set(Object.values(state.resolved).flatMap((values) => Array.isArray(values) ? values : []).filter(isUsableHistoryAlias))];
   }
 
+  // src/history-recovery.js
+  var HISTORY_RECOVERY_FORMAT = "x1080x-history-recovery-v1";
+  var OLD_FORUM_HOSTS = ["agaghhh.cc", "1080xin.com", "1080xin.vip", "x1080x.com"];
+  function forumTid(value) {
+    try {
+      const url = new URL(value);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !OLD_FORUM_HOSTS.includes(url.hostname.toLowerCase().replace(/^www\./, ""))) return "";
+      if (!(/^\/(?:forum|viewthread)\.php$/i.test(url.pathname) && url.searchParams.get("mod") === "viewthread") && !/^\/(?:thread|viewthread)[-_]\d+/i.test(url.pathname)) return "";
+      return legacyTidFromHistoryValue(url.href);
+    } catch {
+      return "";
+    }
+  }
+  function recoveredTitleAliases(value) {
+    const title = String(value || "").replace(/\s+/g, " ").trim().replace(/\s*[-|–—]\s*(?:(?:x1080x|agaghhh|1080xin)(?:\.(?:com|cc|vip))?\s*[-|–—]?\s*)?(?:Powered by Discuz!?)?\s*$/i, "").trim();
+    const normalized = title.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+    if (/^(?:justamoment|attentionrequiredcloudflare|请稍候|請稍候|稍等片刻|安全验证|安全驗證|正在进行安全验证|正在進行安全驗證|正在加载|正在載入|x1080x(?:com)?|agaghhh(?:cc)?|1080xin(?:com)?)$/.test(normalized)) return [];
+    return historyAliasesForTitle(title).filter(isUsableHistoryAlias);
+  }
+  function buildHistoryRecovery(rows, legacyValue) {
+    if (!Array.isArray(rows)) throw new Error("\u5386\u53F2\u8BB0\u5F55\u5FC5\u987B\u662F\u6570\u7EC4");
+    const allowed = legacyValue === void 0 ? null : new Set(compatibleHistoryKeys(legacyValue).filter((key) => key.startsWith("tid:")).map((key) => key.slice(4)));
+    const entries = /* @__PURE__ */ new Map();
+    const ambiguous = /* @__PURE__ */ new Set();
+    let ignored = 0;
+    for (const row of rows) {
+      const tid = forumTid(row?.url);
+      const aliases = recoveredTitleAliases(row?.title);
+      if (!tid || allowed && !allowed.has(tid) || !aliases.length || row.tid !== void 0 && String(row.tid) !== tid) {
+        ignored += 1;
+        continue;
+      }
+      const existing = entries.get(tid);
+      const strong = (values) => values.find((value) => value.startsWith("code:FC2-")) || values.find((value) => /^(?:code|number):/.test(value));
+      if (existing && strong(existing.aliases) && strong(aliases) && strong(existing.aliases) !== strong(aliases)) {
+        ambiguous.add(tid);
+      }
+      if (!existing || !strong(existing.aliases) && strong(aliases)) entries.set(tid, {
+        tid,
+        url: row.url,
+        title: String(row.title).trim(),
+        aliases
+      });
+    }
+    const recoveredEntries = [...entries.values()].filter((entry) => !ambiguous.has(entry.tid)).map(({ tid, url, title }) => ({ tid, url, title }));
+    return {
+      format: HISTORY_RECOVERY_FORMAT,
+      entries: recoveredEntries,
+      stats: {
+        rows: rows.length,
+        ignored,
+        ambiguous: ambiguous.size,
+        ...allowed ? { legacyCount: allowed.size, remaining: allowed.size - recoveredEntries.length } : {}
+      }
+    };
+  }
+  function planHistoryRecovery(payload, legacyValue, previousState = {}, recoveredState = {}) {
+    if (payload?.format !== HISTORY_RECOVERY_FORMAT || !Array.isArray(payload.entries)) throw new Error("\u8BF7\u9009\u62E9\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u5DE5\u5177\u751F\u6210\u7684 JSON \u6587\u4EF6");
+    const validated = buildHistoryRecovery(payload.entries, legacyValue);
+    const resolved = previousState.resolved && typeof previousState.resolved === "object" && !Array.isArray(previousState.resolved) ? { ...previousState.resolved } : {};
+    if (recoveredState?.resolved && typeof recoveredState.resolved === "object") {
+      for (const [tid, values] of Object.entries(recoveredState.resolved)) {
+        if (!/^\d+$/.test(tid) || !Array.isArray(values)) continue;
+        const existing = Array.isArray(resolved[tid]) ? resolved[tid].filter(isUsableHistoryAlias) : [];
+        resolved[tid] = [.../* @__PURE__ */ new Set([...existing, ...values.filter(isUsableHistoryAlias)])];
+      }
+    }
+    let changed = 0;
+    const aliases = [];
+    const recovered = {};
+    for (const entry of validated.entries) {
+      const existing = Array.isArray(resolved[entry.tid]) ? resolved[entry.tid].filter(isUsableHistoryAlias) : [];
+      const added = recoveredTitleAliases(entry.title);
+      if (added.some((value) => !existing.includes(value))) changed += 1;
+      resolved[entry.tid] = [.../* @__PURE__ */ new Set([...existing, ...added])];
+      recovered[entry.tid] = resolved[entry.tid];
+      aliases.push(...added);
+    }
+    return {
+      changed,
+      matched: validated.entries.length,
+      ignored: payload.entries.length - validated.entries.length,
+      aliases: [...new Set(aliases)],
+      recovered,
+      state: { ...previousState, resolverVersion: 2, resolved }
+    };
+  }
+
   // src/image-fallbacks.js
   function alternateImageUrls(value) {
     try {
@@ -2055,6 +2143,8 @@ ${settings.password}`;
   var MODERN_RESOURCE_HISTORY_KEY = "x1080x-ex:1080xin-resource-history";
   var AGAGHHH_HISTORY_ALIASES_KEY = "x1080x-ex:agaghhh-history-title-aliases";
   var AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY = "x1080x-ex:agaghhh-legacy-history-migration-v1";
+  var AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY = "x1080x-ex:agaghhh-history-recovery-backup-v1";
+  var AGAGHHH_HISTORY_RECOVERED_KEY = "x1080x-ex:agaghhh-history-recovered-titles-v1";
   var LEGACY_HISTORY_AUTO_MIGRATION_LIMIT = 100;
   var LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT = 5e3;
   var legacyHistoryMigrationInProgress = false;
@@ -2192,8 +2282,12 @@ ${domains.join("\n")}
       const modern = compatibleHistoryKeys(typeof GM_getValue === "function" ? GM_getValue(MODERN_RESOURCE_HISTORY_KEY, []) : []);
       const aliases = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
       const state = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {}) : {};
+      const recovered = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}) : {};
       const tids = legacy.filter((value) => value.startsWith("tid:"));
-      const matched = tids.filter((value) => resolvedLegacyHistoryAliases({ resolved: { entry: state?.resolved?.[value.slice(4)] } }).length > 0).length;
+      const matched = tids.filter((value) => resolvedLegacyHistoryAliases({ resolved: {
+        cached: state?.resolved?.[value.slice(4)],
+        recovered: recovered?.resolved?.[value.slice(4)]
+      } }).length > 0).length;
       window.alert(`\u65E7\u7248\u6570\u5B57 TID\uFF1A${tids.length} \u6761
 \u5DF2\u53D6\u5F97\u5BF9\u5E94\u4FE1\u606F\uFF1A${matched} \u6761
 \u4ECD\u7F3A\u5BF9\u5E94\u4FE1\u606F\uFF1A${tids.length - matched} \u6761
@@ -2202,6 +2296,52 @@ ${domains.join("\n")}
 \u65B0\u7248\u8D44\u6E90\u8BB0\u5F55\uFF1A${modern.filter((value) => value.startsWith("resource:")).length} \u6761
 
 \u65E7 TID \u6570\u91CF\u5927\u4E8E 0 \u8868\u793A\u6570\u636E\u5DF2\u8BFB\u5230\uFF1B\u4ECD\u7F3A\u5BF9\u5E94\u4FE1\u606F\u7684\u8BB0\u5F55\u65E0\u6CD5\u4EC5\u51ED\u7F16\u53F7\u5224\u65AD\u65B0\u7248\u5E16\u5B50\u662F\u5426\u6D4F\u89C8\u8FC7\u3002\u82E5\u65E7 TID \u4E3A 0\uFF0C\u8BF7\u5728\u539F\u6765\u90A3\u4EFD\u6CB9\u7334\u811A\u672C\u4E2D\u68C0\u67E5\u6216\u5BFC\u51FA\u5B58\u50A8\u6570\u636E\u3002`);
+    });
+    GM_registerMenuCommand("\u{1F4E5} \u5BFC\u5165\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u6587\u4EF6", () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json,application/json";
+      input.hidden = true;
+      input.addEventListener("cancel", () => input.remove(), { once: true });
+      input.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        input.remove();
+        if (!file) return;
+        try {
+          if (file.size > 20 * 1024 * 1024) throw new Error("\u6062\u590D\u6587\u4EF6\u8D85\u8FC7 20 MB\uFF0C\u8BF7\u53EA\u5BFC\u51FA\u65E7\u8BBA\u575B\u76F8\u5173\u8BB0\u5F55");
+          const payload = JSON.parse(await file.text());
+          const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+          const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+          const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+          const plan = planHistoryRecovery(payload, legacy, state, recovered);
+          if (!plan.matched) {
+            window.alert("\u6062\u590D\u6587\u4EF6\u4E2D\u6CA1\u6709\u5339\u914D\u5F53\u524D\u65E7 TID \u7684\u6709\u6548\u5E16\u5B50\u6807\u9898\uFF0C\u539F\u8BB0\u5F55\u672A\u4FEE\u6539\u3002");
+            return;
+          }
+          GM_setValue(AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY, {
+            migration: state,
+            recovered,
+            aliases: GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []),
+            recoveredAt: Date.now()
+          });
+          GM_setValue(AGAGHHH_HISTORY_RECOVERED_KEY, { resolved: { ...recovered?.resolved, ...plan.recovered } });
+          GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, plan.state);
+          saveHistoryAliases(plan.aliases);
+          if (isBatchOpenPage() && isBatchOpenHistoryEnabled()) {
+            applyBatchOpenHistory(document);
+            const button = document.getElementById(BATCH_BUTTON_ID);
+            if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+            refreshBatchProgressLocatorButton();
+          }
+          window.alert(`\u5DF2\u5339\u914D ${plan.matched} \u6761\u65E7 TID\uFF0C\u672C\u6B21\u8865\u5145 ${plan.changed} \u6761\u5BF9\u5E94\u4FE1\u606F\u3002
+\u5FFD\u7565\u4E0D\u5339\u914D\u8BB0\u5F55\uFF1A${plan.ignored} \u6761\u3002
+\u539F\u59CB\u65E7 TID \u5DF2\u4FDD\u7559\uFF0C\u5BFC\u5165\u524D\u7684\u6620\u5C04\u548C\u7D22\u5F15\u5DF2\u53E6\u884C\u5907\u4EFD\u3002`);
+        } catch (error) {
+          window.alert(`\u5386\u53F2\u6062\u590D\u6587\u4EF6\u5BFC\u5165\u5931\u8D25\uFF1A${error?.message || error}`);
+        }
+      }, { once: true });
+      document.body.append(input);
+      input.click();
     });
   }
   function currentHost() {
@@ -2311,7 +2451,10 @@ ${domains.join("\n")}
     const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : rawStored;
     const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
     const aliases = config.kind === "agaghhh" ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
-    const resolvedAliases = config.kind === "agaghhh" ? resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {})) : [];
+    const resolvedAliases = config.kind === "agaghhh" ? [
+      ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {})),
+      ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}))
+    ] : [];
     const values = [
       ...Array.isArray(stored) ? stored : [],
       ...Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : [],
@@ -2380,6 +2523,13 @@ ${domains.join("\n")}
     const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
     const attemptedAt = state?.resolverVersion === 2 && state?.attemptedAt && typeof state.attemptedAt === "object" ? { ...state.attemptedAt } : {};
     const resolved = state?.resolved && typeof state.resolved === "object" ? { ...state.resolved } : {};
+    const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+    if (recovered?.resolved && typeof recovered.resolved === "object") {
+      for (const [tid, values] of Object.entries(recovered.resolved)) {
+        if (!Array.isArray(values)) continue;
+        resolved[tid] = [.../* @__PURE__ */ new Set([...Array.isArray(resolved[tid]) ? resolved[tid] : [], ...values.filter(isUsableHistoryAlias)])];
+      }
+    }
     for (const [tid, aliases] of Object.entries(resolved)) {
       const valid = Array.isArray(aliases) ? aliases.filter(isUsableHistoryAlias) : [];
       if (valid.length) resolved[tid] = valid;
@@ -2404,15 +2554,24 @@ ${domains.join("\n")}
           tid,
           aliases: await requestLegacyHistoryAliases(tid)
         })));
+        const latestState = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+        if (latestState?.resolved && typeof latestState.resolved === "object") {
+          for (const [tid, values] of Object.entries(latestState.resolved)) {
+            if (!Array.isArray(values)) continue;
+            const valid = values.filter(isUsableHistoryAlias);
+            if (valid.length) resolved[tid] = [.../* @__PURE__ */ new Set([...resolved[tid] || [], ...valid])];
+          }
+        }
+        if (latestState?.attemptedAt && typeof latestState.attemptedAt === "object") Object.assign(attemptedAt, latestState.attemptedAt);
         for (const result of results) {
           attemptedAt[result.tid] = Date.now();
           if (result.aliases.length) {
-            resolved[result.tid] = result.aliases;
+            resolved[result.tid] = [.../* @__PURE__ */ new Set([...resolved[result.tid] || [], ...result.aliases])];
             saveHistoryAliases(result.aliases);
             matched += 1;
           }
         }
-        GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { resolverVersion: 2, attemptedAt, resolved });
+        GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { ...latestState, resolverVersion: 2, attemptedAt, resolved });
         if (offset + 4 < pending.length) {
           await new Promise((resolve) => window.setTimeout(resolve, 180));
         }

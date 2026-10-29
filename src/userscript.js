@@ -41,6 +41,7 @@ import {
   isUsableHistoryAlias,
   compatibleHistoryKeys,
 } from './history-migration.js';
+import { planHistoryRecovery } from './history-recovery.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
 import {
@@ -65,6 +66,10 @@ const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
 const MODERN_RESOURCE_HISTORY_KEY = 'x1080x-ex:1080xin-resource-history';
 const AGAGHHH_HISTORY_ALIASES_KEY = 'x1080x-ex:agaghhh-history-title-aliases';
 const AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY = 'x1080x-ex:agaghhh-legacy-history-migration-v1';
+const AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY = 'x1080x-ex:agaghhh-history-recovery-backup-v1';
+// Older open tabs know only the migration cache; they cannot overwrite this
+// separately persisted recovery source after a user imports browser titles.
+const AGAGHHH_HISTORY_RECOVERED_KEY = 'x1080x-ex:agaghhh-history-recovered-titles-v1';
 const LEGACY_HISTORY_AUTO_MIGRATION_LIMIT = 100;
 const LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT = 5000;
 let legacyHistoryMigrationInProgress = false;
@@ -206,9 +211,53 @@ function registerSettingsMenu() {
     const modern = compatibleHistoryKeys(typeof GM_getValue === 'function' ? GM_getValue(MODERN_RESOURCE_HISTORY_KEY, []) : []);
     const aliases = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
     const state = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {}) : {};
+    const recovered = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}) : {};
     const tids = legacy.filter(value => value.startsWith('tid:'));
-    const matched = tids.filter(value => resolvedLegacyHistoryAliases({ resolved: { entry: state?.resolved?.[value.slice(4)] } }).length > 0).length;
+    const matched = tids.filter(value => resolvedLegacyHistoryAliases({ resolved: {
+      cached: state?.resolved?.[value.slice(4)], recovered: recovered?.resolved?.[value.slice(4)],
+    } }).length > 0).length;
     window.alert(`旧版数字 TID：${tids.length} 条\n已取得对应信息：${matched} 条\n仍缺对应信息：${tids.length - matched} 条\n旧记录中的标题/资源信息：${legacy.filter(isUsableHistoryAlias).length} 项\n共享标题/番号索引：${Array.isArray(aliases) ? aliases.length : 0} 项\n新版资源记录：${modern.filter(value => value.startsWith('resource:')).length} 条\n\n旧 TID 数量大于 0 表示数据已读到；仍缺对应信息的记录无法仅凭编号判断新版帖子是否浏览过。若旧 TID 为 0，请在原来那份油猴脚本中检查或导出存储数据。`);
+  });
+  GM_registerMenuCommand('📥 导入旧论坛历史恢复文件', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.hidden = true;
+    input.addEventListener('cancel', () => input.remove(), { once: true });
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      try {
+        if (file.size > 20 * 1024 * 1024) throw new Error('恢复文件超过 20 MB，请只导出旧论坛相关记录');
+        const payload = JSON.parse(await file.text());
+        const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+        const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+        const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+        const plan = planHistoryRecovery(payload, legacy, state, recovered);
+        if (!plan.matched) {
+          window.alert('恢复文件中没有匹配当前旧 TID 的有效帖子标题，原记录未修改。');
+          return;
+        }
+        GM_setValue(AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY, {
+          migration: state, recovered, aliases: GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []), recoveredAt: Date.now(),
+        });
+        GM_setValue(AGAGHHH_HISTORY_RECOVERED_KEY, { resolved: { ...recovered?.resolved, ...plan.recovered } });
+        GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, plan.state);
+        saveHistoryAliases(plan.aliases);
+        if (isBatchOpenPage() && isBatchOpenHistoryEnabled()) {
+          applyBatchOpenHistory(document);
+          const button = document.getElementById(BATCH_BUTTON_ID);
+          if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+          refreshBatchProgressLocatorButton();
+        }
+        window.alert(`已匹配 ${plan.matched} 条旧 TID，本次补充 ${plan.changed} 条对应信息。\n忽略不匹配记录：${plan.ignored} 条。\n原始旧 TID 已保留，导入前的映射和索引已另行备份。`);
+      } catch (error) {
+        window.alert(`历史恢复文件导入失败：${error?.message || error}`);
+      }
+    }, { once: true });
+    document.body.append(input);
+    input.click();
   });
 }
 
@@ -341,7 +390,8 @@ function readBatchOpenHistory() {
     ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, [])
     : [];
   const resolvedAliases = config.kind === 'agaghhh'
-    ? resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {}))
+    ? [...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {})),
+      ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}))]
     : [];
   const values = [
     ...(Array.isArray(stored) ? stored : []),
@@ -433,6 +483,13 @@ async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMI
     ? { ...state.attemptedAt } : {};
   const resolved = state?.resolved && typeof state.resolved === 'object'
     ? { ...state.resolved } : {};
+  const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+  if (recovered?.resolved && typeof recovered.resolved === 'object') {
+    for (const [tid, values] of Object.entries(recovered.resolved)) {
+      if (!Array.isArray(values)) continue;
+      resolved[tid] = [...new Set([...(Array.isArray(resolved[tid]) ? resolved[tid] : []), ...values.filter(isUsableHistoryAlias)])];
+    }
+  }
   for (const [tid, aliases] of Object.entries(resolved)) {
     const valid = Array.isArray(aliases) ? aliases.filter(isUsableHistoryAlias) : [];
     if (valid.length) resolved[tid] = valid;
@@ -462,15 +519,26 @@ async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMI
         tid,
         aliases: await requestLegacyHistoryAliases(tid),
       })));
+      // A user can import recovered titles while these requests are pending.
+      // Merge the latest storage instead of overwriting the imported mappings.
+      const latestState = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+      if (latestState?.resolved && typeof latestState.resolved === 'object') {
+        for (const [tid, values] of Object.entries(latestState.resolved)) {
+          if (!Array.isArray(values)) continue;
+          const valid = values.filter(isUsableHistoryAlias);
+          if (valid.length) resolved[tid] = [...new Set([...(resolved[tid] || []), ...valid])];
+        }
+      }
+      if (latestState?.attemptedAt && typeof latestState.attemptedAt === 'object') Object.assign(attemptedAt, latestState.attemptedAt);
       for (const result of results) {
         attemptedAt[result.tid] = Date.now();
         if (result.aliases.length) {
-          resolved[result.tid] = result.aliases;
+          resolved[result.tid] = [...new Set([...(resolved[result.tid] || []), ...result.aliases])];
           saveHistoryAliases(result.aliases);
           matched += 1;
         }
       }
-      GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { resolverVersion: 2, attemptedAt, resolved });
+      GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { ...latestState, resolverVersion: 2, attemptedAt, resolved });
       if (offset + 4 < pending.length) {
         await new Promise((resolve) => window.setTimeout(resolve, 180));
       }

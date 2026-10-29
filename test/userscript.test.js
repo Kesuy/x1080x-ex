@@ -1353,3 +1353,60 @@ test('history diagnosis distinguishes loaded old TIDs from records with a usable
     assert.equal(values.get('x1080x-ex:agaghhh-batch-open-history'), '[123,"tid:456",{"tid":789}]');
   } finally { dom.window.close(); restore(); }
 });
+
+test('local recovery import restores modern marks and unopened counts without changing the old TID array', async () => {
+  const dom = new JSDOM(`<div class="thread-list"><div class="pgt"><div class="pg"><strong>1</strong></div></div>
+    <article class="thread-row"><a class="resource-title" href="/resources/oldRecovered">MFYD-220 Example</a></article>
+    <article class="thread-row"><a class="resource-title" href="/resources/stillUnread">FNS-267 Example</a></article>
+    </div>`, { url: 'https://1080xin.com/boards/recoveryTest' });
+  const restore = installDomGlobals(dom.window);
+  const menus = new Map();
+  const alerts = [];
+  const pendingLegacyRequests = [];
+  const old = ['tid:123', 'tid:456'];
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history', old],
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  globalThis.GM_registerMenuCommand = (name, callback) => menus.set(name, callback);
+  globalThis.GM_xmlhttpRequest = request => {
+    if (request.url.startsWith('https://1080xin.com/')) pendingLegacyRequests.push(request);
+    else queueMicrotask(() => request.onerror({ error: 'legacy site unavailable' }));
+  };
+  dom.window.alert = message => alerts.push(message);
+  try {
+    await import(`../src/userscript.js?history-recovery-import=${Date.now()}`);
+    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（2）');
+    await waitFor(() => pendingLegacyRequests.length === 2, 'automatic migration should be pending while a file is imported');
+    menus.get('📥 导入旧论坛历史恢复文件')();
+    const input = dom.window.document.querySelector('input[type="file"]');
+    Object.defineProperty(input, 'files', { value: [{ size: 200, text: async () => JSON.stringify({
+      format: 'x1080x-history-recovery-v1',
+      entries: [{ tid: '123', url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=123', title: 'MFYD-220 Example - x1080x.com' }],
+    }) }] });
+    input.dispatchEvent(new dom.window.Event('change'));
+    await waitFor(() => alerts.length > 0, 'import should report its actual match count');
+    assert.match(alerts[0], /已匹配 1 条旧 TID/);
+    assert.equal(values.get('x1080x-ex:agaghhh-batch-open-history'), old);
+    assert.deepEqual(old, ['tid:123', 'tid:456']);
+    assert.ok(values.has('x1080x-ex:agaghhh-history-recovery-backup-v1'));
+    assert.equal(dom.window.document.querySelector('[href="/resources/oldRecovered"]').getAttribute('data-x1080x-batch-opened'), '1');
+    assert.equal(dom.window.document.querySelector('[href="/resources/stillUnread"]').getAttribute('data-x1080x-batch-opened'), null);
+    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（1）');
+    for (const request of pendingLegacyRequests) request.onerror({ error: 'mapping unavailable' });
+    await waitFor(() => Object.keys(values.get('x1080x-ex:agaghhh-legacy-history-migration-v1')?.attemptedAt || {}).length === 2,
+      'pending migration batch should finish after import');
+    assert.ok(values.get('x1080x-ex:agaghhh-legacy-history-migration-v1').resolved['123'].includes('code:MFYD-220'),
+      'finishing a stale background batch must not overwrite imported mappings');
+    values.set('x1080x-ex:agaghhh-legacy-history-migration-v1', { resolved: {}, attemptedAt: {} });
+    values.set('x1080x-ex:agaghhh-history-title-aliases', []);
+    dom.window.document.querySelector('.thread-list').innerHTML = `<div class="pgt"><div class="pg"><strong>1</strong></div></div>
+      <article class="thread-row"><a class="resource-title" href="/resources/oldRecovered">MFYD-220 Example</a></article>
+      <article class="thread-row"><a class="resource-title" href="/resources/stillUnread">FNS-267 Example</a></article>`;
+    await waitFor(() => dom.window.document.querySelector('[href="/resources/oldRecovered"]')?.getAttribute('data-x1080x-batch-opened') === '1',
+      'recovered titles must survive even if an older open tab overwrites the old migration cache and alias index');
+  } finally { dom.window.close(); await Promise.resolve(); restore(); }
+});

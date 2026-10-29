@@ -134,6 +134,22 @@ Tampermonkey 菜单中的 **🌐 设置 x1080x 站点域名** 用于修改当前
 
 只有旧 TID、没有标题或新旧 ID 对应关系时，必须依赖站点仍提供旧帖/跳转，才能恢复对应记录。欢迎页、会员页不会被误判为迁移成功；无法解析的旧数据保留，不能保证全量恢复。Chrome 自身的 `:visited` 数据无法由脚本读取。
 
+### 从本机 Chrome 访问历史恢复旧 TID
+
+旧站已经不提供帖子时，可以用旧帖访问时留下的网址和标题补回对应信息。这属于现有浏览记录功能的手动修复流程，不会自动扫描浏览器数据。
+
+1. 将旧 TID 数组保存为 `.local-history-recovery/old-history.json`。该目录已加入 Git 忽略规则，用于本机数据，不随代码提交。
+2. 使用 Node.js 22.13+，双击 `scripts/export-legacy-history.cmd`，选择当时 Chrome 配置目录中的 `History` 文件。可在 Chrome 的 `chrome://version` 页面查看「个人资料路径」，便携版或多个配置也按此路径确定。工具以只读方式查询旧论坛网址和标题，只输出命中旧 TID 的记录。数据库若提示被占用，退出 Chrome 后重试。
+3. 在油猴菜单选择「导入旧论坛历史恢复文件」，导入生成的 `recovery-日期时间.json`。脚本将补充映射并刷新当前页的已浏览标记、未浏览数量及进度记录。
+
+导入仅合并当前已有旧 TID 的映射；不会改写原始 TID 数组，并另存导入前的迁移缓存和索引。恢复标题保存在独立键中，旧版本标签页写回迁移缓存时也不会覆盖它。缺失标题、安全验证页标题、冲突番号和其他网站记录均跳过，最终以导入弹窗的实际匹配数为准，不能保证恢复浏览器已经删除的记录。
+
+命令行等效用法：
+
+```powershell
+node scripts/recover-legacy-history.mjs --history "C:\path\to\Chrome\Profile\History" --legacy ".local-history-recovery/old-history.json" --output ".local-history-recovery/recovery.json"
+```
+
 ## 本地开发
 
 修改项目之前请先阅读 [AGENTS.md](AGENTS.md)。
