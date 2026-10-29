@@ -220,6 +220,7 @@ test('一次下载任务包含重命名后的附件和主楼最大图片', () =>
     {
       kind: 'image',
       url: 'https://agaghhh.cc/second-thumb.jpg',
+      fallbackUrls: ['https://agaghhh.cc/second.jpg'],
       name: 'SNOS-325.jpg',
     },
   ]);
@@ -255,6 +256,7 @@ test('图片下载使用网页已经加载的 src 地址', () => {
   assert.deepEqual(buildDownloadJobs(dom.window.document), [{
     kind: 'image',
     url: 'https://agaghhh.cc/cached-visible.jpg',
+    fallbackUrls: ['https://agaghhh.cc/uncached-original.jpg'],
     name: 'ABCD-123.jpg',
   }]);
 });
