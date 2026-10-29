@@ -1088,3 +1088,80 @@ test('legacy TID history migrates by title/code and marks the matching modern re
     dom.window.close();
   }
 });
+
+test('modern download counts native attachments and uses the image element referrer policy', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>FNS-267</title></head><body>
+    <div class="panel detail-panel"><header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button secondary dock-side small">收藏</button>
+        <button class="button dock-main small">回复主题</button>
+      </div></span></div>
+      <h1><span class="topic-tags">有码HD</span>FNS-267 [BT] Sample</h1>
+    </header></div>
+    <article class="post" id="first-post"><div class="post-content">
+      <div class="post-text"><div class="protected-text discuz-body">
+        <img class="body-image" referrerpolicy="strict-origin-when-cross-origin" src="https://www.hxmmdd.com/images-v2/pics/off/2026/10/29/off_FNS-267.jpg.webp">
+        <img class="body-image" referrerpolicy="no-referrer" src="https://imgfor80.me/images/2026/10/29/FNS-267_s.jpg">
+      </div></div>
+      <section class="attachments-section"><div class="attachment-list"><article class="attachment">
+        <span class="file-name" title="sample.zip">sample.zip</span>
+        <div class="file-get"><button class="button secondary tool" type="button">站内下载</button></div>
+      </article></div></section>
+    </div></article>
+  </body></html>`, { url: 'https://1080xin.com/resources/7OvLVLtpZ0qy7wEUHSsi7D?page=1&order=asc' });
+  const restore = installDomGlobals(dom.window);
+  const requests = [];
+  let nativeClicks = 0;
+  const oldGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => {
+    if (key === 'x1080x-ex:agaghhh-hdblog-preview-enabled') return false;
+    if (key === 'x1080x-ex:agaghhh-real-actress-enabled') return false;
+    return fallback;
+  };
+  globalThis.GM_xmlhttpRequest = (options) => {
+    requests.push(options);
+    queueMicrotask(() => options.onload({
+      status: 200,
+      finalUrl: options.url,
+      responseHeaders: 'Content-Type: image/webp',
+      response: new dom.window.Blob(['image-bytes'], { type: 'image/webp' }),
+    }));
+  };
+  dom.window.URL.createObjectURL = () => 'blob:x1080x-test';
+  dom.window.URL.revokeObjectURL = () => {};
+  dom.window.document.querySelector('.file-get button').addEventListener('click', () => { nativeClicks += 1; });
+
+  try {
+    await import(`../src/userscript.js?modern-count-referer=${Date.now()}`);
+    const { installAgaghhhEnhancement } = await import(`../src/agaghhh-enhancement.js?modern-actions-count=${Date.now()}`);
+    installAgaghhhEnhancement(dom.window.document, dom.window.location, globalThis.GM_xmlhttpRequest);
+
+    const button = dom.window.document.getElementById('x1080x-ex-download');
+    const group = dom.window.document.getElementById('x1080x-ex-resource-actions');
+    assert.ok(button);
+    assert.ok(group);
+    assert.deepEqual([...group.children].map((item) => item.id), [
+      'x1080x-ex-download',
+      'x1080x-ex-agaghhh-hdblog-search',
+      'x1080x-ex-agaghhh-copy-code',
+    ]);
+    assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'));
+
+    button.click();
+    assert.equal(button.textContent, '下载中 1/3',
+      'two image jobs plus one native attachment should be counted as three total tasks');
+    await waitFor(() => nativeClicks === 1, 'native attachment should be triggered after image downloads');
+    await waitFor(() => button.textContent.includes('触发 1 个附件'),
+      'completion status should account for the native attachment');
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].headers?.Referer, 'https://1080xin.com/',
+      'cross-origin image request should follow strict-origin-when-cross-origin');
+    assert.equal(requests[1].headers, undefined,
+      'no-referrer images must not receive a Referer header');
+  } finally {
+    if (oldGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGet;
+    restore();
+    dom.window.close();
+  }
+});
