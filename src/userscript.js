@@ -1328,7 +1328,7 @@ function addBatchOpenButton() {
 // Keep the modern Next.js board list in sync after hydration and dynamic paging.
 function observeModernBoard() {
   if (!isAgaghhhHost(location) || !/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
-  if (!document.body || typeof MutationObserver !== 'function') return;
+  if (!document.body || typeof window.MutationObserver !== 'function') return;
   let timer = null;
   const refresh = () => {
     timer = null;
@@ -1346,7 +1346,7 @@ function observeModernBoard() {
     if (timer !== null) window.clearTimeout(timer);
     timer = window.setTimeout(refresh, 120);
   };
-  const observer = new MutationObserver((mutations) => {
+  const observer = new window.MutationObserver((mutations) => {
     if (!mutations.some((mutation) => (
       mutation.target?.matches?.('.thread-list, .thread-row, .thread-line, .pgt')
       || [...mutation.addedNodes].some((node) => (
