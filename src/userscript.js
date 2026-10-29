@@ -1123,15 +1123,17 @@ function imageRefererPolicyForJob(job) {
   ).trim().toLowerCase();
   const crossOrigin = target.origin !== location.origin;
   const origin = `${location.origin}/`;
-  if (policy === 'no-referrer' || (policy === 'same-origin' && crossOrigin)) {
+  const downgrade = location.protocol === 'https:' && target.protocol === 'http:';
+  if (policy === 'no-referrer'
+    || (policy === 'same-origin' && crossOrigin)
+    || (downgrade && ['strict-origin', 'strict-origin-when-cross-origin', 'no-referrer-when-downgrade'].includes(policy))) {
     return { matched: true, referers: [''] };
   }
-  if (policy === 'origin' || policy === 'strict-origin'
-    || (crossOrigin && ['strict-origin-when-cross-origin', 'no-referrer-when-downgrade'].includes(policy))) {
+  if (policy === 'origin' || policy === 'strict-origin') {
     return { matched: true, referers: [origin, ''] };
   }
-  if (policy === 'strict-origin-when-cross-origin' && !crossOrigin) {
-    return { matched: true, referers: [location.href, ''] };
+  if (policy === 'strict-origin-when-cross-origin') {
+    return { matched: true, referers: crossOrigin ? [origin, ''] : [location.href, ''] };
   }
   if (policy === 'unsafe-url' || policy === 'no-referrer-when-downgrade') {
     return { matched: true, referers: [location.href, ''] };
