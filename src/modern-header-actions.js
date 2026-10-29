@@ -11,6 +11,30 @@ function favoriteButton(actions) {
   ) || null;
 }
 
+export function renderModernDownloadButton(button, state = 'idle', count = '') {
+  const key = `${state}:${count}`;
+  if (button.dataset.downloadRender === key && button.querySelector('svg')) return;
+  button.dataset.downloadRender = key;
+  button.dataset.downloadState = state;
+  const svg = button.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  for (const [name, value] of Object.entries({ viewBox: '0 0 24 24', width: count ? '13' : '19', height: count ? '13' : '19', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', 'data-icon': state })) svg.setAttribute(name, value);
+  const path = button.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', state === 'done' ? 'm5 12 4 4L19 6'
+    : state === 'error' ? 'M12 4 2 21h20L12 4m0 6v5m0 3v.1'
+      : 'M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5');
+  svg.append(path);
+  const children = [svg];
+  if (count) {
+    const badge = button.ownerDocument.createElement('span');
+    badge.setAttribute('data-download-count', '');
+    badge.textContent = count;
+    Object.assign(badge.style, { fontSize: '10px', lineHeight: '12px', fontWeight: '600' });
+    children.push(badge);
+  }
+  button.replaceChildren(...children);
+  button.style.background = state === 'error' ? '#a96b26' : state === 'done' ? '#257b61' : '#398bd4';
+}
+
 export function ensureModernDownloadStatus(document) {
   const header = document?.querySelector('.thread-header');
   if (!header) return null;
@@ -85,9 +109,9 @@ export function placeModernResourceActionButton(document, button) {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: button.id === 'x1080x-ex-download' ? '112px' : 'max-content',
-    minWidth: button.id === 'x1080x-ex-download' ? '112px' : '38px',
-    maxWidth: button.id === 'x1080x-ex-download' ? '112px' : '',
+    width: button.id === 'x1080x-ex-download' ? '44px' : 'max-content',
+    minWidth: button.id === 'x1080x-ex-download' ? '44px' : '38px',
+    maxWidth: button.id === 'x1080x-ex-download' ? '44px' : '',
     boxSizing: 'border-box',
     margin: '0',
     flex: '0 0 auto',

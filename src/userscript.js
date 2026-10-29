@@ -24,7 +24,7 @@ import {
 import { requestTorrentBytes } from './torrent.js';
 import {
   collectModernNativeAttachments,
-  requestModernNativeAttachmentDownload,
+  prepareModernAttachmentDownload,
 } from './modern-attachments.js';
 import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
@@ -39,10 +39,16 @@ import {
   legacyTidFromHistoryValue,
   resolvedLegacyHistoryAliases,
   isUsableHistoryAlias,
+  compatibleHistoryKeys,
 } from './history-migration.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
-import { ensureModernResourceActionGroup, placeModernResourceActionButton, ensureModernDownloadStatus } from './modern-header-actions.js';
+import {
+  ensureModernResourceActionGroup,
+  placeModernResourceActionButton,
+  ensureModernDownloadStatus,
+  renderModernDownloadButton,
+} from './modern-header-actions.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
@@ -177,11 +183,14 @@ function registerSettingsMenu() {
     const legacy = typeof GM_getValue === 'function'
       ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])
       : [];
-    const total = Array.isArray(legacy)
-      ? new Set(legacy.map(legacyTidFromHistoryValue).filter(Boolean)).size
-      : 0;
+    const total = compatibleHistoryKeys(legacy).filter(value => value.startsWith('tid:')).length;
     if (!total) {
-      window.alert('没有找到旧版数字 TID 浏览记录。');
+      const aliases = compatibleHistoryKeys(legacy).filter(isUsableHistoryAlias);
+      if (aliases.length) {
+        saveHistoryAliases(aliases);
+        if (isBatchOpenPage()) applyBatchOpenHistory(document);
+        window.alert(`已载入 ${aliases.length} 项旧版标题/资源信息，无需通过数字 TID 查询。`);
+      } else window.alert('没有在当前这份脚本中找到旧版记录。请在原来的油猴脚本中检查或导出存储数据。');
       return;
     }
     if (!window.confirm(`发现约 ${total} 条旧版记录。脚本将逐条读取旧帖标题，按番号/标题匹配新版资源；这可能需要几分钟，不会删除旧记录。是否开始完整迁移？`)) return;
@@ -191,6 +200,15 @@ function registerSettingsMenu() {
         window.alert(`旧版历史检查结束。\n本次检查：${result.checked} 条\n新增匹配：${result.matched} 条\n剩余未解析：${result.unresolved} 条\n旧记录未删除。${result.unresolved ? '\n未解析记录只有旧 TID，需要可访问的旧帖或站点新旧 ID 映射才能恢复。' : ''}`);
       })
       .catch((error) => window.alert(`迁移失败：${error?.message || error}`));
+  });
+  GM_registerMenuCommand('🧾 检查旧版浏览记录', () => {
+    const legacy = compatibleHistoryKeys(typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : []);
+    const modern = compatibleHistoryKeys(typeof GM_getValue === 'function' ? GM_getValue(MODERN_RESOURCE_HISTORY_KEY, []) : []);
+    const aliases = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
+    const state = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {}) : {};
+    const tids = legacy.filter(value => value.startsWith('tid:'));
+    const matched = tids.filter(value => resolvedLegacyHistoryAliases({ resolved: { entry: state?.resolved?.[value.slice(4)] } }).length > 0).length;
+    window.alert(`旧版数字 TID：${tids.length} 条\n已取得对应信息：${matched} 条\n仍缺对应信息：${tids.length - matched} 条\n旧记录中的标题/资源信息：${legacy.filter(isUsableHistoryAlias).length} 项\n共享标题/番号索引：${Array.isArray(aliases) ? aliases.length : 0} 项\n新版资源记录：${modern.filter(value => value.startsWith('resource:')).length} 条\n\n旧 TID 数量大于 0 表示数据已读到；仍缺对应信息的记录无法仅凭编号判断新版帖子是否浏览过。若旧 TID 为 0，请在原来那份油猴脚本中检查或导出存储数据。`);
   });
 }
 
@@ -315,9 +333,10 @@ function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory()))
 function readBatchOpenHistory() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function') return [];
-  const stored = GM_getValue(config.historyKey, []);
+  const rawStored = GM_getValue(config.historyKey, []);
+  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
   // Previous beta releases temporarily saved modern resource IDs in the old key.
-  const legacy = config.modern ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : [];
+  const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
   const aliases = config.kind === 'agaghhh'
     ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, [])
     : [];
@@ -404,7 +423,9 @@ async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMI
   }
 
   const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
-  const tids = [...new Set((Array.isArray(legacy) ? legacy : [])
+  const legacyKeys = compatibleHistoryKeys(legacy);
+  saveHistoryAliases(legacyKeys.filter(isUsableHistoryAlias));
+  const tids = [...new Set(legacyKeys
     .map(legacyTidFromHistoryValue)
     .filter(Boolean))];
   const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
@@ -946,6 +967,7 @@ function parseResponseHeaders(value) {
 
 function redactDiagnostic(value) {
   return String(value ?? '')
+    .replace(/(\/api\/downloads\/file\/)[a-z0-9-]+/gi, '$1[已脱敏]')
     .replace(/((?:cookie|authorization|token|auth|sid)=)[^;\s&]+/gi, '$1[已脱敏]')
     .replace(/([?&](?:token|auth|sid|key)=)[^&#\s]+/gi, '$1[已脱敏]');
 }
@@ -1314,7 +1336,9 @@ function setDownloadStatus(button, text, label = text) {
     if (button.textContent !== text) button.textContent = text;
     return;
   }
-  if (button.textContent !== label) button.textContent = label;
+  const count = text.match(/(?:处理中|已处理) (\d+\/\d+)/)?.[1] || '';
+  renderModernDownloadButton(button, label.startsWith('下载中') ? 'progress' : label.startsWith('⚠') ? 'error' : 'done', count);
+  button.setAttribute('aria-label', `${label}：${text}`);
   const status = ensureModernDownloadStatus(document);
   if (status) {
     if (status.textContent !== text) status.textContent = text;
@@ -1350,12 +1374,27 @@ async function downloadAll(button) {
   const progress = () => setDownloadStatus(button, `处理中 ${processed}/${totalTasks} · 已保存 ${saved}${started ? ` · 已发起 ${started}` : ''}`, `下载中 ${processed}/${totalTasks}`);
 
   try {
-    // Delegate while the user gesture is still active. Native controls may rely
-    // on it, and waiting for slow torrent caches would otherwise delay the ZIP.
-    const nativeResult = requestModernNativeAttachmentDownload(document, nativeFiles);
-    processed += nativeResult.attempted || 0;
-    for (const name of nativeResult.failedNames || []) failures.push(`${name}：未能触发网站下载按钮`);
+    // Resolve the site's authorized receipt first, then save the file with the
+    // same title-based naming rules used for legacy attachments.
+    const nativeResult = { total: 0 };
     progress();
+    for (const file of nativeFiles) {
+      try {
+        const attachment = await prepareModernAttachmentDownload(document, file);
+        if (attachment.delegated) nativeResult.total += 1;
+        else {
+          const result = await requestBlobWithPageFetch(attachment);
+          if (/(?:application\/json|text\/html)/i.test(result.contentType)) throw new Error('网站返回了错误信息，未保存为附件');
+          if (/\.zip$/i.test(attachment.name) && !/^PK(?:\x03\x04|\x05\x06|\x07\x08)/.test(await blobPrefix(result.blob))) throw new Error('网站响应不是有效 ZIP，未保存错误页');
+          recordSave(await saveDownloadBlob(result.blob, attachment.name, document, { browserDownload: true }));
+          attachment.complete();
+        }
+      } catch (error) {
+        failures.push(`${file.name}：${redactDiagnostic(error?.message || '站内附件下载失败')}`);
+      }
+      processed += 1;
+      progress();
+    }
     console.info('[x1080x-ex] environment', {
       downloadMode: typeof GM_info === 'object' ? GM_info.downloadMode : undefined,
       scriptHandler: typeof GM_info === 'object' ? GM_info.scriptHandler : undefined,
@@ -1406,7 +1445,8 @@ async function downloadAll(button) {
     const visibleButton = activeDownloadState.pathname === location.pathname
       ? document.getElementById(BUTTON_ID) || button : button;
     downloadResetTimers.set(visibleButton, window.setTimeout(() => {
-      visibleButton.textContent = '⬇';
+      if (modern) renderModernDownloadButton(visibleButton);
+      else visibleButton.textContent = '⬇';
       visibleButton.setAttribute('aria-label', '下载资源');
     }, 2500));
 
@@ -1453,9 +1493,10 @@ function addDownloadButton() {
   button.id = BUTTON_ID;
   button.type = 'button';
   button.textContent = '⬇';
+  if (modern) renderModernDownloadButton(button);
   button.setAttribute('aria-label', '下载资源');
   button.title = modern
-    ? '一键下载主楼图片、预览大图和种子；站内附件使用网站下载按钮，结果见网站提示'
+    ? '下载主楼图片、预览和种子；免费/额度附件按帖子标题命名，付费附件由网站确认'
     : '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
   Object.assign(button.style, {
     float: modern ? 'none' : 'right',
@@ -1474,10 +1515,10 @@ function addDownloadButton() {
     cursor: 'pointer',
     fontSize: '14px',
     lineHeight: '20px',
-    ...(modern ? { padding: '7px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontVariantNumeric: 'tabular-nums' } : {}),
+    ...(modern ? { height: '36px', padding: '0', flexDirection: 'column', gap: '0', borderRadius: '7px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' } : {}),
   });
-  button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
-  button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
+  button.addEventListener('mouseenter', () => { if (!modern || button.dataset.downloadState === 'idle') button.style.background = '#246eaf'; });
+  button.addEventListener('mouseleave', () => { if (!modern || button.dataset.downloadState === 'idle') button.style.background = '#398bd4'; });
   button.addEventListener('click', () => void downloadAll(button));
   if (modern && placeModernResourceActionButton(document, button)) return;
   if (modern) title.after(button);

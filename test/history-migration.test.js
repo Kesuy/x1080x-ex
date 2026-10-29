@@ -7,12 +7,20 @@ import {
   legacyThreadUrl,
   legacyTidFromHistoryValue,
   resolvedLegacyHistoryAliases,
+  compatibleHistoryKeys,
 } from '../src/history-migration.js';
 
 test('normalizes modern and legacy FC2 title formats to the same history alias', () => {
   assert.ok(historyAliasesForTitle('(fc4939392) old title').includes('code:FC2-4939392'));
   assert.ok(historyAliasesForTitle('（FC4939392）new title').includes('code:FC2-4939392'));
   assert.ok(historyAliasesForTitle('FC2-PPV-4994798 example').includes('code:FC2-4994798'));
+});
+
+test('reads serialized history, numeric TIDs, old URL objects and title-bearing records without deleting the source', () => {
+  const source = JSON.stringify([123, 'tid:456', { tid: 789, title: 'MFYD-220 Example' }, { url: 'https://agaghhh.cc/thread-987-1-1.html' }, { resource_id: 'newID' }]);
+  const keys = compatibleHistoryKeys(source);
+  for (const key of ['tid:123', 'tid:456', 'tid:789', 'tid:987', 'code:MFYD-220', 'resource:newID']) assert.ok(keys.includes(key), key);
+  assert.equal(typeof source, 'string');
 });
 
 test('normalizes ordinary product codes across legacy and modern title layouts', () => {

@@ -368,6 +368,17 @@ function threadDom() {
   `, { url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806' });
 }
 
+function mockNativeAttachmentFetch(dom) {
+  const calls = [];
+  dom.window.fetch = async (url, options) => {
+    calls.push({ url, options });
+    const value = url.endsWith('/preview') ? { status: 'claimable', file_ready: true, payable_points: '0.00', price_points: '4.00', viewer_id: 'viewer', version_id: 'version' }
+      : url.endsWith('/csrf') ? { csrf_token: 'csrf' } : { receipt_id: 'testReceipt' };
+    return { ok: true, status: 200, url, json: async () => value, headers: new Map([['content-type', 'application/zip']]), blob: async () => new dom.window.Blob(['PK\u0003\u0004zip'], { type: 'application/zip' }) };
+  };
+  return calls;
+}
+
 async function waitFor(predicate, message) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;
@@ -971,7 +982,7 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
   }
 });
 
-test('modern x1080x resource restores the visible blue download button and routes ZIP to the original site without a prompt', async () => {
+test('modern x1080x resource downloads its authorized ZIP with a title-based filename', async () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>SUJI-322 - x1080x</title></head><body>
     <div class="panel detail-panel"><header class="thread-header">
       <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
@@ -996,6 +1007,11 @@ test('modern x1080x resource restores the visible blue download button and route
   globalThis.GM_setValue = (key, value) => values.set(key, value);
   dom.window.confirm = () => true;
   let nativeClicks = 0;
+  const saves = [];
+  mockNativeAttachmentFetch(dom);
+  dom.window.URL.createObjectURL = () => 'blob:renamed-zip';
+  dom.window.URL.revokeObjectURL = () => {};
+  dom.window.HTMLAnchorElement.prototype.click = function () { saves.push(this.download); };
   dom.window.document.querySelector('.file-get button').addEventListener('click', () => { nativeClicks += 1; });
   try {
     await import(`../src/userscript.js?modern-zip-button=${Date.now()}`);
@@ -1006,13 +1022,14 @@ test('modern x1080x resource restores the visible blue download button and route
     assert.equal(button.parentElement, group);
     assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'),
       'the action group must be immediately left of favorite');
-    assert.equal(button.textContent, '⬇');
+    assert.ok(button.querySelector('svg[data-icon="idle"]'));
     assert.equal(button.getAttribute('aria-label'), '下载资源');
     assert.equal(button.style.display, 'inline-flex');
     assert.ok(values.get('x1080x-ex:1080xin-resource-history').includes('resource:1Dw4hDQzhfzZdV9ZZWeQWU'));
     button.click();
-    await waitFor(() => nativeClicks === 1, 'ZIP download is handed to the original site button exactly once');
-    assert.equal(nativeClicks, 1);
+    await waitFor(() => saves.length === 1 && !button.disabled, 'ZIP should be saved under the parsed thread title');
+    assert.equal(nativeClicks, 0, 'the native button must not trigger a second quota claim');
+    assert.match(saves[0], /^SUJI-322 .*\.zip$/);
   } finally {
     restore();
     dom.window.close();
@@ -1058,6 +1075,34 @@ test('modern resource download button is anchored below the title and reappears 
     restore();
     dom.window.close();
   }
+});
+
+test('native JSON delivery errors cannot be saved as ZIP or trigger a second claim', async () => {
+  const dom = new JSDOM(`<header class="thread-header"><h1>MFYD-220 Example</h1></header>
+    <article id="first-post"><section class="attachments-section"><article class="attachment" data-slot-id="zipSlot">
+    <span class="file-name">mfyd00220.zip</span><div class="file-get"><button>按次數下載</button></div></article></section></article>`, { url: 'https://1080xin.com/resources/zipError' });
+  const restore = installDomGlobals(dom.window);
+  const calls = mockNativeAttachmentFetch(dom);
+  const originalFetch = dom.window.fetch;
+  dom.window.fetch = async (url, options) => {
+    if (url.includes('/downloads/file/')) return { status: 200, url, headers: new Map([['content-type', 'application/json']]), blob: async () => new dom.window.Blob(['{"error":"delivery_busy"}'], { type: 'application/json' }) };
+    return originalFetch(url, options);
+  };
+  const alerts = [];
+  let nativeClicks = 0;
+  dom.window.alert = message => alerts.push(message);
+  dom.window.document.querySelector('.file-get button').addEventListener('click', () => { nativeClicks += 1; });
+  dom.window.URL.createObjectURL = () => assert.fail('error JSON must never become a ZIP');
+  try {
+    await import(`../src/userscript.js?native-json-error=${Date.now()}`);
+    const button = dom.window.document.getElementById('x1080x-ex-download');
+    button.click();
+    await waitFor(() => alerts.length === 1 && !button.disabled, 'delivery error should finish with an actionable failure');
+    assert.equal(nativeClicks, 0);
+    assert.equal(calls.filter(call => call.url.endsWith('/claim')).length, 1);
+    assert.match(alerts[0], /错误信息/);
+    assert.equal(button.dataset.downloadState, 'error');
+  } finally { dom.window.close(); await Promise.resolve(); restore(); }
 });
 
 test('legacy TID history migrates by title/code and marks the matching modern resource purple', async () => {
@@ -1113,7 +1158,7 @@ test('modern download counts native attachments and uses the image element refer
         <img class="body-image" referrerpolicy="strict-origin-when-cross-origin" src="https://www.hxmmdd.com/images-v2/pics/off/2026/10/29/off_FNS-267.jpg.webp">
         <img class="body-image" referrerpolicy="no-referrer" src="https://imgfor80.me/images/2026/10/29/FNS-267_s.jpg">
       </div></div>
-      <section class="attachments-section"><div class="attachment-list"><article class="attachment">
+      <section class="attachments-section"><div class="attachment-list"><article class="attachment" data-slot-id="slotTest">
         <span class="file-name" title="sample.zip">sample.zip</span>
         <div class="file-get"><button class="button secondary tool" type="button">站内下载</button></div>
       </article></div></section>
@@ -1122,6 +1167,7 @@ test('modern download counts native attachments and uses the image element refer
   const restore = installDomGlobals(dom.window);
   const requests = [];
   let nativeClicks = 0;
+  mockNativeAttachmentFetch(dom);
   const oldGet = globalThis.GM_getValue;
   globalThis.GM_getValue = (key, fallback) => {
     if (key === 'x1080x-ex:agaghhh-hdblog-preview-enabled') return false;
@@ -1158,18 +1204,18 @@ test('modern download counts native attachments and uses the image element refer
     assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'));
 
     button.click();
-    assert.equal(button.textContent, '下载中 1/3');
-    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /处理中 1\/3/,
+    assert.equal(button.textContent, '0/3');
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /处理中 0\/3/,
       'two image jobs plus one native attachment should be counted as three total tasks');
-    await waitFor(() => nativeClicks === 1, 'native attachment should be triggered after image downloads');
-    await waitFor(() => dom.window.document.getElementById('x1080x-ex-download-status').textContent.includes('站内附件已请求 1'),
-      'completion status should account for the native attachment');
+    await waitFor(() => !button.disabled, 'completion status should account for the renamed native attachment');
+    assert.equal(nativeClicks, 0);
     assert.equal(requests.length, 2);
     assert.equal(requests[0].headers?.Referer, 'https://1080xin.com/',
       'cross-origin image request should follow strict-origin-when-cross-origin');
     await waitFor(() => !button.disabled, 'download job should finish');
-    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /已处理 3\/3 · 已保存 0 · 已发起 2/);
-    assert.equal(button.textContent, '✓ 已处理 3/3');
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /已处理 3\/3 · 已保存 0 · 已发起 3/);
+    assert.equal(button.textContent, '3/3');
+    assert.equal(button.dataset.downloadState, 'done');
     assert.equal(requests[1].headers.Referer, '',
       'no-referrer images must not receive a Referer header');
   } finally {
@@ -1209,14 +1255,14 @@ test('modern button shows progress and failures while details remain in the left
     await waitFor(() => saves.length === 1, 'first save should start');
     let status = dom.window.document.getElementById('x1080x-ex-download-status');
     assert.match(status.textContent, /处理中 0\/2 · 已保存 0/);
-    assert.equal(button.textContent, '下载中 0/2');
+    assert.equal(button.textContent, '0/2');
     assert.equal(button.disabled, true);
     dom.window.document.querySelector('.thread-header').outerHTML = `<header class="thread-header">
       <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
         <button class="button dock-side">收藏</button></div></span></div><h1>FNS-267 [BT] Sample</h1></header>`;
     await waitFor(() => {
       button = dom.window.document.getElementById('x1080x-ex-download');
-      return button?.disabled && button.textContent === '下载中 0/2';
+      return button?.disabled && button.textContent === '0/2';
     }, 'React replacement must restore the busy button and prevent duplicate downloads');
     status = dom.window.document.getElementById('x1080x-ex-download-status');
     button.click();
@@ -1227,11 +1273,12 @@ test('modern button shows progress and failures while details remain in the left
     saves[1].onerror({ error: 'not_permitted' });
     await waitFor(() => !button.disabled, 'save failure must release the button');
     assert.match(status.textContent, /已处理 2\/2 · 已保存 1 · 失败 1/);
-    assert.equal(button.textContent, '⚠ 失败 1');
+    assert.equal(button.dataset.downloadState, 'error');
+    assert.match(button.getAttribute('aria-label'), /失败 1/);
     assert.equal(alerts.length, 1);
     assert.match(alerts[0], /下载权限/);
     resetCallbacks.at(-1)();
-    assert.equal(button.textContent, '⬇');
+    assert.ok(button.querySelector('svg[data-icon="idle"]'));
     assert.match(status.textContent, /已保存 1 · 失败 1/, 'detail remains available after the button resets');
   } finally {
     dom.window.close();
@@ -1283,4 +1330,26 @@ test('modern marks, unopened count and progress locator reuse the durable legacy
     await Promise.resolve();
     restore();
   }
+});
+
+test('history diagnosis distinguishes loaded old TIDs from records with a usable mapping', async () => {
+  const dom = new JSDOM('<body></body>', { url: 'https://1080xin.com/' });
+  const restore = installDomGlobals(dom.window);
+  const menus = new Map();
+  const alerts = [];
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history', '[123,"tid:456",{"tid":789}]'],
+    ['x1080x-ex:agaghhh-legacy-history-migration-v1', { resolved: { 123: ['resource:known'] } }],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_registerMenuCommand = (name, callback) => menus.set(name, callback);
+  dom.window.alert = message => alerts.push(message);
+  try {
+    await import(`../src/userscript.js?history-diagnosis=${Date.now()}`);
+    menus.get('🧾 检查旧版浏览记录')();
+    assert.match(alerts[0], /旧版数字 TID：3 条/);
+    assert.match(alerts[0], /已取得对应信息：1 条/);
+    assert.match(alerts[0], /仍缺对应信息：2 条/);
+    assert.equal(values.get('x1080x-ex:agaghhh-batch-open-history'), '[123,"tid:456",{"tid":789}]');
+  } finally { dom.window.close(); restore(); }
 });

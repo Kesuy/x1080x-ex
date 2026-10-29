@@ -4,6 +4,7 @@ import { JSDOM } from 'jsdom';
 import {
   collectModernNativeAttachments,
   requestModernNativeAttachmentDownload,
+  prepareModernAttachmentDownload,
 } from '../src/modern-attachments.js';
 
 const mkDoc = (attachments) => new JSDOM(`<!doctype html><html><body>
@@ -30,6 +31,69 @@ test('collects the original x1080x ZIP attachment with no invented download URL'
   assert.equal(files.length, 1);
   assert.equal(files[0].name, 'suji00322.zip');
   assert.equal(files[0].button.closest('.attachment').getAttribute('data-slot-id'), '4bLI6T1ydu8yKs7WDHAxjf');
+});
+
+function freeQuote() {
+  return { status: 'claimable', file_ready: true, payable_points: '0.00', price_points: '4.00', viewer_id: 'viewer', version_id: 'version' };
+}
+
+test('free native ZIP uses preview, CSRF and a single claim before returning the title-named delivery', async () => {
+  const dom = mkDoc(attachment('suji00322.zip', 'zipSlot'));
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    if (calls.length === 1) dom.window.document.querySelector('h1').textContent = 'OTHER-999 React replacement';
+    return { ok: true, json: async () => url.endsWith('/preview') ? freeQuote()
+      : url.endsWith('/csrf') ? { csrf_token: 'csrf' } : { receipt_id: 'receipt' } };
+  };
+  try {
+    const file = collectModernNativeAttachments(dom.window.document)[0];
+    const result = await prepareModernAttachmentDownload(dom.window.document, file, fetchImpl);
+    assert.equal(result.name, 'SUJI-322.zip', 'the title is captured before asynchronous page changes');
+    assert.equal(result.url, 'https://1080xin.com/api/downloads/file/receipt');
+    assert.equal(calls.length, 3);
+    const payload = JSON.parse(calls[2].options.body);
+    assert.equal(payload.slot_id, 'zipSlot');
+    assert.equal(payload.expected_payable, '0.00');
+    assert.equal(calls[2].options.headers['X-CSRFToken'], 'csrf');
+    await prepareModernAttachmentDownload(dom.window.document, file, fetchImpl);
+    assert.equal(calls.filter(call => call.url.endsWith('/claim')).length, 1, 'delivery retries must reuse the authorized receipt');
+    result.complete();
+    await prepareModernAttachmentDownload(dom.window.document, file, fetchImpl);
+    assert.equal(calls.filter(call => call.url.endsWith('/claim')).length, 2, 'a new completed download uses a fresh claim');
+  } finally { dom.window.close(); }
+});
+
+test('paid quotes stay on native confirmation; denied or ambiguous prices never claim', async () => {
+  for (const quote of [{ ...freeQuote(), payable_points: '2.00' }, { ...freeQuote(), status: 'denied' }, { ...freeQuote(), payable_points: null }]) {
+    const dom = mkDoc(attachment('demo.zip', 'zipSlot'));
+    let clicks = 0;
+    const file = collectModernNativeAttachments(dom.window.document)[0];
+    file.button.addEventListener('click', () => { clicks += 1; });
+    const fetchImpl = async url => {
+      assert.ok(url.endsWith('/preview'), 'no CSRF or claim request may be made');
+      return { ok: true, json: async () => quote };
+    };
+    if (quote.payable_points === '2.00') {
+      assert.deepEqual(await prepareModernAttachmentDownload(dom.window.document, file, fetchImpl), { delegated: true });
+      assert.equal(clicks, 1);
+    } else await assert.rejects(prepareModernAttachmentDownload(dom.window.document, file, fetchImpl));
+    dom.window.close();
+  }
+});
+
+test('uncertain claim responses retain the idempotency key for an explicit retry', async () => {
+  const dom = mkDoc(attachment('demo.zip', 'zipSlot'));
+  const payloads = [];
+  const fetchImpl = async (url, options) => {
+    if (url.endsWith('/claim')) { payloads.push(JSON.parse(options.body)); throw new Error('connection interrupted'); }
+    return { ok: true, json: async () => url.endsWith('/preview') ? freeQuote() : { csrf_token: 'csrf' } };
+  };
+  const file = collectModernNativeAttachments(dom.window.document)[0];
+  await assert.rejects(prepareModernAttachmentDownload(dom.window.document, file, fetchImpl));
+  await assert.rejects(prepareModernAttachmentDownload(dom.window.document, file, fetchImpl));
+  assert.equal(payloads[0].idempotency_key, payloads[1].idempotency_key);
+  dom.window.close();
 });
 
 test('a RAR attachment is forwarded directly to the original website button without an extra prompt', () => {

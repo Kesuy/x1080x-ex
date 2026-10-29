@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.26
+// @version      1.10.27
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1598,14 +1598,85 @@ ${settings.password}`;
   }
 
   // src/modern-attachments.js
+  var pendingClaims = /* @__PURE__ */ new WeakMap();
   function collectModernNativeAttachments(document2) {
     if (!document2?.querySelector("#first-post")) return [];
     return [...document2.querySelectorAll("#first-post .attachments-section .attachment")].map((element) => {
       const button = element.querySelector(".file-get button:not([disabled])");
       const name = element.querySelector(".file-name")?.getAttribute("title") || element.querySelector(".file-name")?.textContent?.trim() || "";
       if (!button) return null;
-      return { name: String(name).trim() || "\u672A\u547D\u540D\u9644\u4EF6", button };
+      return { name: String(name).trim() || "\u672A\u547D\u540D\u9644\u4EF6", button, slotId: element.getAttribute("data-slot-id") || "" };
     }).filter(Boolean);
+  }
+  async function prepareModernAttachmentDownload(document2, file, fetchImpl = document2.defaultView.fetch.bind(document2.defaultView)) {
+    if (!/^[a-z0-9]+$/i.test(file.slotId || "")) throw new Error("\u7AD9\u5185\u9644\u4EF6\u7F3A\u5C11\u6709\u6548\u7F16\u53F7\uFF0C\u8BF7\u5237\u65B0\u9875\u9762");
+    const view = document2.defaultView;
+    const origin = view.location.origin;
+    const name = buildAttachmentFilename(parseThreadTitle(getThreadHeadingText(document2)), file.name);
+    const request = async (url, options = {}) => {
+      const controller = new view.AbortController();
+      const timer = view.setTimeout(() => controller.abort(), 3e4);
+      try {
+        const response = await fetchImpl(new URL(url, origin).href, {
+          ...options,
+          credentials: "same-origin",
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`\u7AD9\u5185\u9644\u4EF6\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\uFF0C\u8BF7\u5237\u65B0\u9875\u9762\u6216\u4F7F\u7528\u7F51\u7AD9\u6309\u94AE\u67E5\u770B\u539F\u56E0`);
+        return await response.json();
+      } finally {
+        view.clearTimeout(timer);
+      }
+    };
+    const quote = await request(`/api/slots/${file.slotId}/preview`);
+    if (quote.status === "denied" || quote.file_ready !== true) throw new Error("\u5F53\u524D\u8D26\u53F7\u65E0\u4E0B\u8F7D\u8D44\u683C\u6216\u9644\u4EF6\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u67E5\u770B\u7F51\u7AD9\u63D0\u793A");
+    if (quote.payable_points === null || quote.payable_points === void 0 || !/^\d+(?:\.\d+)?$/.test(String(quote.payable_points))) throw new Error("\u65E0\u6CD5\u786E\u8BA4\u9644\u4EF6\u4EF7\u683C\uFF0C\u672A\u7533\u8BF7\u4E0B\u8F7D");
+    if (Number(quote.payable_points) > 0) {
+      const result = requestModernNativeAttachmentDownload(document2, [file]);
+      if (!result.total) throw new Error("\u65E0\u6CD5\u6253\u5F00\u7F51\u7AD9\u7684\u9644\u4EF6\u8D2D\u4E70\u786E\u8BA4");
+      return { delegated: true };
+    }
+    if (!quote.viewer_id || !quote.version_id || quote.price_points === void 0) throw new Error("\u7F51\u7AD9\u4E0B\u8F7D\u62A5\u4EF7\u4FE1\u606F\u4E0D\u5B8C\u6574\uFF0C\u672A\u7533\u8BF7\u4E0B\u8F7D");
+    let claims = pendingClaims.get(document2);
+    if (!claims) {
+      claims = /* @__PURE__ */ new Map();
+      pendingClaims.set(document2, claims);
+    }
+    const quoteKey = JSON.stringify([quote.viewer_id, quote.version_id, quote.price_points, quote.payable_points]);
+    let attempt = claims.get(file.slotId);
+    if (!attempt || attempt.quoteKey !== quoteKey) {
+      attempt = { quoteKey, payload: {
+        expected_user_id: quote.viewer_id,
+        slot_id: file.slotId,
+        expected_version: quote.version_id,
+        expected_price: quote.price_points,
+        expected_payable: quote.payable_points,
+        idempotency_key: view.crypto.randomUUID()
+      } };
+      claims.set(file.slotId, attempt);
+    }
+    if (!attempt.receiptId) {
+      const csrf = await request("/api/auth/csrf");
+      if (!csrf.csrf_token) throw new Error("\u65E0\u6CD5\u53D6\u5F97\u7F51\u7AD9\u7684\u4E0B\u8F7D\u6821\u9A8C\u4FE1\u606F\uFF0C\u8BF7\u5237\u65B0\u9875\u9762");
+      const claim = await request("/api/downloads/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf.csrf_token },
+        body: JSON.stringify(attempt.payload)
+      });
+      if (claim.requires_new_claim) {
+        claims.delete(file.slotId);
+        throw new Error("\u7F51\u7AD9\u4E0B\u8F7D\u51ED\u8BC1\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u518D\u6B21\u70B9\u51FB\u4E0B\u8F7D");
+      }
+      if (!/^[a-z0-9-]{1,128}$/i.test(claim.receipt_id || "")) throw new Error("\u7F51\u7AD9\u672A\u8FD4\u56DE\u6709\u6548\u4E0B\u8F7D\u51ED\u8BC1\uFF0C\u672A\u91CD\u590D\u7533\u8BF7");
+      attempt.receiptId = claim.receipt_id;
+      view.dispatchEvent(new view.Event("memberchanged"));
+    }
+    return {
+      url: new URL(`/api/downloads/file/${attempt.receiptId}`, origin).href,
+      name,
+      complete: () => claims.delete(file.slotId)
+    };
   }
   function requestModernNativeAttachmentDownload(document2, files = collectModernNativeAttachments(document2)) {
     if (!files.length) return { status: "none", total: 0 };
@@ -1720,13 +1791,39 @@ ${settings.password}`;
     return [...new Set(aliases)];
   }
   function legacyTidFromHistoryValue(value) {
-    const raw = String(value ?? "");
+    if (value && typeof value === "object") return legacyTidFromHistoryValue(value.tid || value.url || value.id || "");
+    const raw = String(value ?? "").trim();
+    if (/^\d+$/.test(raw)) return raw;
     const pathTid = raw.match(/(?:^|\/)(?:thread|viewthread)[-_](\d+)(?:[-_.]|$)/i);
     if (pathTid) return pathTid[1];
     const match = raw.match(/^(?:tid:|.*[?&]tid=)(\d+)(?:$|[&#])/i);
     if (match) return match[1];
     const direct = raw.match(/^tid:(\d+)$/i);
     return direct?.[1] || "";
+  }
+  function compatibleHistoryKeys(value) {
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        value = [value];
+      }
+    }
+    const entries = Array.isArray(value) ? value : Array.isArray(value?.entries) ? value.entries : [];
+    const keys = [];
+    for (const entry of entries) {
+      const tid = legacyTidFromHistoryValue(entry);
+      if (tid) keys.push(`tid:${tid}`);
+      if (entry && typeof entry === "object") {
+        keys.push(...historyAliasesForTitle(entry.title || ""));
+        if (/^[a-z0-9]+$/i.test(entry.resource_id || "")) keys.push(`resource:${entry.resource_id}`);
+      }
+      const raw = typeof entry === "string" ? entry : entry?.url || "";
+      if (isUsableHistoryAlias(raw)) keys.push(raw);
+      const resource = raw.match(/\/resources\/([a-z0-9]+)(?:[/?#]|$)/i)?.[1];
+      if (resource) keys.push(`resource:${resource}`);
+    }
+    return [...new Set(keys)];
   }
   function legacyThreadUrl(tid, origin = "https://agaghhh.cc") {
     const id = String(tid ?? "");
@@ -1837,6 +1934,27 @@ ${settings.password}`;
       ".button.dock-side, button.dock-side, button[aria-pressed], .dock-side"
     ) || null;
   }
+  function renderModernDownloadButton(button, state = "idle", count = "") {
+    const key = `${state}:${count}`;
+    if (button.dataset.downloadRender === key && button.querySelector("svg")) return;
+    button.dataset.downloadRender = key;
+    button.dataset.downloadState = state;
+    const svg = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+    for (const [name, value] of Object.entries({ viewBox: "0 0 24 24", width: count ? "13" : "19", height: count ? "13" : "19", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", "data-icon": state })) svg.setAttribute(name, value);
+    const path = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", state === "done" ? "m5 12 4 4L19 6" : state === "error" ? "M12 4 2 21h20L12 4m0 6v5m0 3v.1" : "M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5");
+    svg.append(path);
+    const children = [svg];
+    if (count) {
+      const badge = button.ownerDocument.createElement("span");
+      badge.setAttribute("data-download-count", "");
+      badge.textContent = count;
+      Object.assign(badge.style, { fontSize: "10px", lineHeight: "12px", fontWeight: "600" });
+      children.push(badge);
+    }
+    button.replaceChildren(...children);
+    button.style.background = state === "error" ? "#a96b26" : state === "done" ? "#257b61" : "#398bd4";
+  }
   function ensureModernDownloadStatus(document2) {
     const header = document2?.querySelector(".thread-header");
     if (!header) return null;
@@ -1904,9 +2022,9 @@ ${settings.password}`;
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
-      width: button.id === "x1080x-ex-download" ? "112px" : "max-content",
-      minWidth: button.id === "x1080x-ex-download" ? "112px" : "38px",
-      maxWidth: button.id === "x1080x-ex-download" ? "112px" : "",
+      width: button.id === "x1080x-ex-download" ? "44px" : "max-content",
+      minWidth: button.id === "x1080x-ex-download" ? "44px" : "38px",
+      maxWidth: button.id === "x1080x-ex-download" ? "44px" : "",
       boxSizing: "border-box",
       margin: "0",
       flex: "0 0 auto",
@@ -2049,9 +2167,14 @@ ${domains.join("\n")}
     });
     GM_registerMenuCommand("\u21AA\uFE0F \u8FC1\u79FB\u65E7\u7248 x1080x \u6D4F\u89C8\u8BB0\u5F55\u5230\u65B0\u7248", () => {
       const legacy = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : [];
-      const total = Array.isArray(legacy) ? new Set(legacy.map(legacyTidFromHistoryValue).filter(Boolean)).size : 0;
+      const total = compatibleHistoryKeys(legacy).filter((value) => value.startsWith("tid:")).length;
       if (!total) {
-        window.alert("\u6CA1\u6709\u627E\u5230\u65E7\u7248\u6570\u5B57 TID \u6D4F\u89C8\u8BB0\u5F55\u3002");
+        const aliases = compatibleHistoryKeys(legacy).filter(isUsableHistoryAlias);
+        if (aliases.length) {
+          saveHistoryAliases(aliases);
+          if (isBatchOpenPage()) applyBatchOpenHistory(document);
+          window.alert(`\u5DF2\u8F7D\u5165 ${aliases.length} \u9879\u65E7\u7248\u6807\u9898/\u8D44\u6E90\u4FE1\u606F\uFF0C\u65E0\u9700\u901A\u8FC7\u6570\u5B57 TID \u67E5\u8BE2\u3002`);
+        } else window.alert("\u6CA1\u6709\u5728\u5F53\u524D\u8FD9\u4EFD\u811A\u672C\u4E2D\u627E\u5230\u65E7\u7248\u8BB0\u5F55\u3002\u8BF7\u5728\u539F\u6765\u7684\u6CB9\u7334\u811A\u672C\u4E2D\u68C0\u67E5\u6216\u5BFC\u51FA\u5B58\u50A8\u6570\u636E\u3002");
         return;
       }
       if (!window.confirm(`\u53D1\u73B0\u7EA6 ${total} \u6761\u65E7\u7248\u8BB0\u5F55\u3002\u811A\u672C\u5C06\u9010\u6761\u8BFB\u53D6\u65E7\u5E16\u6807\u9898\uFF0C\u6309\u756A\u53F7/\u6807\u9898\u5339\u914D\u65B0\u7248\u8D44\u6E90\uFF1B\u8FD9\u53EF\u80FD\u9700\u8981\u51E0\u5206\u949F\uFF0C\u4E0D\u4F1A\u5220\u9664\u65E7\u8BB0\u5F55\u3002\u662F\u5426\u5F00\u59CB\u5B8C\u6574\u8FC1\u79FB\uFF1F`)) return;
@@ -2063,6 +2186,22 @@ ${domains.join("\n")}
 \u5269\u4F59\u672A\u89E3\u6790\uFF1A${result.unresolved} \u6761
 \u65E7\u8BB0\u5F55\u672A\u5220\u9664\u3002${result.unresolved ? "\n\u672A\u89E3\u6790\u8BB0\u5F55\u53EA\u6709\u65E7 TID\uFF0C\u9700\u8981\u53EF\u8BBF\u95EE\u7684\u65E7\u5E16\u6216\u7AD9\u70B9\u65B0\u65E7 ID \u6620\u5C04\u624D\u80FD\u6062\u590D\u3002" : ""}`);
       }).catch((error) => window.alert(`\u8FC1\u79FB\u5931\u8D25\uFF1A${error?.message || error}`));
+    });
+    GM_registerMenuCommand("\u{1F9FE} \u68C0\u67E5\u65E7\u7248\u6D4F\u89C8\u8BB0\u5F55", () => {
+      const legacy = compatibleHistoryKeys(typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : []);
+      const modern = compatibleHistoryKeys(typeof GM_getValue === "function" ? GM_getValue(MODERN_RESOURCE_HISTORY_KEY, []) : []);
+      const aliases = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
+      const state = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {}) : {};
+      const tids = legacy.filter((value) => value.startsWith("tid:"));
+      const matched = tids.filter((value) => resolvedLegacyHistoryAliases({ resolved: { entry: state?.resolved?.[value.slice(4)] } }).length > 0).length;
+      window.alert(`\u65E7\u7248\u6570\u5B57 TID\uFF1A${tids.length} \u6761
+\u5DF2\u53D6\u5F97\u5BF9\u5E94\u4FE1\u606F\uFF1A${matched} \u6761
+\u4ECD\u7F3A\u5BF9\u5E94\u4FE1\u606F\uFF1A${tids.length - matched} \u6761
+\u65E7\u8BB0\u5F55\u4E2D\u7684\u6807\u9898/\u8D44\u6E90\u4FE1\u606F\uFF1A${legacy.filter(isUsableHistoryAlias).length} \u9879
+\u5171\u4EAB\u6807\u9898/\u756A\u53F7\u7D22\u5F15\uFF1A${Array.isArray(aliases) ? aliases.length : 0} \u9879
+\u65B0\u7248\u8D44\u6E90\u8BB0\u5F55\uFF1A${modern.filter((value) => value.startsWith("resource:")).length} \u6761
+
+\u65E7 TID \u6570\u91CF\u5927\u4E8E 0 \u8868\u793A\u6570\u636E\u5DF2\u8BFB\u5230\uFF1B\u4ECD\u7F3A\u5BF9\u5E94\u4FE1\u606F\u7684\u8BB0\u5F55\u65E0\u6CD5\u4EC5\u51ED\u7F16\u53F7\u5224\u65AD\u65B0\u7248\u5E16\u5B50\u662F\u5426\u6D4F\u89C8\u8FC7\u3002\u82E5\u65E7 TID \u4E3A 0\uFF0C\u8BF7\u5728\u539F\u6765\u90A3\u4EFD\u6CB9\u7334\u811A\u672C\u4E2D\u68C0\u67E5\u6216\u5BFC\u51FA\u5B58\u50A8\u6570\u636E\u3002`);
     });
   }
   function currentHost() {
@@ -2168,8 +2307,9 @@ ${domains.join("\n")}
   function readBatchOpenHistory() {
     const config = batchOpenHistoryConfig();
     if (!config || typeof GM_getValue !== "function") return [];
-    const stored = GM_getValue(config.historyKey, []);
-    const legacy = config.modern ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : [];
+    const rawStored = GM_getValue(config.historyKey, []);
+    const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : rawStored;
+    const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
     const aliases = config.kind === "agaghhh" ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
     const resolvedAliases = config.kind === "agaghhh" ? resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {})) : [];
     const values = [
@@ -2234,7 +2374,9 @@ ${domains.join("\n")}
       return { checked: 0, matched: 0, unresolved: 0, unsupported: true };
     }
     const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
-    const tids = [...new Set((Array.isArray(legacy) ? legacy : []).map(legacyTidFromHistoryValue).filter(Boolean))];
+    const legacyKeys = compatibleHistoryKeys(legacy);
+    saveHistoryAliases(legacyKeys.filter(isUsableHistoryAlias));
+    const tids = [...new Set(legacyKeys.map(legacyTidFromHistoryValue).filter(Boolean))];
     const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
     const attemptedAt = state?.resolverVersion === 2 && state?.attemptedAt && typeof state.attemptedAt === "object" ? { ...state.attemptedAt } : {};
     const resolved = state?.resolved && typeof state.resolved === "object" ? { ...state.resolved } : {};
@@ -2664,7 +2806,7 @@ ${failures.join("\n")}`);
     return headers;
   }
   function redactDiagnostic(value) {
-    return String(value ?? "").replace(/((?:cookie|authorization|token|auth|sid)=)[^;\s&]+/gi, "$1[\u5DF2\u8131\u654F]").replace(/([?&](?:token|auth|sid|key)=)[^&#\s]+/gi, "$1[\u5DF2\u8131\u654F]");
+    return String(value ?? "").replace(/(\/api\/downloads\/file\/)[a-z0-9-]+/gi, "$1[\u5DF2\u8131\u654F]").replace(/((?:cookie|authorization|token|auth|sid)=)[^;\s&]+/gi, "$1[\u5DF2\u8131\u654F]").replace(/([?&](?:token|auth|sid|key)=)[^&#\s]+/gi, "$1[\u5DF2\u8131\u654F]");
   }
   function safeErrorDetails(error) {
     if (!error || typeof error !== "object") {
@@ -2987,7 +3129,9 @@ ${failures.join("\n")}`);
       if (button.textContent !== text) button.textContent = text;
       return;
     }
-    if (button.textContent !== label) button.textContent = label;
+    const count = text.match(/(?:处理中|已处理) (\d+\/\d+)/)?.[1] || "";
+    renderModernDownloadButton(button, label.startsWith("\u4E0B\u8F7D\u4E2D") ? "progress" : label.startsWith("\u26A0") ? "error" : "done", count);
+    button.setAttribute("aria-label", `${label}\uFF1A${text}`);
     const status = ensureModernDownloadStatus(document);
     if (status) {
       if (status.textContent !== text) status.textContent = text;
@@ -3022,10 +3166,25 @@ ${failures.join("\n")}`);
     };
     const progress = () => setDownloadStatus(button, `\u5904\u7406\u4E2D ${processed}/${totalTasks} \xB7 \u5DF2\u4FDD\u5B58 ${saved}${started ? ` \xB7 \u5DF2\u53D1\u8D77 ${started}` : ""}`, `\u4E0B\u8F7D\u4E2D ${processed}/${totalTasks}`);
     try {
-      const nativeResult = requestModernNativeAttachmentDownload(document, nativeFiles);
-      processed += nativeResult.attempted || 0;
-      for (const name of nativeResult.failedNames || []) failures.push(`${name}\uFF1A\u672A\u80FD\u89E6\u53D1\u7F51\u7AD9\u4E0B\u8F7D\u6309\u94AE`);
+      const nativeResult = { total: 0 };
       progress();
+      for (const file of nativeFiles) {
+        try {
+          const attachment = await prepareModernAttachmentDownload(document, file);
+          if (attachment.delegated) nativeResult.total += 1;
+          else {
+            const result = await requestBlobWithPageFetch(attachment);
+            if (/(?:application\/json|text\/html)/i.test(result.contentType)) throw new Error("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u9519\u8BEF\u4FE1\u606F\uFF0C\u672A\u4FDD\u5B58\u4E3A\u9644\u4EF6");
+            if (/\.zip$/i.test(attachment.name) && !/^PK(?:\x03\x04|\x05\x06|\x07\x08)/.test(await blobPrefix(result.blob))) throw new Error("\u7F51\u7AD9\u54CD\u5E94\u4E0D\u662F\u6709\u6548 ZIP\uFF0C\u672A\u4FDD\u5B58\u9519\u8BEF\u9875");
+            recordSave(await saveDownloadBlob(result.blob, attachment.name, document, { browserDownload: true }));
+            attachment.complete();
+          }
+        } catch (error) {
+          failures.push(`${file.name}\uFF1A${redactDiagnostic(error?.message || "\u7AD9\u5185\u9644\u4EF6\u4E0B\u8F7D\u5931\u8D25")}`);
+        }
+        processed += 1;
+        progress();
+      }
       console.info("[x1080x-ex] environment", {
         downloadMode: typeof GM_info === "object" ? GM_info.downloadMode : void 0,
         scriptHandler: typeof GM_info === "object" ? GM_info.scriptHandler : void 0,
@@ -3068,7 +3227,8 @@ ${failures.join("\n")}`);
       setDownloadStatus(button, !modern && skipped && !failures.length ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : summary.join(" \xB7 "), completedLabel);
       const visibleButton = activeDownloadState.pathname === location.pathname ? document.getElementById(BUTTON_ID) || button : button;
       downloadResetTimers.set(visibleButton, window.setTimeout(() => {
-        visibleButton.textContent = "\u2B07";
+        if (modern) renderModernDownloadButton(visibleButton);
+        else visibleButton.textContent = "\u2B07";
         visibleButton.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
       }, 2500));
       if (failures.length) {
@@ -3112,8 +3272,9 @@ ${failures.join("\n")}
     button.id = BUTTON_ID;
     button.type = "button";
     button.textContent = "\u2B07";
+    if (modern) renderModernDownloadButton(button);
     button.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
-    button.title = modern ? "\u4E00\u952E\u4E0B\u8F7D\u4E3B\u697C\u56FE\u7247\u3001\u9884\u89C8\u5927\u56FE\u548C\u79CD\u5B50\uFF1B\u7AD9\u5185\u9644\u4EF6\u4F7F\u7528\u7F51\u7AD9\u4E0B\u8F7D\u6309\u94AE\uFF0C\u7ED3\u679C\u89C1\u7F51\u7AD9\u63D0\u793A" : "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\u3001\u6B63\u6587\u5927\u56FE\u548C\u78C1\u529B\u94FE\u79CD\u5B50\uFF1B\u666E\u901A\u5E16\u5B50\u53D6\u6700\u5927\u56FE\uFF0CFC2 \u5E16\u5B50\u53D6\u5168\u90E8\u5927\u56FE";
+    button.title = modern ? "\u4E0B\u8F7D\u4E3B\u697C\u56FE\u7247\u3001\u9884\u89C8\u548C\u79CD\u5B50\uFF1B\u514D\u8D39/\u989D\u5EA6\u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D\uFF0C\u4ED8\u8D39\u9644\u4EF6\u7531\u7F51\u7AD9\u786E\u8BA4" : "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\u3001\u6B63\u6587\u5927\u56FE\u548C\u78C1\u529B\u94FE\u79CD\u5B50\uFF1B\u666E\u901A\u5E16\u5B50\u53D6\u6700\u5927\u56FE\uFF0CFC2 \u5E16\u5B50\u53D6\u5168\u90E8\u5927\u56FE";
     Object.assign(button.style, {
       float: modern ? "none" : "right",
       display: modern ? "inline-flex" : "",
@@ -3131,13 +3292,13 @@ ${failures.join("\n")}
       cursor: "pointer",
       fontSize: "14px",
       lineHeight: "20px",
-      ...modern ? { padding: "7px 6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontVariantNumeric: "tabular-nums" } : {}
+      ...modern ? { height: "36px", padding: "0", flexDirection: "column", gap: "0", borderRadius: "7px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } : {}
     });
     button.addEventListener("mouseenter", () => {
-      button.style.background = "#246eaf";
+      if (!modern || button.dataset.downloadState === "idle") button.style.background = "#246eaf";
     });
     button.addEventListener("mouseleave", () => {
-      button.style.background = "#398bd4";
+      if (!modern || button.dataset.downloadState === "idle") button.style.background = "#398bd4";
     });
     button.addEventListener("click", () => void downloadAll(button));
     if (modern && placeModernResourceActionButton(document, button)) return;

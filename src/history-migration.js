@@ -32,13 +32,36 @@ export function historyAliasesForTitle(value) {
 }
 
 export function legacyTidFromHistoryValue(value) {
-  const raw = String(value ?? '');
+  if (value && typeof value === 'object') return legacyTidFromHistoryValue(value.tid || value.url || value.id || '');
+  const raw = String(value ?? '').trim();
+  if (/^\d+$/.test(raw)) return raw;
   const pathTid = raw.match(/(?:^|\/)(?:thread|viewthread)[-_](\d+)(?:[-_.]|$)/i);
   if (pathTid) return pathTid[1];
   const match = raw.match(/^(?:tid:|.*[?&]tid=)(\d+)(?:$|[&#])/i);
   if (match) return match[1];
   const direct = raw.match(/^tid:(\d+)$/i);
   return direct?.[1] || '';
+}
+
+export function compatibleHistoryKeys(value) {
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { value = [value]; }
+  }
+  const entries = Array.isArray(value) ? value : Array.isArray(value?.entries) ? value.entries : [];
+  const keys = [];
+  for (const entry of entries) {
+    const tid = legacyTidFromHistoryValue(entry);
+    if (tid) keys.push(`tid:${tid}`);
+    if (entry && typeof entry === 'object') {
+      keys.push(...historyAliasesForTitle(entry.title || ''));
+      if (/^[a-z0-9]+$/i.test(entry.resource_id || '')) keys.push(`resource:${entry.resource_id}`);
+    }
+    const raw = typeof entry === 'string' ? entry : entry?.url || '';
+    if (isUsableHistoryAlias(raw)) keys.push(raw);
+    const resource = raw.match(/\/resources\/([a-z0-9]+)(?:[/?#]|$)/i)?.[1];
+    if (resource) keys.push(`resource:${resource}`);
+  }
+  return [...new Set(keys)];
 }
 
 export function legacyThreadUrl(tid, origin = 'https://agaghhh.cc') {

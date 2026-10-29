@@ -5,6 +5,7 @@ import {
   ensureModernResourceActionGroup,
   placeModernResourceActionButton,
   ensureModernDownloadStatus,
+  renderModernDownloadButton,
 } from '../src/modern-header-actions.js';
 
 function headerDom() {
@@ -62,11 +63,15 @@ test('download details reserve the flexible space before actions and the button 
   button.id = 'x1080x-ex-download';
   placeModernResourceActionButton(doc, button);
   const width = button.style.width;
-  button.textContent = '下载中 1/3';
+  renderModernDownloadButton(button, 'progress', '1/3');
   status.textContent = '已处理 3/3 · 已保存 2 · 失败 1';
   placeModernResourceActionButton(doc, button);
   assert.equal(button.style.width, width);
-  assert.equal(width, '112px');
+  assert.equal(width, '44px');
+  assert.equal(button.textContent, '1/3');
+  assert.equal(button.querySelector('svg').getAttribute('data-icon'), 'progress');
+  renderModernDownloadButton(button, 'done', '3/3');
+  assert.equal(button.style.width, width);
   assert.equal(ensureModernDownloadStatus(doc), status);
   assert.equal(status.nextElementSibling, actions);
   dom.window.close();
