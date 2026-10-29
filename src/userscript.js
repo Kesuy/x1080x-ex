@@ -1077,7 +1077,9 @@ async function downloadAll(button) {
           ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
           : '✓ 下载完成';
     window.setTimeout(() => {
-      button.textContent = '⬇';
+      button.textContent = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)
+        ? '⬇ 下载资源'
+        : '⬇';
     }, 2500);
 
     if (failures.length) {
