@@ -1638,11 +1638,9 @@ function observeModernBoard() {
       return;
     }
     if (isThreadPage()) {
-      // Hydration may replace the title after document-idle. Reinsertion is
-      // idempotent; its own mutation won't cause a second download button.
-      if (!document.getElementById(BUTTON_ID)
-        && (typeof GM_getValue !== 'function'
-          || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
+      // Re-anchor on every detail-page render; addDownloadButton is idempotent.
+      if (typeof GM_getValue !== 'function'
+        || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
       return;
     }
     if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
