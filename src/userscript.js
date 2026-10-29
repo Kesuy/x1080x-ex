@@ -1090,7 +1090,7 @@ function requestBlobWithGmXhrOnce(job, referer) {
   });
 }
 
-async function imageRefererPolicyForJob(job) {
+function imageRefererPolicyForJob(job) {
   if (job.kind !== 'image') return null;
   let target;
   try {
@@ -1139,7 +1139,7 @@ async function imageRefererPolicyForJob(job) {
   return { matched: true, referers: crossOrigin ? [origin, ''] : [location.href, ''] };
 }
 
-function requestBlobWithGmXhr(job) {
+async function requestBlobWithGmXhr(job) {
   const sourceReferer = previewRefererForJob(job);
   const imageReferer = imageRefererPolicyForJob(job);
   const referers = sourceReferer
