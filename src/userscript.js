@@ -15,7 +15,11 @@ import {
   parseAgaghhhPrimaryDomain,
   toAgaghhhPrimaryUrl,
 } from './site-domains.js';
-import { firstBatchListPageUrl, scanBatchProgressPages } from './batch-progress-locator.js';
+import {
+  firstBatchListPageUrl,
+  nextBatchListPageUrl as nextListPageUrl,
+  scanBatchProgressPages,
+} from './batch-progress-locator.js';
 import { requestTorrentBytes } from './torrent.js';
 import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
@@ -231,12 +235,6 @@ function batchOpenHistoryId(value) {
   if (!config) return '';
   try {
     const url = new URL(value, location.href);
-    if (config.kind === 'agaghhh' && /^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) {
-      url.searchParams.delete('page');
-      url.searchParams.delete('view');
-      url.searchParams.sort();
-      return `https://${LEGACY_AGAGHHH_DOMAIN}${url.pathname}${url.search}`;
-    }
     if (config.kind === 'agaghhh') {
       const resourceId = url.pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
       if (resourceId) return `resource:${resourceId}`;
@@ -272,6 +270,12 @@ function batchProgressScopeKey(value = location.href) {
   try {
     const url = new URL(value, location.href);
     url.hash = '';
+    if (config.kind === 'agaghhh' && /^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) {
+      url.searchParams.delete('page');
+      url.searchParams.delete('view');
+      url.searchParams.sort();
+      return `https://${LEGACY_AGAGHHH_DOMAIN}${url.pathname}${url.search}`;
+    }
     if (config.kind === 'agaghhh') {
       const fid = url.searchParams.get('fid')
         || url.pathname.match(/forum[-_](\d+)(?:[-_]\d+)?(?:\.html)?/i)?.[1]
@@ -310,40 +314,7 @@ function batchProgressTarget() {
 }
 
 function nextBatchListPageUrl(document) {
-  if (!document) return '';
-  const selectors = [
-    'a.nxt[href]',
-    '.pg a.nxt[href]',
-    'a[rel="next"][href]',
-    '.archive-pagination .pagination-next a[href]',
-    '.archive-pagination a.next[href]',
-    '.pagination a.next[href]',
-  ];
-  let link = null;
-  for (const selector of selectors) {
-    link = document.querySelector(selector);
-    if (link) break;
-  }
-  if (!link) {
-    link = [...document.querySelectorAll('a[href]')].find((anchor) => (
-      /^(?:下一页|next|older posts?|older)$/i.test(normalizedLabel(anchor.textContent))
-    ));
-  }
-  if (!link) {
-    const next = document.querySelector('.pgt .pg button[aria-label="下一页"], .pg button[aria-label="下一页"], .pg button[aria-label="下一頁"]');
-    if (!next || next.disabled || !/^\/boards\/[a-z0-9]+\/?$/i.test(new URL(document.baseURI).pathname)) return '';
-    const url = new URL(document.baseURI);
-    const active = Number.parseInt(document.querySelector('.pgt .pg strong, .pg strong')?.textContent || '', 10);
-    const current = Number.isInteger(active) && active > 0
-      ? active : (Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
-    url.searchParams.set('page', String(current + 1));
-    return url.href;
-  }
-  try {
-    return new URL(link.getAttribute('href'), document.baseURI).href;
-  } catch {
-    return '';
-  }
+  return nextListPageUrl(document, document?.baseURI);
 }
 
 function rememberBatchProgressTarget(url) {
@@ -411,7 +382,10 @@ function applyBatchOpenHistory(document) {
     style.id = BATCH_OPEN_HISTORY_STYLE_ID;
     (document.head || document.documentElement).append(style);
   }
-  style.textContent = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }`;
+  const css = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }
+.thread-list .resource-title:visited, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"],
+.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
+  if (style.textContent !== css) style.textContent = css;
 
   document.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`)
     .forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
@@ -646,9 +620,10 @@ function cancelBatchOpen() {
 
 function setBatchButtonIdle(button, count) {
   const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
-  button.textContent = unopenedOnly
+  const label = unopenedOnly
     ? `后台顺序打开未打开主题（${count}）`
     : `后台顺序打开本页主题（${count}）`;
+  if (button.textContent !== label) button.textContent = label;
   button.title = unopenedOnly
     ? '按页面顺序仅后台打开未记录为已打开的主题；间隔随机，并定期停顿；再次点击可停止'
     : '按页面顺序在后台逐个打开普通主题；间隔随机，并定期停顿；再次点击可停止';
@@ -1278,6 +1253,25 @@ function addBatchOpenButton() {
   let host = document.querySelector('#pgt')
     || document.querySelector('#threadlist .th')
     || document.querySelector('#threadlist');
+  if (!host && isAgaghhhHost(location) && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) {
+    const pagination = document.querySelector('.thread-list .pgt');
+    if (pagination) {
+      host = document.getElementById(BATCH_TOOLBAR_ID);
+      if (!host) {
+        host = document.createElement('div');
+        host.id = BATCH_TOOLBAR_ID;
+        Object.assign(host.style, {
+          display: 'flex',
+          justifyContent: 'flex-end',
+          flexWrap: 'wrap',
+          gap: '8px',
+          padding: '8px 0',
+          minHeight: '42px',
+        });
+        pagination.before(host);
+      }
+    }
+  }
   if (!host) {
     host = document.querySelector('main#genesis-content .archive-description');
     if (host) {
@@ -1331,6 +1325,43 @@ function addBatchOpenButton() {
   addBatchProgressLocatorButton(host, prependButton);
 }
 
+// Keep the modern Next.js board list in sync after hydration and dynamic paging.
+function observeModernBoard() {
+  if (!isAgaghhhHost(location) || !/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
+  if (!document.body || typeof MutationObserver !== 'function') return;
+  let timer = null;
+  const refresh = () => {
+    timer = null;
+    if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
+    applyBatchOpenHistory(document);
+    if (isBatchOpenEnabledForCurrentHost()) {
+      addBatchOpenButton();
+      const button = document.getElementById(BATCH_BUTTON_ID);
+      if (button && !batchOpenState) {
+        setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+      }
+    }
+  };
+  const schedule = () => {
+    if (timer !== null) window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 120);
+  };
+  const observer = new MutationObserver((mutations) => {
+    if (!mutations.some((mutation) => (
+      mutation.target?.matches?.('.thread-list, .thread-row, .thread-line, .pgt')
+      || [...mutation.addedNodes].some((node) => (
+        node.nodeType === 1 && (
+          node.matches?.('.thread-list, .thread-row, .resource-title, .pgt')
+          || node.querySelector?.('.thread-list, .thread-row, .resource-title, .pgt')
+        )
+      ))
+    ))) return;
+    schedule();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  window.addEventListener('popstate', schedule);
+}
+
 registerSettingsMenu();
 
 if (isAllowedHost(location.hostname, getConfiguredDomains())) {
@@ -1347,4 +1378,5 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
   }
+  observeModernBoard();
 }
