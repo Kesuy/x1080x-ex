@@ -92,7 +92,9 @@ export function collectForumThreadLinks(document) {
 
 // Modern /resources page h1 contains a visible category tag before the actual title.
 export function getThreadHeadingText(document) {
-  const heading = document?.querySelector('#thread_subject, .thread-header h1, h1.ts, .vwthd h1, h1');
+  const heading = document?.querySelector('#thread_subject')
+    || document?.querySelector('.thread-header h1')
+    || document?.querySelector('h1.ts, .vwthd h1, h1');
   if (!heading) return document?.title || '';
   if (!heading.matches('.thread-header h1')) return heading.textContent || '';
   const copy = heading.cloneNode(true);
