@@ -877,3 +877,73 @@ test('1080xin inherits old batch-open history and records manually visited threa
     visited.window.close();
   }
 });
+
+test('modern 1080xin board renders bulk controls, skips visited links and restores marks after SPA paging', async () => {
+  const boardUrl = 'https://1080xin.com/boards/6Rj9of8m6shoqhAaXiXJje';
+  const visited = '5Sf2HTs5zogM0TuHJz1LD5';
+  const remaining = '04KTRwQA2TTlDe3JY9qGYx';
+  const dom = new JSDOM(`<!doctype html><html><head><title>FC2视频 - x1080x</title></head><body>
+    <div class="thread-list">
+      <div class="pgt"><div class="pg"><strong>1</strong><button aria-label="下一页"></button></div></div>
+      <article class="thread-row is-sticky"><a class="resource-title" href="/resources/StickyID">置顶</a></article>
+      <article class="thread-row"><div class="thread-line"><a class="resource-title" href="/resources/${visited}?return=%2Fboards%2F6Rj9of8m6shoqhAaXiXJje"><font>已读</font></a></div></article>
+      <article class="thread-row"><div class="thread-line"><a class="resource-title" href="/resources/${remaining}"><font>未读</font></a></div></article>
+    </div>
+  </body></html>`, { url: boardUrl });
+  const restore = installDomGlobals(dom.window);
+  const oldTimeout = dom.window.setTimeout;
+  const oldClearTimeout = dom.window.clearTimeout;
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+    ['x1080x-ex:agaghhh-batch-open-history', [`resource:${visited}`]],
+    ['x1080x-ex:agaghhh-batch-open-history-color', '#bd10e0'],
+  ]);
+  const opened = [];
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  globalThis.GM_openInTab = (url, options) => opened.push({ url, options });
+  dom.window.setTimeout = (callback) => {
+    queueMicrotask(callback);
+    return 1;
+  };
+  dom.window.clearTimeout = () => {};
+
+  try {
+    await import(`../src/userscript.js?modern-board=${Date.now()}`);
+    const button = dom.window.document.getElementById('x1080x-ex-open-page');
+    const progress = dom.window.document.getElementById('x1080x-ex-batch-progress-locator');
+    const toolbar = dom.window.document.getElementById('x1080x-ex-open-page-toolbar');
+    assert.ok(button, 'modern board must render batch-open button');
+    assert.ok(progress, 'modern board must render progress locator');
+    assert.ok(toolbar, 'modern board must render toolbar before pagination');
+    assert.equal(toolbar.nextElementSibling?.className, 'pgt');
+    assert.equal(button.textContent, '后台顺序打开未打开主题（1）');
+    assert.equal(dom.window.document.querySelector(`a[href*="${visited}"]`)?.getAttribute('data-x1080x-batch-opened'), '1');
+    assert.match(dom.window.document.getElementById('x1080x-ex-batch-open-history-style').textContent, /resource-title.*#bd10e0/s);
+
+    button.click();
+    await waitFor(() => opened.length === 1, 'modern board should open unvisited topic');
+    assert.match(opened[0].url, /04KTRwQA2TTlDe3JY9qGYx/);
+    assert.equal(opened[0].options.active, false);
+    assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), [`resource:${visited}`, `resource:${remaining}`]);
+    assert.equal(values.get('x1080x-ex:agaghhh-batch-progress-map')[`https://agaghhh.cc/boards/6Rj9of8m6shoqhAaXiXJje`].url,
+      boardUrl + '?page=2');
+
+    // Simulate the Next.js app replacing list items without reloading the document.
+    const list = dom.window.document.querySelector('.thread-list');
+    list.querySelectorAll('article.thread-row').forEach((item) => item.remove());
+    list.insertAdjacentHTML('beforeend', `<article class="thread-row">
+      <a class="resource-title" href="/resources/${visited}"><font>已读（新的 DOM）</font></a>
+    </article>`);
+    await waitFor(() => list.querySelector('a.resource-title[data-x1080x-batch-opened="1"]')?.textContent.includes('新的 DOM'),
+      'modern history marks should recover after client-side pagination');
+    await waitFor(() => button.textContent === '后台顺序打开未打开主题（0）',
+      'modern bulk open count should follow new list contents');
+  } finally {
+    dom.window.setTimeout = oldTimeout;
+    dom.window.clearTimeout = oldClearTimeout;
+    restore();
+    dom.window.close();
+  }
+});
