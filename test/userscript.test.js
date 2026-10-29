@@ -926,7 +926,7 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     await waitFor(() => opened.length === 1, 'modern board should open unvisited topic');
     assert.match(opened[0].url, /04KTRwQA2TTlDe3JY9qGYx/);
     assert.equal(opened[0].options.active, false);
-    assert.deepEqual(values.get('x1080x-ex:1080xin-resource-history'), [`resource:${visited}`, `resource:${remaining}`]);
+    assert.deepEqual(values.get('x1080x-ex:1080xin-resource-history'), [`resource:${remaining}`]);
     assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), [`resource:${visited}`], 'old beta data remains untouched');
     assert.equal(values.get('x1080x-ex:agaghhh-batch-progress-map')[`https://agaghhh.cc/boards/6Rj9of8m6shoqhAaXiXJje`].url,
       boardUrl + '?page=2');
@@ -962,7 +962,7 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
   }
 });
 
-test('modern x1080x resource restores the visible blue download button and routes ZIP to the original site after confirmation', async () => {
+test('modern x1080x resource restores the visible blue download button and routes ZIP to the original site without a prompt', async () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>SUJI-322 - x1080x</title></head><body>
     <div class="panel detail-panel"><header class="thread-header">
       <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">收藏</div></span></div>
@@ -1020,6 +1020,7 @@ test('modern resource download button is anchored below the title and reappears 
       button = dom.window.document.getElementById('x1080x-ex-download');
       return Boolean(title && button && title.nextElementSibling === button);
     }, 'download button should be re-anchored after React replaces title');
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
   } finally {
     restore();
     dom.window.close();
