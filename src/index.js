@@ -11,6 +11,7 @@ import { installHdblogReferResolver } from './hdblog-refer.js';
 import { installHdblogSearchEnhancement } from './hdblog-search.js';
 import { installQbittorrentSettings } from './qbittorrent-settings.js';
 import { installHdblogJavfreeFallback, installJavfreeEnhancement } from './javfree.js';
+import { installSehuatangEnhancement } from './sehuatang.js';
 
 installFc2cmadbEnhancement();
 installX1080xSettingsMenu();
@@ -23,3 +24,4 @@ installHdblogPreviewImages();
 void installHdblogJavfreeFallback();
 installHdblogSearchEnhancement();
 installJavfreeEnhancement();
+installSehuatangEnhancement();
