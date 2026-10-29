@@ -930,6 +930,19 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     assert.equal(values.get('x1080x-ex:agaghhh-batch-progress-map')[`https://agaghhh.cc/boards/6Rj9of8m6shoqhAaXiXJje`].url,
       boardUrl + '?page=2');
 
+
+    // Client-side navigation to a resource must persist history even if the userscript is not reloaded.
+    const openedFromSpa = 'SpaOpened2026';
+    dom.window.history.pushState({}, '', '/resources/' + openedFromSpa);
+    dom.window.document.body.insertAdjacentHTML('beforeend',
+      '<article class="post" id="first-post"><div class="post-text">内容</div></article>');
+    await waitFor(
+      () => values.get('x1080x-ex:agaghhh-batch-open-history')?.includes('resource:' + openedFromSpa),
+      'client side resource navigation must save visited history'
+    );
+    dom.window.history.pushState({}, '', boardUrl);
+    dom.window.document.getElementById('first-post').remove();
+
     // Simulate the Next.js app replacing list items without reloading the document.
     const list = dom.window.document.querySelector('.thread-list');
     list.querySelectorAll('article.thread-row').forEach((item) => item.remove());
