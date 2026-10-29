@@ -960,3 +960,62 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     dom.window.close();
   }
 });
+
+test('modern x1080x resource restores the visible blue download button and routes ZIP to the original site after confirmation', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>SUJI-322 - x1080x</title></head><body>
+    <div class="panel detail-panel"><header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">收藏</div></span></div>
+      <h1><span class="topic-tags">亞洲SM</span>SUJI-322 (HD1080P)(姦乱者)(suji00322)影片</h1>
+    </header><article class="post" id="first-post"><div class="post-content">
+      <div class="post-text"><div class="protected-text discuz-body">内容</div></div>
+      <section class="attachments-section"><div class="attachment-list">
+        <article class="attachment" data-slot-id="4bLI6T1ydu8yKs7WDHAxjf">
+          <div class="file-main"><span class="file-name" title="suji00322.zip">suji00322.zip</span></div>
+          <div class="file-get"><button class="button secondary tool" type="button">按次數下載</button></div>
+        </article>
+      </div></section>
+    </div></article></div></body></html>`, {
+    url: 'https://1080xin.com/resources/1Dw4hDQzhfzZdV9ZZWeQWU?page=1&order=asc'
+  });
+  const restore = installDomGlobals(dom.window);
+  const values = new Map([['x1080x-ex:agaghhh-batch-open-history-enabled', true]]);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  dom.window.confirm = () => true;
+  let nativeClicks = 0;
+  dom.window.document.querySelector('.file-get button').addEventListener('click', () => { nativeClicks += 1; });
+  try {
+    await import(`../src/userscript.js?modern-zip-button=${Date.now()}`);
+    const button = dom.window.document.getElementById('x1080x-ex-download');
+    assert.ok(button, 'modern resource download button must be visible');
+    assert.equal(button.previousElementSibling?.tagName, 'H1', 'button is next to title rather than hidden in mobile toolbar');
+    assert.match(button.textContent, /下载资源/);
+    assert.equal(button.style.display, 'inline-flex');
+    assert.ok(values.get('x1080x-ex:agaghhh-batch-open-history').includes('resource:1Dw4hDQzhfzZdV9ZZWeQWU'));
+    button.click();
+    await waitFor(() => nativeClicks === 1, 'ZIP download is handed to the original site button exactly once');
+    assert.equal(nativeClicks, 1);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+test('modern resource download button reappears if Next.js replaces the title after hydration', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>FNS-267</title></head><body>
+    <div class="panel detail-panel"><header class="thread-header"><h1>FNS-267 [BT] Sample</h1></header></div>
+    <article class="post" id="first-post"><div class="post-text">magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</div></article>
+  </body></html>`, { url: 'https://1080xin.com/resources/7OvLVLtpZ0qy7wEUHSsi7D?page=1&order=asc' });
+  const restore = installDomGlobals(dom.window);
+  try {
+    await import(`../src/userscript.js?modern-hydration=${Date.now()}`);
+    const button = dom.window.document.getElementById('x1080x-ex-download');
+    assert.ok(button);
+    dom.window.document.querySelector('.thread-header').innerHTML = '<h1>FNS-267 [BT] Sample</h1>';
+    await waitFor(() => Boolean(dom.window.document.getElementById('x1080x-ex-download')),
+      'download button should be re-inserted after React replaces title');
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
