@@ -10,6 +10,7 @@ import {
 import {
   firstBatchListPageUrl,
   nextBatchListPageUrl,
+  scanBatchProgressPages,
 } from '../src/batch-progress-locator.js';
 
 const boardUrl = 'https://1080xin.com/boards/6Rj9of8m6shoqhAaXiXJje';
@@ -80,4 +81,30 @@ test('new /resources layout parses category-free FC2 number and images, without 
   const jobs = buildDownloadJobs(doc);
   assert.deepEqual(jobs.map((job) => job.name), ['FC2-4939392 A.webp', 'FC2-4939392 B.webp']);
   assert.deepEqual(jobs.map((job) => job.kind), ['image', 'image']);
+});
+
+test('modern progress locator scans button pages and returns mixed read/unread boundary', async () => {
+  const first = new JSDOM('<!doctype html><head></head><body>' + boardMarkup + '</body>', { url: boardUrl });
+  const pages = [];
+  const result = await scanBatchProgressPages({
+    startUrl: boardUrl,
+    currentUrl: boardUrl,
+    currentDocument: first.window.document,
+    historyIds: ['resource:5Sf2HTs5zogM0TuHJz1LD5', 'resource:04KTRwQA2TTlDe3JY9qGYx', 'resource:ReadPage2'],
+    loadPage: async (url) => {
+      pages.push(url);
+      return `<!doctype html><head></head><body><div class="pgt"><div class="pg">
+        <strong>2</strong><button aria-label="下一页" disabled></button></div></div>
+        <article class="thread-row"><a class="resource-title" href="/resources/ReadPage2">已打开</a></article>
+        <article class="thread-row"><a class="resource-title" href="/resources/NewPage2">未打开</a></article>
+      </body>`;
+    },
+    collectThreads: collectForumThreadLinks,
+    getId: (url) => 'resource:' + new URL(url).pathname.split('/').at(-1),
+    getScope: (url) => new URL(url).pathname,
+    maxPages: 3,
+  });
+  assert.deepEqual(pages, [boardUrl + '?page=2']);
+  assert.equal(result.status, 'found');
+  assert.equal(result.url, boardUrl + '?page=2');
 });
