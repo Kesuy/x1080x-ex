@@ -1327,9 +1327,18 @@ function addBatchOpenButton() {
 
 // Keep the modern Next.js board list in sync after hydration and dynamic paging.
 function observeModernBoard() {
-  if (!isAgaghhhHost(location) || !/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
+  if (!isAgaghhhHost(location) || currentHost() === LEGACY_AGAGHHH_DOMAIN) return;
   if (!document.body || typeof window.MutationObserver !== 'function') return;
   let timer = null;
+  let previousUrl = location.href;
+  const detectRouteChange = () => {
+    if (location.href === previousUrl) return false;
+    previousUrl = location.href;
+    if (isThreadPage() && isBatchOpenHistoryEnabled()) rememberBatchOpenedThread(location.href);
+    if (isThreadPage()) addDownloadButton();
+    window.dispatchEvent(new window.Event('x1080x-ex:routechange'));
+    return true;
+  };
   const refresh = () => {
     timer = null;
     if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
@@ -1347,6 +1356,11 @@ function observeModernBoard() {
     timer = window.setTimeout(refresh, 120);
   };
   const observer = new window.MutationObserver((mutations) => {
+    if (detectRouteChange()) {
+      schedule();
+      return;
+    }
+    if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
     if (!mutations.some((mutation) => (
       mutation.target?.matches?.('.thread-list, .thread-row, .thread-line, .pgt')
       || [...mutation.addedNodes].some((node) => (
@@ -1359,7 +1373,10 @@ function observeModernBoard() {
     schedule();
   });
   observer.observe(document.body, { childList: true, subtree: true });
-  window.addEventListener('popstate', schedule);
+  window.addEventListener('popstate', () => {
+    detectRouteChange();
+    schedule();
+  });
 }
 
 registerSettingsMenu();
