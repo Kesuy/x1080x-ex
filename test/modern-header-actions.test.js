@@ -43,7 +43,7 @@ test('modern resource actions are grouped in stable download/search/copy order i
     'x1080x-ex-agaghhh-copy-code',
   ]);
   assert.equal(download.style.float, 'none');
-  assert.equal(copy.style.margin, '0');
+  assert.equal(copy.style.margin, '0px');
   dom.window.close();
 });
 
