@@ -1,5 +1,5 @@
 import { organizeSettingsPanel } from './settings-layout.js';
-import { parseThreadTitle } from './core.js';
+import { getThreadHeadingText, parseThreadTitle } from './core.js';
 import { isAgaghhhHost } from './site-domains.js';
 export { isAgaghhhHost };
 import { copyCodeWithButtonFeedback } from './clipboard.js';
@@ -321,8 +321,10 @@ export function installAgaghhhSearchAutoRedirect(
 function firstPostContent(document) {
   const firstPost = [...document.querySelectorAll('#postlist [id^="post_"]')]
     .find((element) => /^post_\d+$/i.test(element.id))
-    || document.querySelector('#postlist > div, #postlist');
-  return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
+    || document.querySelector('#postlist > div, #postlist')
+    || document.querySelector('#first-post');
+  return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text')
+    || firstPost || null;
 }
 
 export function extractThreadPerformerField(document) {
@@ -501,12 +503,12 @@ export function appendActressToTitleText(titleText, actress) {
 }
 
 function threadTitleElement(document) {
-  return document.querySelector('#thread_subject')
+  return document.querySelector('#thread_subject, .thread-header h1')
     || document.querySelector('h1.ts, .vwthd h1, h1');
 }
 
 function threadCode(document) {
-  return parseThreadTitle(threadTitleElement(document)?.textContent || document.title).code;
+  return parseThreadTitle(getThreadHeadingText(document)).code;
 }
 
 export function buildHdblogSearchUrlForThreadCode(code) {
