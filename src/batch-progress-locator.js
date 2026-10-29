@@ -80,6 +80,7 @@ export async function scanBatchProgressPages({
   loadPage,
   collectThreads,
   getId,
+  getIds,
   getScope,
   maxPages = 120,
   onProgress = () => {},
@@ -117,8 +118,10 @@ export async function scanBatchProgressPages({
       return { status: 'unreadable', checked, pageUrl: normalized };
     }
     const opened = threads.filter((thread) => {
-      const id = getId(thread.url);
-      return id && history.has(id);
+      const ids = typeof getIds === 'function'
+        ? getIds(thread)
+        : [getId(thread.url)];
+      return Array.isArray(ids) && ids.some((id) => id && history.has(id));
     }).length;
     const unopened = threads.length - opened;
     visitedFound ||= opened > 0;
