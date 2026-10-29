@@ -7,13 +7,13 @@ import {
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
 import {
-  AGAGHHH_PRIMARY_DOMAIN_KEY,
   DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
   LEGACY_AGAGHHH_DOMAIN,
   getAgaghhhDomains,
   getAgaghhhPrimaryDomain,
   isAgaghhhHost,
   parseAgaghhhPrimaryDomain,
+  saveAgaghhhPrimaryDomain,
   toAgaghhhPrimaryUrl,
 } from './site-domains.js';
 import {
@@ -42,6 +42,7 @@ import {
   compatibleHistoryKeys,
 } from './history-migration.js';
 import { planHistoryRecovery } from './history-recovery.js';
+import { showHistoryImportDialog } from './history-import.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
 import {
@@ -151,7 +152,7 @@ function registerSettingsMenu() {
       window.alert('请输入有效的站点域名，例如 1080xin.com');
       return;
     }
-    GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+    saveAgaghhhPrimaryDomain(domain);
     window.alert(`x1080x 站点域名已保存：${domain}\n刷新页面后生效。原有浏览记录将继续保留。`);
   });
   GM_registerMenuCommand('⚙️ 设置匹配域名', () => {
@@ -181,7 +182,7 @@ function registerSettingsMenu() {
 
   GM_registerMenuCommand('↩️ 重置默认域名', () => {
     saveDomains(parseDomainList(DEFAULT_DOMAINS));
-    GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
+    saveAgaghhhPrimaryDomain(DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
     window.alert(`已恢复默认域名：${DEFAULT_DOMAINS}`);
   });
   GM_registerMenuCommand('↪️ 迁移旧版 x1080x 浏览记录到新版', () => {
@@ -219,45 +220,29 @@ function registerSettingsMenu() {
     window.alert(`旧版数字 TID：${tids.length} 条\n已取得对应信息：${matched} 条\n仍缺对应信息：${tids.length - matched} 条\n旧记录中的标题/资源信息：${legacy.filter(isUsableHistoryAlias).length} 项\n共享标题/番号索引：${Array.isArray(aliases) ? aliases.length : 0} 项\n新版资源记录：${modern.filter(value => value.startsWith('resource:')).length} 条\n\n旧 TID 数量大于 0 表示数据已读到；仍缺对应信息的记录无法仅凭编号判断新版帖子是否浏览过。若旧 TID 为 0，请在原来那份油猴脚本中检查或导出存储数据。`);
   });
   GM_registerMenuCommand('📥 导入旧论坛历史恢复文件', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json,application/json';
-    input.hidden = true;
-    input.addEventListener('cancel', () => input.remove(), { once: true });
-    input.addEventListener('change', async () => {
-      const file = input.files?.[0];
-      input.remove();
-      if (!file) return;
-      try {
-        if (file.size > 20 * 1024 * 1024) throw new Error('恢复文件超过 20 MB，请只导出旧论坛相关记录');
-        const payload = JSON.parse(await file.text());
-        const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
-        const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
-        const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
-        const plan = planHistoryRecovery(payload, legacy, state, recovered);
-        if (!plan.matched) {
-          window.alert('恢复文件中没有匹配当前旧 TID 的有效帖子标题，原记录未修改。');
-          return;
-        }
-        GM_setValue(AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY, {
-          migration: state, recovered, aliases: GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []), recoveredAt: Date.now(),
-        });
-        GM_setValue(AGAGHHH_HISTORY_RECOVERED_KEY, { resolved: { ...recovered?.resolved, ...plan.recovered } });
-        GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, plan.state);
-        saveHistoryAliases(plan.aliases);
-        if (isBatchOpenPage() && isBatchOpenHistoryEnabled()) {
-          applyBatchOpenHistory(document);
-          const button = document.getElementById(BATCH_BUTTON_ID);
-          if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
-          refreshBatchProgressLocatorButton();
-        }
-        window.alert(`已匹配 ${plan.matched} 条旧 TID，本次补充 ${plan.changed} 条对应信息。\n忽略不匹配记录：${plan.ignored} 条。\n原始旧 TID 已保留，导入前的映射和索引已另行备份。`);
-      } catch (error) {
-        window.alert(`历史恢复文件导入失败：${error?.message || error}`);
+    showHistoryImportDialog(document, async file => {
+      const payload = JSON.parse((await file.text()).replace(/^\uFEFF/, ''));
+      const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+      const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+      const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+      const plan = planHistoryRecovery(payload, legacy, state, recovered);
+      if (!plan.matched) {
+        return '恢复文件中没有匹配当前旧 TID 的有效帖子标题，原记录未修改。';
       }
-    }, { once: true });
-    document.body.append(input);
-    input.click();
+      GM_setValue(AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY, {
+        migration: state, recovered, aliases: GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []), recoveredAt: Date.now(),
+      });
+      GM_setValue(AGAGHHH_HISTORY_RECOVERED_KEY, { resolved: { ...recovered?.resolved, ...plan.recovered } });
+      GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, plan.state);
+      saveHistoryAliases(plan.aliases);
+      if (isBatchOpenPage() && isBatchOpenHistoryEnabled()) {
+        applyBatchOpenHistory(document);
+        const button = document.getElementById(BATCH_BUTTON_ID);
+        if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+        refreshBatchProgressLocatorButton();
+      }
+      return `已匹配 ${plan.matched} 条旧 TID，本次补充 ${plan.changed} 条对应信息。\n忽略不匹配记录：${plan.ignored} 条。\n原始旧 TID 已保留，导入前的映射和索引已另行备份。`;
+    });
   });
 }
 
@@ -668,7 +653,8 @@ function rememberBatchOpenedThread(url, titleText = '') {
   if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== 'function') return false;
   const id = batchOpenHistoryId(url);
   if (!id) return false;
-  const stored = GM_getValue(config.historyKey, []);
+  const rawStored = GM_getValue(config.historyKey, []);
+  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
   const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
   history.push(id);
   GM_setValue(config.historyKey, history.slice(-batchOpenHistoryLimit()));
@@ -1828,10 +1814,18 @@ function observeModernBoard() {
   if (!document.body || typeof window.MutationObserver !== 'function') return;
   let timer = null;
   let previousUrl = location.href;
+  let previousHistoryTitle = '';
+  const rememberCurrentThread = () => {
+    if (!isThreadPage() || !isBatchOpenHistoryEnabled()) return;
+    const title = getThreadHeadingText(document);
+    const key = `${location.href}\n${title}`;
+    if (key === previousHistoryTitle) return;
+    if (rememberBatchOpenedThread(location.href, title)) previousHistoryTitle = key;
+  };
   const detectRouteChange = () => {
     if (location.href === previousUrl) return false;
     previousUrl = location.href;
-    if (isThreadPage() && isBatchOpenHistoryEnabled()) rememberBatchOpenedThread(location.href);
+    rememberCurrentThread();
     if (isThreadPage() && (typeof GM_getValue !== 'function'
       || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
     window.dispatchEvent(new window.Event('x1080x-ex:routechange'));
@@ -1840,6 +1834,7 @@ function observeModernBoard() {
   const refresh = () => {
     timer = null;
     if (isThreadPage()) {
+      rememberCurrentThread();
       if (typeof GM_getValue !== 'function'
         || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
       return;
@@ -1865,6 +1860,7 @@ function observeModernBoard() {
       return;
     }
     if (isThreadPage()) {
+      rememberCurrentThread();
       // Re-anchor on every detail-page render; addDownloadButton is idempotent.
       if (typeof GM_getValue !== 'function'
         || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
@@ -1882,7 +1878,7 @@ function observeModernBoard() {
     ))) return;
     schedule();
   });
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   window.addEventListener('popstate', () => {
     detectRouteChange();
     schedule();

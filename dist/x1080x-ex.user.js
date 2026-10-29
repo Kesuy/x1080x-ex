@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.28
+// @version      1.10.29
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -867,6 +867,7 @@
 
   // src/site-domains.js
   var AGAGHHH_PRIMARY_DOMAIN_KEY = "x1080x-ex:agaghhh-primary-domain";
+  var AGAGHHH_DOMAIN_ALIASES_KEY = "x1080x-ex:agaghhh-domain-aliases";
   var DEFAULT_AGAGHHH_PRIMARY_DOMAIN = "1080xin.com";
   var LEGACY_AGAGHHH_DOMAIN = "agaghhh.cc";
   function parseAgaghhhPrimaryDomain(value) {
@@ -881,11 +882,21 @@
     return parseAgaghhhPrimaryDomain(stored) || DEFAULT_AGAGHHH_PRIMARY_DOMAIN;
   }
   function getAgaghhhDomains() {
+    const stored = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_DOMAIN_ALIASES_KEY, []) : [];
+    const aliases = Array.isArray(stored) ? stored.map(parseAgaghhhPrimaryDomain).filter(Boolean) : [];
     return [.../* @__PURE__ */ new Set([
       getAgaghhhPrimaryDomain(),
       DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
-      LEGACY_AGAGHHH_DOMAIN
+      LEGACY_AGAGHHH_DOMAIN,
+      ...aliases
     ])];
+  }
+  function saveAgaghhhPrimaryDomain(value) {
+    const domain = parseAgaghhhPrimaryDomain(value);
+    if (!domain || typeof GM_setValue !== "function") return false;
+    GM_setValue(AGAGHHH_DOMAIN_ALIASES_KEY, [.../* @__PURE__ */ new Set([...getAgaghhhDomains(), domain])]);
+    GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+    return true;
   }
   function isAgaghhhHost(locationObject = globalThis.location) {
     const host = typeof locationObject === "string" ? locationObject : locationObject?.hostname;
@@ -1933,6 +1944,103 @@ ${settings.password}`;
     };
   }
 
+  // src/history-import.js
+  var HOST_ID = "x1080x-ex-history-import";
+  function showHistoryImportDialog(document2, importFile) {
+    const existing = document2.getElementById(HOST_ID);
+    if (existing) {
+      existing.shadowRoot?.querySelector("input")?.focus();
+      return existing;
+    }
+    const previousFocus = document2.activeElement;
+    const host = document2.createElement("div");
+    host.id = HOST_ID;
+    host.style.setProperty("position", "fixed", "important");
+    host.style.setProperty("inset", "0", "important");
+    host.style.setProperty("z-index", "2147483647", "important");
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `
+    <style>
+      :host { color-scheme:light; font:14px/1.6 system-ui,sans-serif; color:#172033; }
+      * { box-sizing:border-box; }
+      .overlay { display:flex; align-items:center; justify-content:center; width:100%; height:100%; padding:20px; background:#0009; }
+      form { width:min(480px,100%); max-height:100%; overflow:auto; padding:24px; border-radius:12px; background:#fff; box-shadow:0 16px 60px #0005; }
+      h2 { margin:0 0 12px; font-size:20px; }
+      p { margin:0 0 18px; color:#526077; }
+      label { display:block; font-weight:600; }
+      input { display:block; width:100%; margin:8px 0 16px; padding:10px; border:1px solid #cbd5e1; border-radius:6px; }
+      [role=status] { min-height:24px; margin-bottom:18px; white-space:pre-line; overflow-wrap:anywhere; }
+      footer { display:flex; justify-content:flex-end; gap:10px; }
+      button { padding:8px 18px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:#172033; font:inherit; cursor:pointer; }
+      button[type=submit] { border-color:#2563eb; background:#2563eb; color:#fff; }
+      button:disabled { opacity:.5; cursor:default; }
+      :focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
+    </style>
+    <div class="overlay">
+      <form role="dialog" aria-modal="true" aria-labelledby="history-import-title">
+        <h2 id="history-import-title">\u5BFC\u5165\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u6587\u4EF6</h2>
+        <p>\u4EC5\u5728\u9700\u8981\u8865\u5145\u65E7\u8BB0\u5F55\u65F6\u4F7F\u7528\u3002\u9009\u62E9\u6062\u590D\u5DE5\u5177\u751F\u6210\u7684 JSON \u6587\u4EF6\uFF0C\u518D\u70B9\u51FB\u201C\u5BFC\u5165\u201D\uFF1B\u539F\u59CB\u65E7\u8BB0\u5F55\u4F1A\u4FDD\u7559\u3002</p>
+        <label for="history-import-file">\u9009\u62E9\u6062\u590D\u6587\u4EF6</label>
+        <input id="history-import-file" type="file" accept=".json,application/json">
+        <div role="status" aria-live="polite">\u5C1A\u672A\u9009\u62E9\u6587\u4EF6\u3002</div>
+        <footer><button type="button" data-close>\u5173\u95ED</button><button type="submit" disabled>\u5BFC\u5165</button></footer>
+      </form>
+    </div>`;
+    const form = root.querySelector("form");
+    const input = root.querySelector("input");
+    const submit = root.querySelector("[type=submit]");
+    const status = root.querySelector("[role=status]");
+    const close = () => {
+      host.remove();
+      previousFocus?.focus?.();
+    };
+    root.querySelector("[data-close]").addEventListener("click", close);
+    root.querySelector(".overlay").addEventListener("click", (event) => {
+      if (event.target.classList.contains("overlay")) close();
+    });
+    form.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+      if (event.key === "Tab") {
+        const controls = [...form.querySelectorAll("input, button")].filter((control) => !control.disabled);
+        const current = root.activeElement;
+        if (event.shiftKey && current === controls[0]) {
+          event.preventDefault();
+          controls.at(-1).focus();
+        } else if (!event.shiftKey && current === controls.at(-1)) {
+          event.preventDefault();
+          controls[0].focus();
+        }
+      }
+    });
+    input.addEventListener("change", () => {
+      submit.disabled = !input.files?.length;
+      status.textContent = input.files?.length ? "\u6587\u4EF6\u5DF2\u9009\u62E9\uFF0C\u70B9\u51FB\u201C\u5BFC\u5165\u201D\u540E\u5904\u7406\u3002" : "\u5C1A\u672A\u9009\u62E9\u6587\u4EF6\u3002";
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = input.files?.[0];
+      if (!file || submit.disabled) return;
+      submit.disabled = true;
+      input.disabled = true;
+      status.textContent = "\u6B63\u5728\u5904\u7406\u6062\u590D\u6587\u4EF6\u2026";
+      try {
+        if (file.size > 20 * 1024 * 1024) throw new Error("\u6062\u590D\u6587\u4EF6\u8D85\u8FC7 20 MB\uFF0C\u8BF7\u53EA\u5BFC\u51FA\u65E7\u8BBA\u575B\u76F8\u5173\u8BB0\u5F55");
+        status.textContent = await importFile(file);
+      } catch (error) {
+        status.textContent = `\u5BFC\u5165\u5931\u8D25\uFF1A${error?.message || error}`;
+        submit.disabled = false;
+      } finally {
+        input.disabled = false;
+      }
+    });
+    document2.body.append(host);
+    input.focus();
+    return host;
+  }
+
   // src/image-fallbacks.js
   function alternateImageUrls(value) {
     try {
@@ -2220,7 +2328,7 @@ ${settings.password}`;
         window.alert("\u8BF7\u8F93\u5165\u6709\u6548\u7684\u7AD9\u70B9\u57DF\u540D\uFF0C\u4F8B\u5982 1080xin.com");
         return;
       }
-      GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+      saveAgaghhhPrimaryDomain(domain);
       window.alert(`x1080x \u7AD9\u70B9\u57DF\u540D\u5DF2\u4FDD\u5B58\uFF1A${domain}
 \u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002\u539F\u6709\u6D4F\u89C8\u8BB0\u5F55\u5C06\u7EE7\u7EED\u4FDD\u7559\u3002`);
     });
@@ -2252,7 +2360,7 @@ ${domains.join("\n")}
     });
     GM_registerMenuCommand("\u21A9\uFE0F \u91CD\u7F6E\u9ED8\u8BA4\u57DF\u540D", () => {
       saveDomains(parseDomainList(DEFAULT_DOMAINS));
-      GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
+      saveAgaghhhPrimaryDomain(DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
       window.alert(`\u5DF2\u6062\u590D\u9ED8\u8BA4\u57DF\u540D\uFF1A${DEFAULT_DOMAINS}`);
     });
     GM_registerMenuCommand("\u21AA\uFE0F \u8FC1\u79FB\u65E7\u7248 x1080x \u6D4F\u89C8\u8BB0\u5F55\u5230\u65B0\u7248", () => {
@@ -2298,50 +2406,34 @@ ${domains.join("\n")}
 \u65E7 TID \u6570\u91CF\u5927\u4E8E 0 \u8868\u793A\u6570\u636E\u5DF2\u8BFB\u5230\uFF1B\u4ECD\u7F3A\u5BF9\u5E94\u4FE1\u606F\u7684\u8BB0\u5F55\u65E0\u6CD5\u4EC5\u51ED\u7F16\u53F7\u5224\u65AD\u65B0\u7248\u5E16\u5B50\u662F\u5426\u6D4F\u89C8\u8FC7\u3002\u82E5\u65E7 TID \u4E3A 0\uFF0C\u8BF7\u5728\u539F\u6765\u90A3\u4EFD\u6CB9\u7334\u811A\u672C\u4E2D\u68C0\u67E5\u6216\u5BFC\u51FA\u5B58\u50A8\u6570\u636E\u3002`);
     });
     GM_registerMenuCommand("\u{1F4E5} \u5BFC\u5165\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u6587\u4EF6", () => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = ".json,application/json";
-      input.hidden = true;
-      input.addEventListener("cancel", () => input.remove(), { once: true });
-      input.addEventListener("change", async () => {
-        const file = input.files?.[0];
-        input.remove();
-        if (!file) return;
-        try {
-          if (file.size > 20 * 1024 * 1024) throw new Error("\u6062\u590D\u6587\u4EF6\u8D85\u8FC7 20 MB\uFF0C\u8BF7\u53EA\u5BFC\u51FA\u65E7\u8BBA\u575B\u76F8\u5173\u8BB0\u5F55");
-          const payload = JSON.parse(await file.text());
-          const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
-          const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
-          const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
-          const plan = planHistoryRecovery(payload, legacy, state, recovered);
-          if (!plan.matched) {
-            window.alert("\u6062\u590D\u6587\u4EF6\u4E2D\u6CA1\u6709\u5339\u914D\u5F53\u524D\u65E7 TID \u7684\u6709\u6548\u5E16\u5B50\u6807\u9898\uFF0C\u539F\u8BB0\u5F55\u672A\u4FEE\u6539\u3002");
-            return;
-          }
-          GM_setValue(AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY, {
-            migration: state,
-            recovered,
-            aliases: GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []),
-            recoveredAt: Date.now()
-          });
-          GM_setValue(AGAGHHH_HISTORY_RECOVERED_KEY, { resolved: { ...recovered?.resolved, ...plan.recovered } });
-          GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, plan.state);
-          saveHistoryAliases(plan.aliases);
-          if (isBatchOpenPage() && isBatchOpenHistoryEnabled()) {
-            applyBatchOpenHistory(document);
-            const button = document.getElementById(BATCH_BUTTON_ID);
-            if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
-            refreshBatchProgressLocatorButton();
-          }
-          window.alert(`\u5DF2\u5339\u914D ${plan.matched} \u6761\u65E7 TID\uFF0C\u672C\u6B21\u8865\u5145 ${plan.changed} \u6761\u5BF9\u5E94\u4FE1\u606F\u3002
-\u5FFD\u7565\u4E0D\u5339\u914D\u8BB0\u5F55\uFF1A${plan.ignored} \u6761\u3002
-\u539F\u59CB\u65E7 TID \u5DF2\u4FDD\u7559\uFF0C\u5BFC\u5165\u524D\u7684\u6620\u5C04\u548C\u7D22\u5F15\u5DF2\u53E6\u884C\u5907\u4EFD\u3002`);
-        } catch (error) {
-          window.alert(`\u5386\u53F2\u6062\u590D\u6587\u4EF6\u5BFC\u5165\u5931\u8D25\uFF1A${error?.message || error}`);
+      showHistoryImportDialog(document, async (file) => {
+        const payload = JSON.parse((await file.text()).replace(/^\uFEFF/, ""));
+        const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+        const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+        const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+        const plan = planHistoryRecovery(payload, legacy, state, recovered);
+        if (!plan.matched) {
+          return "\u6062\u590D\u6587\u4EF6\u4E2D\u6CA1\u6709\u5339\u914D\u5F53\u524D\u65E7 TID \u7684\u6709\u6548\u5E16\u5B50\u6807\u9898\uFF0C\u539F\u8BB0\u5F55\u672A\u4FEE\u6539\u3002";
         }
-      }, { once: true });
-      document.body.append(input);
-      input.click();
+        GM_setValue(AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY, {
+          migration: state,
+          recovered,
+          aliases: GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []),
+          recoveredAt: Date.now()
+        });
+        GM_setValue(AGAGHHH_HISTORY_RECOVERED_KEY, { resolved: { ...recovered?.resolved, ...plan.recovered } });
+        GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, plan.state);
+        saveHistoryAliases(plan.aliases);
+        if (isBatchOpenPage() && isBatchOpenHistoryEnabled()) {
+          applyBatchOpenHistory(document);
+          const button = document.getElementById(BATCH_BUTTON_ID);
+          if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+          refreshBatchProgressLocatorButton();
+        }
+        return `\u5DF2\u5339\u914D ${plan.matched} \u6761\u65E7 TID\uFF0C\u672C\u6B21\u8865\u5145 ${plan.changed} \u6761\u5BF9\u5E94\u4FE1\u606F\u3002
+\u5FFD\u7565\u4E0D\u5339\u914D\u8BB0\u5F55\uFF1A${plan.ignored} \u6761\u3002
+\u539F\u59CB\u65E7 TID \u5DF2\u4FDD\u7559\uFF0C\u5BFC\u5165\u524D\u7684\u6620\u5C04\u548C\u7D22\u5F15\u5DF2\u53E6\u884C\u5907\u4EFD\u3002`;
+      });
     });
   }
   function currentHost() {
@@ -2660,7 +2752,8 @@ ${domains.join("\n")}
     if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== "function") return false;
     const id = batchOpenHistoryId(url);
     if (!id) return false;
-    const stored = GM_getValue(config.historyKey, []);
+    const rawStored = GM_getValue(config.historyKey, []);
+    const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : rawStored;
     const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
     history.push(id);
     GM_setValue(config.historyKey, history.slice(-batchOpenHistoryLimit()));
@@ -3683,10 +3776,19 @@ ${result.pageUrl}`);
     if (!document.body || typeof window.MutationObserver !== "function") return;
     let timer = null;
     let previousUrl = location.href;
+    let previousHistoryTitle = "";
+    const rememberCurrentThread = () => {
+      if (!isThreadPage() || !isBatchOpenHistoryEnabled()) return;
+      const title = getThreadHeadingText(document);
+      const key = `${location.href}
+${title}`;
+      if (key === previousHistoryTitle) return;
+      if (rememberBatchOpenedThread(location.href, title)) previousHistoryTitle = key;
+    };
     const detectRouteChange = () => {
       if (location.href === previousUrl) return false;
       previousUrl = location.href;
-      if (isThreadPage() && isBatchOpenHistoryEnabled()) rememberBatchOpenedThread(location.href);
+      rememberCurrentThread();
       if (isThreadPage() && (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
       window.dispatchEvent(new window.Event("x1080x-ex:routechange"));
       return true;
@@ -3694,6 +3796,7 @@ ${result.pageUrl}`);
     const refresh = () => {
       timer = null;
       if (isThreadPage()) {
+        rememberCurrentThread();
         if (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
         return;
       }
@@ -3718,6 +3821,7 @@ ${result.pageUrl}`);
         return;
       }
       if (isThreadPage()) {
+        rememberCurrentThread();
         if (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
         return;
       }
@@ -3725,7 +3829,7 @@ ${result.pageUrl}`);
       if (!mutations.some((mutation) => mutation.target?.matches?.(".thread-list, .thread-row, .thread-line, .pgt") || [...mutation.addedNodes].some((node) => node.nodeType === 1 && (node.matches?.(".thread-list, .thread-row, .resource-title, .pgt") || node.querySelector?.(".thread-list, .thread-row, .resource-title, .pgt"))))) return;
       schedule();
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     window.addEventListener("popstate", () => {
       detectRouteChange();
       schedule();

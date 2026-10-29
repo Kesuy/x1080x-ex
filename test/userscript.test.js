@@ -1385,14 +1385,16 @@ test('local recovery import restores modern marks and unopened counts without ch
     assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（2）');
     await waitFor(() => pendingLegacyRequests.length === 2, 'automatic migration should be pending while a file is imported');
     menus.get('📥 导入旧论坛历史恢复文件')();
-    const input = dom.window.document.querySelector('input[type="file"]');
+    const root = dom.window.document.getElementById('x1080x-ex-history-import').shadowRoot;
+    const input = root.querySelector('input[type="file"]');
     Object.defineProperty(input, 'files', { value: [{ size: 200, text: async () => JSON.stringify({
       format: 'x1080x-history-recovery-v1',
       entries: [{ tid: '123', url: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=123', title: 'MFYD-220 Example - x1080x.com' }],
     }) }] });
     input.dispatchEvent(new dom.window.Event('change'));
-    await waitFor(() => alerts.length > 0, 'import should report its actual match count');
-    assert.match(alerts[0], /已匹配 1 条旧 TID/);
+    root.querySelector('[type="submit"]').click();
+    await waitFor(() => /已匹配/.test(root.querySelector('[role="status"]').textContent), 'import should report its actual match count');
+    assert.match(root.querySelector('[role="status"]').textContent, /已匹配 1 条旧 TID/);
     assert.equal(values.get('x1080x-ex:agaghhh-batch-open-history'), old);
     assert.deepEqual(old, ['tid:123', 'tid:456']);
     assert.ok(values.has('x1080x-ex:agaghhh-history-recovery-backup-v1'));
@@ -1412,4 +1414,80 @@ test('local recovery import restores modern marks and unopened counts without ch
     await waitFor(() => dom.window.document.querySelector('[href="/resources/oldRecovered"]')?.getAttribute('data-x1080x-batch-opened') === '1',
       'recovered titles must survive even if an older open tab overwrites the old migration cache and alias index');
   } finally { dom.window.close(); await Promise.resolve(); restore(); }
+});
+
+test('recorded resource IDs and hydrated title aliases survive a custom domain change', async () => {
+  const values = new Map([
+    ['x1080x-ex:agaghhh-primary-domain', 'first.example.net'],
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+    ['x1080x-ex:agaghhh-download-enabled', false],
+    ['x1080x-ex:1080xin-resource-history', '["resource:earlier"]'],
+    ['x1080x-ex:agaghhh-batch-progress-map', {
+      'https://agaghhh.cc/boards/domainTest': { url: 'https://first.example.net/boards/domainTest?page=4', updatedAt: 100 },
+    }],
+  ]);
+  const installStorage = () => {
+    globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+    globalThis.GM_setValue = (key, value) => values.set(key, value);
+    globalThis.GM_xmlhttpRequest = () => assert.fail('domain compatibility should not need external lookups');
+  };
+  const visited = new JSDOM('<body><header class="thread-header"><h1>载入中</h1></header></body>', {
+    url: 'https://first.example.net/resources/recordedID',
+  });
+  const restoreVisit = installDomGlobals(visited.window);
+  installStorage();
+  const menus = new Map();
+  globalThis.GM_registerMenuCommand = (name, callback) => menus.set(name, callback);
+  visited.window.prompt = () => 'second.example.net';
+  visited.window.alert = () => {};
+  try {
+    await import(`../src/userscript.js?domain-visit=${Date.now()}`);
+    visited.window.document.querySelector('h1').firstChild.nodeValue = 'FNS-267 后加载的标题';
+    await waitFor(() => values.get('x1080x-ex:agaghhh-history-title-aliases')?.includes('code:FNS-267'),
+      'the actual asynchronously rendered title must be saved');
+    assert.deepEqual(values.get('x1080x-ex:1080xin-resource-history'), ['resource:earlier', 'resource:recordedID']);
+    menus.get('🌐 设置 x1080x 站点域名')();
+    assert.equal(values.get('x1080x-ex:agaghhh-primary-domain'), 'second.example.net');
+    assert.ok(values.get('x1080x-ex:agaghhh-domain-aliases').includes('first.example.net'));
+  } finally { visited.window.close(); await Promise.resolve(); restoreVisit(); }
+
+  const board = new JSDOM(`<body><div class="thread-list"><div class="pgt"><div class="pg"><strong>1</strong></div></div>
+    <article class="thread-row"><a class="resource-title" href="/resources/recordedID">标题已经修改</a></article>
+    <article class="thread-row"><a class="resource-title" href="/resources/reindexedID">FNS-267 新版标题</a></article>
+    <article class="thread-row"><a class="resource-title" href="/resources/unreadID">MFYD-220 未浏览</a></article>
+    </div></body>`, { url: 'https://second.example.net/boards/domainTest' });
+  const restoreBoard = installDomGlobals(board.window);
+  installStorage();
+  try {
+    await import(`../src/userscript.js?domain-board=${Date.now()}`);
+    for (const id of ['recordedID', 'reindexedID']) {
+      assert.equal(board.window.document.querySelector(`[href="/resources/${id}"]`).getAttribute('data-x1080x-batch-opened'), '1');
+    }
+    assert.equal(board.window.document.querySelector('[href="/resources/unreadID"]').hasAttribute('data-x1080x-batch-opened'), false);
+    assert.equal(board.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（1）');
+    const locator = board.window.document.getElementById('x1080x-ex-batch-progress-locator');
+    locator.click();
+    await waitFor(() => values.get('x1080x-ex:agaghhh-batch-progress-map')['https://agaghhh.cc/boards/domainTest'].url
+      === 'https://second.example.net/boards/domainTest', 'progress should keep the domain-independent scope and use the new domain');
+  } finally { board.window.close(); await Promise.resolve(); restoreBoard(); }
+});
+
+test('disabled or unset history setting never saves a hydrated resource title', async () => {
+  for (const setting of [undefined, false]) {
+    const dom = new JSDOM('<body><header class="thread-header"><h1>载入中</h1></header></body>', {
+      url: 'https://1080xin.com/resources/disabledHistory',
+    });
+    const restore = installDomGlobals(dom.window);
+    const writes = [];
+    globalThis.GM_getValue = (key, fallback) => key === 'x1080x-ex:agaghhh-batch-open-history-enabled' ? setting
+      : key === 'x1080x-ex:agaghhh-download-enabled' ? false : fallback;
+    globalThis.GM_setValue = (key, value) => writes.push({ key, value });
+    try {
+      await import(`../src/userscript.js?disabled-title-history=${setting}`);
+      dom.window.document.querySelector('h1').textContent = 'FNS-267 后加载标题';
+      await new Promise(resolve => dom.window.setTimeout(resolve, 0));
+      assert.deepEqual(writes, []);
+    } finally { dom.window.close(); await Promise.resolve(); restore(); }
+  }
 });
