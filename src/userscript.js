@@ -31,6 +31,13 @@ import {
   isDownloadGuardEnabled,
 } from './download-guard.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
+import {
+  extractLegacyHistoryAliases,
+  historyAliasesForTitle,
+  legacyThreadUrl,
+  legacyTidFromHistoryValue,
+} from './history-migration.js';
+import { alternateImageUrls } from './image-fallbacks.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
@@ -45,6 +52,12 @@ const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
 // Separate new /resources IDs from legacy Discuz TIDs so the existing
 // pre-redesign history can never be truncated by new visits.
 const MODERN_RESOURCE_HISTORY_KEY = 'x1080x-ex:1080xin-resource-history';
+const AGAGHHH_HISTORY_ALIASES_KEY = 'x1080x-ex:agaghhh-history-title-aliases';
+const AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY = 'x1080x-ex:agaghhh-legacy-history-migration-v1';
+const LEGACY_HISTORY_AUTO_MIGRATION_LIMIT = 100;
+const LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT = 5000;
+let legacyHistoryMigrationInProgress = false;
+let legacyHistoryMigrationStartedThisPage = false;
 const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
 const AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:agaghhh-batch-open-unopened-only';
 const AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-progress-locator-enabled';
