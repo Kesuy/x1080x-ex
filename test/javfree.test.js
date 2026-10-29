@@ -392,7 +392,7 @@ test('JavFree switches can independently disable redirect, search, copy and down
 test('JavFree detail search button recognizes code and opens agaghhh forum search', () => {
   assert.equal(
     buildJavfreeAgaghhhSearchUrl('SAN-437'),
-    'https://1080xin.com/search.php?mod=forum&searchsubmit=yes&srchtxt=SAN-437&orderby=lastpost&ascdesc=desc'
+    'https://1080xin.com/search?q=SAN-437'
   );
 
   const dom = sanArticleDom();
@@ -407,7 +407,7 @@ test('JavFree detail search button recognizes code and opens agaghhh forum searc
     assert.equal(result.searchButton.textContent, '🔍');
     result.searchButton.click();
     assert.deepEqual(opened, [{
-      url: 'https://1080xin.com/search.php?mod=forum&searchsubmit=yes&srchtxt=SAN-437&orderby=lastpost&ascdesc=desc',
+      url: 'https://1080xin.com/search?q=SAN-437',
       options: { active: true, insert: true, setParent: true },
     }]);
   } finally {
