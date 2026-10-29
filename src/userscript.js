@@ -1309,7 +1309,6 @@ async function downloadAll(button) {
 }
 
 function addDownloadButton() {
-  if (document.getElementById(BUTTON_ID)) return;
   const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
   const title = document.querySelector(modern ? '.thread-header h1' : '#thread_subject');
   const host = modern
@@ -1317,18 +1316,40 @@ function addDownloadButton() {
     : (title?.closest('.vwthd, .ts') || title?.parentElement);
   if (!title || !host) return;
 
-  const button = document.createElement('button');
+  let button = document.getElementById(BUTTON_ID);
+  if (button) {
+    if (modern) {
+      Object.assign(button.style, {
+        float: 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 'max-content',
+        margin: '10px 0 10px 4px',
+      });
+      // React can replace the h1 while keeping the script node at its old
+      // position. Always re-anchor it immediately after the current title.
+      if (title.nextElementSibling !== button) title.after(button);
+    }
+    return;
+  }
+
+  button = document.createElement('button');
   button.id = BUTTON_ID;
   button.type = 'button';
   button.textContent = modern ? '⬇ 下载资源' : '⬇';
   button.title = modern
-    ? '下载正文图片、Preview、磁力种子；ZIP/RAR 等附件经确认后使用网站原生下载按钮'
+    ? '下载正文图片、Preview、磁力种子和站内附件；附件直接使用网站原生下载按钮'
     : '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
   Object.assign(button.style, {
-    float: 'right',
+    float: modern ? 'none' : 'right',
+    display: modern ? 'inline-flex' : '',
+    alignItems: modern ? 'center' : '',
+    justifyContent: modern ? 'center' : '',
+    width: modern ? 'max-content' : '',
     position: 'relative',
     zIndex: '20',
-    margin: '0 8px 6px 6px',
+    margin: modern ? '10px 0 10px 4px' : '0 8px 6px 6px',
     padding: '7px 13px',
     border: '1px solid #2878c8',
     borderRadius: '5px',
@@ -1341,17 +1362,8 @@ function addDownloadButton() {
   button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
   button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
   button.addEventListener('click', () => void downloadAll(button));
-  if (modern) {
-    // The redesigned header's action span can be clipped/overwritten by React.
-    // Use a visible sibling after the title rather than its small action toolbar.
-    button.style.float = 'none';
-    button.style.display = 'inline-flex';
-    button.style.alignItems = 'center';
-    button.style.justifyContent = 'center';
-    button.style.width = 'max-content';
-    button.style.margin = '10px 0 10px 4px';
-    title.after(button);
-  } else host.prepend(button);
+  if (modern) title.after(button);
+  else host.prepend(button);
 }
 
 function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
