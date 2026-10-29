@@ -231,7 +231,15 @@ function batchOpenHistoryId(value) {
   if (!config) return '';
   try {
     const url = new URL(value, location.href);
+    if (config.kind === 'agaghhh' && /^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) {
+      url.searchParams.delete('page');
+      url.searchParams.delete('view');
+      url.searchParams.sort();
+      return `https://${LEGACY_AGAGHHH_DOMAIN}${url.pathname}${url.search}`;
+    }
     if (config.kind === 'agaghhh') {
+      const resourceId = url.pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
+      if (resourceId) return `resource:${resourceId}`;
       const queryTid = url.searchParams.get('mod') === 'viewthread'
         ? url.searchParams.get('tid')
         : '';
@@ -254,7 +262,7 @@ function readBatchOpenHistory() {
   const values = Array.isArray(stored) ? stored : [];
   return [...new Set(values.filter((value) => (
     typeof value === 'string'
-    && (/^(?:tid|post):\d+$/.test(value) || /^url:\//.test(value))
+    && (/^(?:tid|post):\d+$/.test(value) || /^resource:[a-z0-9]+$/i.test(value) || /^url:\//.test(value))
   )))];
 }
 
@@ -321,7 +329,16 @@ function nextBatchListPageUrl(document) {
       /^(?:下一页|next|older posts?|older)$/i.test(normalizedLabel(anchor.textContent))
     ));
   }
-  if (!link) return '';
+  if (!link) {
+    const next = document.querySelector('.pgt .pg button[aria-label="下一页"], .pg button[aria-label="下一页"], .pg button[aria-label="下一頁"]');
+    if (!next || next.disabled || !/^\/boards\/[a-z0-9]+\/?$/i.test(new URL(document.baseURI).pathname)) return '';
+    const url = new URL(document.baseURI);
+    const active = Number.parseInt(document.querySelector('.pgt .pg strong, .pg strong')?.textContent || '', 10);
+    const current = Number.isInteger(active) && active > 0
+      ? active : (Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    url.searchParams.set('page', String(current + 1));
+    return url.href;
+  }
   try {
     return new URL(link.getAttribute('href'), document.baseURI).href;
   } catch {
@@ -414,14 +431,16 @@ function applyBatchOpenHistory(document) {
 
 function isThreadPage() {
   const url = new URL(location.href);
-  return (url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid'))
+  return /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname)
+    || (url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid'))
     || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
 }
 
 function isForumDisplayPage() {
   const url = new URL(location.href);
   return url.searchParams.get('mod') === 'forumdisplay'
-    || /forum[-_]\d+/i.test(url.pathname);
+    || /forum[-_]\d+/i.test(url.pathname)
+    || /^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname);
 }
 
 function isBatchOpenPage() {
@@ -1068,15 +1087,20 @@ async function downloadAll(button) {
 
 function addDownloadButton() {
   if (document.getElementById(BUTTON_ID)) return;
-  const title = document.querySelector('#thread_subject');
-  const host = title?.closest('.vwthd, .ts') || title?.parentElement;
+  const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
+  const title = document.querySelector(modern ? '.thread-header h1' : '#thread_subject');
+  const host = modern
+    ? (document.querySelector('.thread-header .thread-header-actions') || title?.closest('.thread-header'))
+    : (title?.closest('.vwthd, .ts') || title?.parentElement);
   if (!title || !host) return;
 
   const button = document.createElement('button');
   button.id = BUTTON_ID;
   button.type = 'button';
   button.textContent = '⬇';
-  button.title = '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
+  button.title = modern
+    ? '下载正文图片及 Preview；新版附件由网站原生按钮授权下载，不会重复扣次或绕过权限'
+    : '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
   Object.assign(button.style, {
     float: 'right',
     position: 'relative',
@@ -1094,7 +1118,8 @@ function addDownloadButton() {
   button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
   button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
   button.addEventListener('click', () => void downloadAll(button));
-  host.prepend(button);
+  if (modern) host.append(button);
+  else host.prepend(button);
 }
 
 function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
