@@ -965,7 +965,10 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
 test('modern x1080x resource restores the visible blue download button and routes ZIP to the original site without a prompt', async () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>SUJI-322 - x1080x</title></head><body>
     <div class="panel detail-panel"><header class="thread-header">
-      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">收藏</div></span></div>
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button secondary dock-side small">收藏</button>
+        <button class="button dock-main small">回覆主題</button>
+      </div></span></div>
       <h1><span class="topic-tags">亞洲SM</span>SUJI-322 (HD1080P)(姦乱者)(suji00322)影片</h1>
     </header><article class="post" id="first-post"><div class="post-content">
       <div class="post-text"><div class="protected-text discuz-body">内容</div></div>
@@ -989,7 +992,11 @@ test('modern x1080x resource restores the visible blue download button and route
     await import(`../src/userscript.js?modern-zip-button=${Date.now()}`);
     const button = dom.window.document.getElementById('x1080x-ex-download');
     assert.ok(button, 'modern resource download button must be visible');
-    assert.equal(button.previousElementSibling?.tagName, 'H1', 'button is next to title rather than hidden in mobile toolbar');
+    const group = dom.window.document.getElementById('x1080x-ex-resource-actions');
+    assert.ok(group, 'modern resource buttons must have a shared action group');
+    assert.equal(button.parentElement, group);
+    assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'),
+      'the action group must be immediately left of favorite');
     assert.match(button.textContent, /下载资源/);
     assert.equal(button.style.display, 'inline-flex');
     assert.ok(values.get('x1080x-ex:1080xin-resource-history').includes('resource:1Dw4hDQzhfzZdV9ZZWeQWU'));
@@ -1004,7 +1011,13 @@ test('modern x1080x resource restores the visible blue download button and route
 
 test('modern resource download button is anchored below the title and reappears after React replaces it', async () => {
   const dom = new JSDOM(`<!doctype html><html><head><title>FNS-267</title></head><body>
-    <div class="panel detail-panel"><header class="thread-header"><h1>FNS-267 [BT] Sample</h1></header></div>
+    <div class="panel detail-panel"><header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button secondary dock-side small">收藏</button>
+        <button class="button dock-main small">回复主题</button>
+      </div></span></div>
+      <h1>FNS-267 [BT] Sample</h1>
+    </header></div>
     <article class="post" id="first-post"><div class="post-text">magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</div></article>
   </body></html>`, { url: 'https://1080xin.com/resources/7OvLVLtpZ0qy7wEUHSsi7D?page=1&order=asc' });
   const restore = installDomGlobals(dom.window);
@@ -1013,13 +1026,23 @@ test('modern resource download button is anchored below the title and reappears 
     let title = dom.window.document.querySelector('.thread-header h1');
     let button = dom.window.document.getElementById('x1080x-ex-download');
     assert.ok(button);
-    assert.equal(title.nextElementSibling, button, 'download button must sit immediately below the title');
-    dom.window.document.querySelector('.thread-header').innerHTML = '<h1>FNS-267 [BT] Sample (new render)</h1>';
+    let group = dom.window.document.getElementById('x1080x-ex-resource-actions');
+    assert.equal(button.parentElement, group);
+    assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'));
+    dom.window.document.querySelector('.thread-header').outerHTML = `<header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button secondary dock-side small">收藏</button>
+        <button class="button dock-main small">回复主题</button>
+      </div></span></div>
+      <h1>FNS-267 [BT] Sample (new render)</h1>
+    </header>`;
     await waitFor(() => {
       title = dom.window.document.querySelector('.thread-header h1');
       button = dom.window.document.getElementById('x1080x-ex-download');
-      return Boolean(title && button && title.nextElementSibling === button);
-    }, 'download button should be re-anchored after React replaces title');
+      group = dom.window.document.getElementById('x1080x-ex-resource-actions');
+      return Boolean(title && button && group && button.parentElement === group
+        && group.nextElementSibling === dom.window.document.querySelector('.thread-actions .dock-side'));
+    }, 'download button should be re-anchored into the favorite toolbar after React replaces the header');
     await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
   } finally {
     restore();
