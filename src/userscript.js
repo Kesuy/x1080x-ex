@@ -858,7 +858,7 @@ async function openCurrentPageThreads(button) {
           insert: false,
           setParent: true,
         });
-        if (rememberBatchOpenedThread(thread.url)) applyBatchOpenHistory(document);
+        if (rememberBatchOpenedThread(thread.url, thread.link?.textContent || '')) applyBatchOpenHistory(document);
         opened += 1;
       } catch (error) {
         failures.push(`${index + 1}. ${redactDiagnostic(error?.message || error || '打开失败')}`);
@@ -1373,6 +1373,7 @@ async function locateCurrentBatchProgress(button) {
       loadPage: requestBatchListPageHtml,
       collectThreads: collectForumThreadLinks,
       getId: batchOpenHistoryId,
+      getIds: batchThreadHistoryKeys,
       getScope: batchProgressScopeKey,
       maxPages: 120,
       onProgress: ({ checked, opened, unopened }) => {
@@ -1387,10 +1388,10 @@ async function locateCurrentBatchProgress(button) {
       rememberBatchProgressTarget(result.url);
       if (result.url !== location.href) window.location.assign(result.url);
       else {
-        const firstUnopened = collectForumThreadLinks(document).find((thread) => {
-          const id = batchOpenHistoryId(thread.url);
-          return !id || !new Set(historyIds).has(id);
-        });
+        const history = new Set(historyIds);
+        const firstUnopened = collectForumThreadLinks(document).find((thread) => (
+          !isBatchThreadVisited(thread, history)
+        ));
         firstUnopened?.link?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
       }
       return;
