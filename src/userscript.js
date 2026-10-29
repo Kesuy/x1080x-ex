@@ -168,6 +168,25 @@ function registerSettingsMenu() {
     GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
     window.alert(`已恢复默认域名：${DEFAULT_DOMAINS}`);
   });
+  GM_registerMenuCommand('↪️ 迁移旧版 x1080x 浏览记录到新版', () => {
+    const legacy = typeof GM_getValue === 'function'
+      ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])
+      : [];
+    const total = Array.isArray(legacy)
+      ? new Set(legacy.map(legacyTidFromHistoryValue).filter(Boolean)).size
+      : 0;
+    if (!total) {
+      window.alert('没有找到旧版数字 TID 浏览记录。');
+      return;
+    }
+    if (!window.confirm(`发现约 ${total} 条旧版记录。脚本将逐条读取旧帖标题，按番号/标题匹配新版资源；这可能需要几分钟，不会删除旧记录。是否开始完整迁移？`)) return;
+    void migrateLegacyHistory({ limit: LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT, force: true })
+      .then((result) => {
+        if (isBatchOpenPage()) applyBatchOpenHistory(document);
+        window.alert(`旧版历史迁移完成。\n本次检查：${result.checked} 条\n新增匹配：${result.matched} 条\n剩余未解析：${result.unresolved} 条\n旧记录未删除。`);
+      })
+      .catch((error) => window.alert(`迁移失败：${error?.message || error}`));
+  });
 }
 
 function currentHost() {
