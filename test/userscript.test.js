@@ -380,9 +380,12 @@ function mockNativeAttachmentFetch(dom) {
 }
 
 async function waitFor(predicate, message) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  // Board updates are debounced for 120 ms. Zero-delay iteration counts can
+  // expire before that timer on Linux even when the same test passes on Windows.
+  const deadline = performance.now() + 3000;
+  while (performance.now() < deadline) {
     if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.fail(message);
 }
