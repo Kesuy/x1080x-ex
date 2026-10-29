@@ -39,6 +39,7 @@ import {
   legacyTidFromHistoryValue,
 } from './history-migration.js';
 import { alternateImageUrls } from './image-fallbacks.js';
+import { ensureModernResourceActionGroup, placeModernResourceActionButton } from './modern-header-actions.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
@@ -1089,11 +1090,63 @@ function requestBlobWithGmXhrOnce(job, referer) {
   });
 }
 
-async function requestBlobWithGmXhr(job) {
+async function imageRefererPolicyForJob(job) {
+  if (job.kind !== 'image') return null;
+  let target;
+  try {
+    target = new URL(job.url, location.href);
+  } catch {
+    return null;
+  }
+  const image = [...document.querySelectorAll('img')].find((candidate) => {
+    const values = [
+      candidate.currentSrc,
+      candidate.getAttribute('src'),
+      candidate.getAttribute('data-src'),
+      candidate.getAttribute('data-original'),
+    ];
+    return values.some((value) => {
+      if (!value) return false;
+      try {
+        return new URL(value, location.href).href === target.href;
+      } catch {
+        return false;
+      }
+    });
+  });
+  if (!image) return null;
+
+  const policy = String(
+    image.getAttribute('referrerpolicy')
+      || document.referrerPolicy
+      || 'strict-origin-when-cross-origin'
+  ).trim().toLowerCase();
+  const crossOrigin = target.origin !== location.origin;
+  const origin = `${location.origin}/`;
+  if (policy === 'no-referrer' || (policy === 'same-origin' && crossOrigin)) {
+    return { matched: true, referers: [''] };
+  }
+  if (policy === 'origin' || policy === 'strict-origin'
+    || (crossOrigin && ['strict-origin-when-cross-origin', 'no-referrer-when-downgrade'].includes(policy))) {
+    return { matched: true, referers: [origin, ''] };
+  }
+  if (policy === 'strict-origin-when-cross-origin' && !crossOrigin) {
+    return { matched: true, referers: [location.href, ''] };
+  }
+  if (policy === 'unsafe-url' || policy === 'no-referrer-when-downgrade') {
+    return { matched: true, referers: [location.href, ''] };
+  }
+  return { matched: true, referers: crossOrigin ? [origin, ''] : [location.href, ''] };
+}
+
+function requestBlobWithGmXhr(job) {
   const sourceReferer = previewRefererForJob(job);
+  const imageReferer = imageRefererPolicyForJob(job);
   const referers = sourceReferer
     ? [sourceReferer, '', location.href]
-    : [location.href, ''];
+    : imageReferer
+      ? imageReferer.referers
+      : [location.href, ''];
   let lastError = null;
   for (const referer of [...new Set(referers)]) {
     try {
@@ -1240,7 +1293,8 @@ async function download(job, { deferImageSave = false } = {}) {
 async function downloadAll(button) {
   const jobs = buildDownloadJobs(document);
   const nativeFiles = collectModernNativeAttachments(document);
-  if (!jobs.length && !nativeFiles.length) {
+  const totalTasks = jobs.length + nativeFiles.length;
+  if (!totalTasks) {
     window.alert('主楼中没有找到附件、磁力链或可下载图片。');
     return;
   }
@@ -1260,7 +1314,7 @@ async function downloadAll(button) {
       version: typeof GM_info === 'object' ? GM_info.version : undefined,
     });
     for (const [index, job] of jobs.entries()) {
-      button.textContent = `下载中 ${index + 1}/${jobs.length}`;
+      button.textContent = `下载中 ${index + 1}/${totalTasks}`;
       try {
         const result = await download(job, { deferImageSave: job.kind === 'image' });
         if (result?.skipped) {
@@ -1283,16 +1337,17 @@ async function downloadAll(button) {
 
     // Modern ZIP/RAR/7z entries have no public attachment URL. Do not
     // synthesize a download endpoint or consume quota without confirmation.
-    let nativeResult = { status: 'none' };
+    let nativeResult = { status: 'none', total: 0 };
     if (nativeFiles.length) {
+      button.textContent = `下载中 ${jobs.length}/${totalTasks}（触发 ${nativeFiles.length} 个站内附件）`;
       nativeResult = requestModernNativeAttachmentDownload(document, window);
     }
 
     button.disabled = false;
     button.textContent = failures.length
-      ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}）`
+      ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}；站内附件已触发 ${nativeResult.total || 0} 个）`
       : nativeResult.status === 'triggered'
-        ? '✓ 已触发网站附件下载'
+        ? `✓ 已处理 ${jobs.length} 项资源，触发 ${nativeResult.total || nativeFiles.length} 个附件`
         : skipped
           ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
           : '✓ 下载完成';
@@ -1313,24 +1368,16 @@ async function downloadAll(button) {
 function addDownloadButton() {
   const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
   const title = document.querySelector(modern ? '.thread-header h1' : '#thread_subject');
+  const actionGroup = modern ? ensureModernResourceActionGroup(document) : null;
   const host = modern
-    ? title?.closest('.thread-header')
+    ? (actionGroup || title?.closest('.thread-header'))
     : (title?.closest('.vwthd, .ts') || title?.parentElement);
   if (!title || !host) return;
 
   let button = document.getElementById(BUTTON_ID);
   if (button) {
     if (modern) {
-      Object.assign(button.style, {
-        float: 'none',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 'max-content',
-        margin: '10px 0 10px 4px',
-      });
-      // React can replace the h1 while keeping the script node at its old
-      // position. Always re-anchor it immediately after the current title.
+      if (placeModernResourceActionButton(document, button)) return;
       if (title.nextElementSibling !== button) title.after(button);
     }
     return;
@@ -1351,7 +1398,7 @@ function addDownloadButton() {
     width: modern ? 'max-content' : '',
     position: 'relative',
     zIndex: '20',
-    margin: modern ? '10px 0 10px 4px' : '0 8px 6px 6px',
+    margin: modern ? '0' : '0 8px 6px 6px',
     padding: '7px 13px',
     border: '1px solid #2878c8',
     borderRadius: '5px',
@@ -1364,6 +1411,7 @@ function addDownloadButton() {
   button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
   button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
   button.addEventListener('click', () => void downloadAll(button));
+  if (modern && placeModernResourceActionButton(document, button)) return;
   if (modern) title.after(button);
   else host.prepend(button);
 }
