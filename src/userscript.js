@@ -314,7 +314,9 @@ function readBatchOpenHistory() {
   const stored = GM_getValue(config.historyKey, []);
   // Previous beta releases temporarily saved modern resource IDs in the old key.
   const legacy = config.modern ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : [];
-  const aliases = GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []);
+  const aliases = config.kind === 'agaghhh'
+    ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, [])
+    : [];
   const values = [
     ...(Array.isArray(stored) ? stored : []),
     ...(Array.isArray(legacy) ? legacy.filter((value) => /^resource:[a-z0-9]+$/i.test(value)) : []),
@@ -569,7 +571,7 @@ function rememberBatchOpenedThread(url, titleText = '') {
   } catch {
     // The resource/TID ID is still worth saving without a title alias.
   }
-  saveHistoryAliases(historyAliasesForTitle(title));
+  if (config.kind === 'agaghhh') saveHistoryAliases(historyAliasesForTitle(title));
   return true;
 }
 
