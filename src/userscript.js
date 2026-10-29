@@ -1,6 +1,7 @@
 import {
   buildDownloadJobs,
   collectForumThreadLinks,
+  getThreadHeadingText,
   isAllowedHost,
   parseDomainList,
 } from './core.js';
@@ -296,6 +297,17 @@ function batchOpenHistoryId(value) {
   }
 }
 
+function batchThreadHistoryKeys(thread) {
+  if (!thread) return [];
+  const id = batchOpenHistoryId(thread.url);
+  const title = thread.link?.getAttribute('title') || thread.link?.textContent || '';
+  return [...new Set([id, ...historyAliasesForTitle(title)].filter(Boolean))];
+}
+
+function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory())) {
+  return batchThreadHistoryKeys(thread).some((key) => history.has(key));
+}
+
 function readBatchOpenHistory() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function') return [];
@@ -511,10 +523,7 @@ function inferBatchProgressFromCurrentPage(document) {
   const threads = collectForumThreadLinks(document);
   if (!threads.length) return false;
   const history = new Set(readBatchOpenHistory());
-  const opened = threads.filter((thread) => {
-    const id = batchOpenHistoryId(thread.url);
-    return id && history.has(id);
-  }).length;
+  const opened = threads.filter((thread) => isBatchThreadVisited(thread, history)).length;
   if (!opened) return false;
   return rememberBatchProgressTarget(
     opened === threads.length ? (nextBatchListPageUrl(document) || location.href) : location.href
@@ -525,20 +534,28 @@ function collectBatchOpenThreads(document) {
   const threads = collectForumThreadLinks(document);
   if (!isBatchOpenUnopenedOnlyEnabled()) return threads;
   const history = new Set(readBatchOpenHistory());
-  return threads.filter((thread) => {
-    const id = batchOpenHistoryId(thread.url);
-    return !id || !history.has(id);
-  });
+  return threads.filter((thread) => !isBatchThreadVisited(thread, history));
 }
 
-function rememberBatchOpenedThread(url) {
+function rememberBatchOpenedThread(url, titleText = '') {
   const config = batchOpenHistoryConfig();
   if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== 'function') return false;
   const id = batchOpenHistoryId(url);
   if (!id) return false;
-  const history = readBatchOpenHistory().filter((item) => item !== id);
+  const stored = GM_getValue(config.historyKey, []);
+  const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
   history.push(id);
   GM_setValue(config.historyKey, history.slice(-batchOpenHistoryLimit()));
+
+  let title = titleText;
+  try {
+    if (!title && new URL(url, location.href).href === location.href) {
+      title = getThreadHeadingText(document);
+    }
+  } catch {
+    // The resource/TID ID is still worth saving without a title alias.
+  }
+  saveHistoryAliases(historyAliasesForTitle(title));
   return true;
 }
 
@@ -565,8 +582,7 @@ function applyBatchOpenHistory(document) {
   const history = new Set(readBatchOpenHistory());
   let marked = 0;
   collectForumThreadLinks(document).forEach((thread) => {
-    const id = batchOpenHistoryId(thread.url);
-    if (!id || !history.has(id)) return;
+    if (!isBatchThreadVisited(thread, history)) return;
     thread.link.setAttribute(BATCH_OPEN_HISTORY_ATTR, '1');
     marked += 1;
   });
