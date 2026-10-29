@@ -1112,6 +1112,33 @@ function requestBlob(job) {
   return requestBlobWithGmXhr(job);
 }
 
+async function requestImageBlobWithFallbacks(job) {
+  const candidates = [];
+  for (const value of [job.url, ...(Array.isArray(job.fallbackUrls) ? job.fallbackUrls : [])]) {
+    if (!value) continue;
+    for (const candidate of [value, ...alternateImageUrls(value)]) {
+      if (!candidates.includes(candidate)) candidates.push(candidate);
+    }
+  }
+  let lastError = null;
+  let allNotFound = candidates.length > 0;
+  for (const url of candidates) {
+    try {
+      return await requestBlob({ ...job, url });
+    } catch (error) {
+      lastError = error;
+      if (!/HTTP (?:404|410)\b/i.test(String(error?.message || error))) allNotFound = false;
+      console.warn('[x1080x-ex] image source failed; trying fallback', {
+        name: job.name,
+        url: redactDiagnostic(url),
+        error: redactDiagnostic(error?.message || error),
+      });
+    }
+  }
+  if (allNotFound) return null;
+  throw lastError || new Error('没有可用的图片地址');
+}
+
 function isLikelyUnavailablePixhostPreview(job, blob) {
   if (!blob || typeof blob.size !== 'number') return false;
   const isPixhostPreview = Boolean(
@@ -1175,7 +1202,16 @@ async function download(job, { deferImageSave = false } = {}) {
     return { skipped: true, reason: 'Pixhost 缩略图未找到可验证的大图地址' };
   }
 
-  const result = await requestBlob(downloadJob);
+  const result = job.kind === 'image'
+    ? await requestImageBlobWithFallbacks(downloadJob)
+    : await requestBlob(downloadJob);
+  if (!result && job.kind === 'image') {
+    console.info('[x1080x-ex] skipped image after all source paths returned 404/410', {
+      name: job.name,
+      url: redactDiagnostic(downloadJob.url),
+    });
+    return { skipped: true, reason: '图片源已失效（HTTP 404/410）' };
+  }
   console.info('[x1080x-ex] response', {
     kind: job.kind,
     name: job.name,
