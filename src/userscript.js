@@ -300,18 +300,138 @@ function readBatchOpenHistory() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function') return [];
   const stored = GM_getValue(config.historyKey, []);
-  // Previous beta releases temporarily saved resource IDs in the old TID key.
+  // Previous beta releases temporarily saved modern resource IDs in the old key.
   const legacy = config.modern ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : [];
+  const aliases = GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []);
   const values = [
     ...(Array.isArray(stored) ? stored : []),
-    ...(Array.isArray(legacy) ? legacy : []),
+    ...(Array.isArray(legacy) ? legacy.filter((value) => /^resource:[a-z0-9]+$/i.test(value)) : []),
+    ...(Array.isArray(aliases) ? aliases : []),
   ];
   return [...new Set(values.filter((value) => (
     typeof value === 'string'
     && (config.modern
-      ? /^resource:[a-z0-9]+$/i.test(value)
-      : (/^(?:tid|post):\d+$/.test(value) || /^resource:[a-z0-9]+$/i.test(value) || /^url:\//.test(value)))
+      ? (/^resource:[a-z0-9]+$/i.test(value) || /^(?:code|title|number):/i.test(value))
+      : (/^(?:tid|post):\d+$/.test(value)
+        || /^resource:[a-z0-9]+$/i.test(value)
+        || /^url:\//.test(value)
+        || /^(?:code|title|number):/i.test(value)))
   )))];
+}
+
+function saveHistoryAliases(aliases) {
+  if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') return 0;
+  const existing = GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []);
+  const merged = [...new Set([
+    ...(Array.isArray(existing) ? existing : []),
+    ...(Array.isArray(aliases) ? aliases : []),
+  ].filter((value) => typeof value === 'string'
+    && /^(?:code|title|number|resource):/i.test(value)))].slice(-20000);
+  GM_setValue(AGAGHHH_HISTORY_ALIASES_KEY, merged);
+  return merged.length;
+}
+
+function requestLegacyHistoryAliases(tid) {
+  return new Promise((resolve) => {
+    if (typeof GM_xmlhttpRequest !== 'function') {
+      resolve([]);
+      return;
+    }
+    const url = legacyThreadUrl(tid);
+    if (!url) {
+      resolve([]);
+      return;
+    }
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url,
+      timeout: 15000,
+      onload: (response) => {
+        const aliases = response.status >= 200 && response.status < 400
+          ? extractLegacyHistoryAliases(
+            response.responseText || '',
+            document.defaultView?.DOMParser || globalThis.DOMParser
+          )
+          : [];
+        const finalUrl = response.finalUrl || response.responseURL || '';
+        try {
+          const resourceId = new URL(finalUrl, url).pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
+          if (resourceId) aliases.unshift(`resource:${resourceId}`);
+        } catch {
+          // The title aliases remain useful even if the final URL is unavailable.
+        }
+        resolve([...new Set(aliases)]);
+      },
+      onerror: () => resolve([]),
+      ontimeout: () => resolve([]),
+    });
+  });
+}
+
+async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMIT, force = false } = {}) {
+  if (legacyHistoryMigrationInProgress) {
+    return { checked: 0, matched: 0, unresolved: 0, busy: true };
+  }
+  if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function'
+    || typeof GM_xmlhttpRequest !== 'function') {
+    return { checked: 0, matched: 0, unresolved: 0, unsupported: true };
+  }
+
+  const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+  const tids = [...new Set((Array.isArray(legacy) ? legacy : [])
+    .map(legacyTidFromHistoryValue)
+    .filter(Boolean))];
+  const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+  const attemptedAt = state?.attemptedAt && typeof state.attemptedAt === 'object'
+    ? { ...state.attemptedAt } : {};
+  const resolved = state?.resolved && typeof state.resolved === 'object'
+    ? { ...state.resolved } : {};
+  const now = Date.now();
+  const pending = tids.slice().reverse().filter((tid) => (
+    !Array.isArray(resolved[tid])
+    && (force || !attemptedAt[tid] || now - Number(attemptedAt[tid]) > 7 * 24 * 60 * 60 * 1000)
+  )).slice(0, Math.max(0, Number(limit) || 0));
+
+  if (!pending.length) {
+    return {
+      checked: 0,
+      matched: 0,
+      unresolved: tids.filter((tid) => !Array.isArray(resolved[tid])).length,
+    };
+  }
+
+  legacyHistoryMigrationInProgress = true;
+  let matched = 0;
+  let aliasesAdded = [];
+  try {
+    for (let offset = 0; offset < pending.length; offset += 4) {
+      const batch = pending.slice(offset, offset + 4);
+      const results = await Promise.all(batch.map(async (tid) => ({
+        tid,
+        aliases: await requestLegacyHistoryAliases(tid),
+      })));
+      for (const result of results) {
+        attemptedAt[result.tid] = Date.now();
+        if (result.aliases.length) {
+          resolved[result.tid] = result.aliases;
+          aliasesAdded.push(...result.aliases);
+          matched += 1;
+        }
+      }
+      GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { attemptedAt, resolved });
+      if (offset + 4 < pending.length) {
+        await new Promise((resolve) => window.setTimeout(resolve, 180));
+      }
+    }
+    saveHistoryAliases(aliasesAdded);
+    return {
+      checked: pending.length,
+      matched,
+      unresolved: tids.filter((tid) => !Array.isArray(resolved[tid])).length,
+    };
+  } finally {
+    legacyHistoryMigrationInProgress = false;
+  }
 }
 
 function batchProgressScopeKey(value = location.href) {
