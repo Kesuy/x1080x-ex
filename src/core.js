@@ -477,6 +477,8 @@ export function buildDownloadJobs(document) {
     const downloadImages = [
       ...resources.images.map((image) => ({
         url: image.cacheUrl || image.url,
+        ...(image.url && image.url !== (image.cacheUrl || image.url)
+          ? { fallbackUrls: [image.url] } : {}),
         ...(image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {}),
         ...(image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {}),
       })),
@@ -504,6 +506,8 @@ export function buildDownloadJobs(document) {
       jobs.push({
         kind: 'image',
         url: preferredUrl,
+        ...(resources.imageUrl && resources.imageUrl !== preferredUrl
+          ? { fallbackUrls: [resources.imageUrl] } : {}),
         name: /\.webp(?:[?#]|$)/i.test(preferredUrl) && document.querySelector('#first-post')
           ? (resources.hdblogPreviews.length
             ? `${sanitizeFilename(resources.title.code || 'thread-image')} A.webp`
