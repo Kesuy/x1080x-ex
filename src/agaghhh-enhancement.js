@@ -36,6 +36,7 @@ export const DEFAULT_AGAGHHH_BLOCKED_KEYWORDS = '无码破解\n無碼破解';
 export const AGAGHHH_REAL_ACTRESS_ENABLED_KEY = 'x1080x-ex:agaghhh-real-actress-enabled';
 export const AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = 'x1080x-ex:agaghhh-hdblog-preview-enabled';
 const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-enabled';
+const MODERN_RESOURCE_HISTORY_KEY = 'x1080x-ex:1080xin-resource-history';
 
 const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-download';
@@ -956,10 +957,14 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
       if (typeof GM_getValue === 'function') {
-        const existingHistory = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+        const modern = document.location?.hostname !== 'agaghhh.cc'
+          && !/^\/(?:forum|search)\.php$/i.test(document.location?.pathname || '');
+        const historyKey = modern ? MODERN_RESOURCE_HISTORY_KEY : AGAGHHH_BATCH_OPEN_HISTORY_KEY;
+        const existingHistory = GM_getValue(historyKey, []);
         if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
-          GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, existingHistory.slice(-batchHistoryLimit));
+          GM_setValue(historyKey, existingHistory.slice(-batchHistoryLimit));
         }
+        // Do not trim old numeric TIDs when editing the redesigned site's settings.
       }
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
