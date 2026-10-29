@@ -11,6 +11,36 @@ function favoriteButton(actions) {
   ) || null;
 }
 
+export function ensureModernDownloadStatus(document) {
+  const header = document?.querySelector('.thread-header');
+  if (!header) return null;
+  const row = header.querySelector('.thread-header-nums') || header;
+  const actions = row.querySelector('.thread-header-actions');
+  let status = document.getElementById('x1080x-ex-download-status');
+  if (!status) {
+    status = document.createElement('span');
+    status.id = 'x1080x-ex-download-status';
+    status.setAttribute('role', 'status');
+    Object.assign(status.style, {
+      flex: '1 1 0px',
+      width: '0',
+      minWidth: '0',
+      contain: 'inline-size',
+      fontSize: '12px',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      alignSelf: 'center',
+    });
+  }
+  // Reserve the available space before the actions from the idle state onward.
+  // Text must never add width after the right-aligned toolbar.
+  if (actions) {
+    if (status.parentElement !== row || status.nextElementSibling !== actions) row.insertBefore(status, actions);
+  } else if (status.parentElement !== row) row.prepend(status);
+  return status;
+}
+
 export function ensureModernResourceActionGroup(document) {
   if (!document?.querySelector('.thread-header h1')) return null;
   const actions = document.querySelector('.thread-header .thread-actions');
@@ -55,8 +85,10 @@ export function placeModernResourceActionButton(document, button) {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: 'max-content',
-    minWidth: '38px',
+    width: button.id === 'x1080x-ex-download' ? '112px' : 'max-content',
+    minWidth: button.id === 'x1080x-ex-download' ? '112px' : '38px',
+    maxWidth: button.id === 'x1080x-ex-download' ? '112px' : '',
+    boxSizing: 'border-box',
     margin: '0',
     flex: '0 0 auto',
     verticalAlign: 'middle',

@@ -27,6 +27,26 @@ test('GM download waits for a successful save callback and accepts a Blob in mod
   }
 });
 
+test('explicit browser download retains the .torrent filename without calling the manager whitelist', async () => {
+  const dom = new JSDOM('');
+  const previous = globalThis.GM_download;
+  const clicks = [];
+  const delays = [];
+  globalThis.GM_download = () => assert.fail('torrent browser save must not call GM_download');
+  dom.window.URL.createObjectURL = () => 'blob:verified-torrent';
+  dom.window.HTMLAnchorElement.prototype.click = function () { clicks.push(this.download); };
+  dom.window.setTimeout = (_callback, delay) => { delays.push(delay); return 1; };
+  try {
+    const result = await saveDownloadBlob(new dom.window.Blob(['torrent'], { type: 'application/x-bittorrent' }), 'sample.torrent', dom.window.document, { browserDownload: true });
+    assert.deepEqual(clicks, ['sample.torrent']);
+    assert.deepEqual(result, { confirmed: false });
+    assert.deepEqual(delays, [10000]);
+  } finally {
+    globalThis.GM_download = previous;
+    dom.window.close();
+  }
+});
+
 test('save errors are surfaced and the object URL is kept until the manager finishes', async () => {
   const dom = new JSDOM('');
   const oldDownload = globalThis.GM_download;

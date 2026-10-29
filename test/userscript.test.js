@@ -766,6 +766,7 @@ test('内置种子下载按帖子标题保存且不修改原磁力脚本布局',
   const restore = installDomGlobals(dom.window);
   const originalLayout = dom.window.document.querySelector('#original-mtt-layout').outerHTML;
   const saved = [];
+  globalThis.GM_download = () => assert.fail('validated torrents must use the browser save path, independent of the extension whitelist');
   dom.window.URL.createObjectURL = () => 'blob:integrated-torrent';
   dom.window.URL.revokeObjectURL = () => {};
   dom.window.HTMLAnchorElement.prototype.click = function click() {
@@ -1157,7 +1158,7 @@ test('modern download counts native attachments and uses the image element refer
     assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'));
 
     button.click();
-    assert.equal(button.textContent, '⬇');
+    assert.equal(button.textContent, '下载中 1/3');
     assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /处理中 1\/3/,
       'two image jobs plus one native attachment should be counted as three total tasks');
     await waitFor(() => nativeClicks === 1, 'native attachment should be triggered after image downloads');
@@ -1168,7 +1169,7 @@ test('modern download counts native attachments and uses the image element refer
       'cross-origin image request should follow strict-origin-when-cross-origin');
     await waitFor(() => !button.disabled, 'download job should finish');
     assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /已处理 3\/3 · 已保存 0 · 已发起 2/);
-    assert.equal(button.textContent, '⬇');
+    assert.equal(button.textContent, '✓ 已处理 3/3');
     assert.equal(requests[1].headers.Referer, '',
       'no-referrer images must not receive a Referer header');
   } finally {
@@ -1179,7 +1180,7 @@ test('modern download counts native attachments and uses the image element refer
   }
 });
 
-test('modern progress counts saved callbacks, reports save failures and stays icon-only', async () => {
+test('modern button shows progress and failures while details remain in the left status area', async () => {
   const dom = new JSDOM(`<header class="thread-header"><h1>FNS-267 [BT] Sample</h1></header>
     <article id="first-post"><div class="post-text">
       <img class="body-image" src="https://www.hxmmdd.com/one.webp" referrerpolicy="no-referrer">
@@ -1188,6 +1189,12 @@ test('modern progress counts saved callbacks, reports save failures and stays ic
   const restore = installDomGlobals(dom.window);
   const saves = [];
   const alerts = [];
+  const resetCallbacks = [];
+  const schedule = dom.window.setTimeout.bind(dom.window);
+  dom.window.setTimeout = (callback, delay) => {
+    if (delay === 2500) { resetCallbacks.push(callback); return 0; }
+    return schedule(callback, delay);
+  };
   dom.window.alert = message => alerts.push(message);
   globalThis.GM_download = options => { saves.push(options); };
   globalThis.GM_xmlhttpRequest = options => queueMicrotask(() => options.onload({
@@ -1196,23 +1203,53 @@ test('modern progress counts saved callbacks, reports save failures and stays ic
   }));
   try {
     await import(`../src/userscript.js?save-progress=${Date.now()}`);
-    const button = dom.window.document.getElementById('x1080x-ex-download');
+    let button = dom.window.document.getElementById('x1080x-ex-download');
     button.click();
     button.click();
     await waitFor(() => saves.length === 1, 'first save should start');
-    const status = dom.window.document.getElementById('x1080x-ex-download-status');
+    let status = dom.window.document.getElementById('x1080x-ex-download-status');
     assert.match(status.textContent, /处理中 0\/2 · 已保存 0/);
-    assert.equal(button.textContent, '⬇');
+    assert.equal(button.textContent, '下载中 0/2');
     assert.equal(button.disabled, true);
+    dom.window.document.querySelector('.thread-header').outerHTML = `<header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button dock-side">收藏</button></div></span></div><h1>FNS-267 [BT] Sample</h1></header>`;
+    await waitFor(() => {
+      button = dom.window.document.getElementById('x1080x-ex-download');
+      return button?.disabled && button.textContent === '下载中 0/2';
+    }, 'React replacement must restore the busy button and prevent duplicate downloads');
+    status = dom.window.document.getElementById('x1080x-ex-download-status');
+    button.click();
+    assert.equal(saves.length, 1);
     saves[0].onload();
     await waitFor(() => saves.length === 2, 'second save should wait for first callback');
     assert.match(status.textContent, /处理中 1\/2 · 已保存 1/);
     saves[1].onerror({ error: 'not_permitted' });
     await waitFor(() => !button.disabled, 'save failure must release the button');
     assert.match(status.textContent, /已处理 2\/2 · 已保存 1 · 失败 1/);
-    assert.equal(button.textContent, '⬇');
+    assert.equal(button.textContent, '⚠ 失败 1');
     assert.equal(alerts.length, 1);
     assert.match(alerts[0], /下载权限/);
+    resetCallbacks.at(-1)();
+    assert.equal(button.textContent, '⬇');
+    assert.match(status.textContent, /已保存 1 · 失败 1/, 'detail remains available after the button resets');
+  } finally {
+    dom.window.close();
+    await Promise.resolve();
+    restore();
+  }
+});
+
+test('disabled modern download enhancement creates neither the button nor an empty status area', async () => {
+  const dom = new JSDOM(`<header class="thread-header"><div class="thread-header-nums">
+    <span class="thread-header-actions"><div class="thread-actions"><button class="button dock-side">收藏</button></div></span>
+    </div><h1>FNS-267 [BT] Sample</h1></header>`, { url: 'https://1080xin.com/resources/downloadOff' });
+  const restore = installDomGlobals(dom.window);
+  globalThis.GM_getValue = (key, fallback) => key === 'x1080x-ex:agaghhh-download-enabled' ? false : fallback;
+  try {
+    await import(`../src/userscript.js?download-off-no-status=${Date.now()}`);
+    assert.equal(dom.window.document.getElementById('x1080x-ex-download'), null);
+    assert.equal(dom.window.document.getElementById('x1080x-ex-download-status'), null);
   } finally {
     dom.window.close();
     await Promise.resolve();

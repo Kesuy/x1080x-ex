@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.25
+// @version      1.10.26
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1768,9 +1768,9 @@ ${settings.password}`;
   }
 
   // src/blob-download.js
-  async function saveDownloadBlob(blob, name, document2 = globalThis.document) {
+  async function saveDownloadBlob(blob, name, document2 = globalThis.document, { browserDownload = false } = {}) {
     const view = document2.defaultView;
-    if (typeof GM_download === "function") {
+    if (!browserDownload && typeof GM_download === "function") {
       const info = typeof GM_info === "object" ? GM_info : {};
       const version = String(info.version || "").split(".").map(Number);
       const supportsBlob = info.scriptHandler === "Tampermonkey" && (version[0] > 5 || version[0] === 5 && (version[1] > 4 || version[1] === 4 && version[2] >= 6226));
@@ -1837,6 +1837,33 @@ ${settings.password}`;
       ".button.dock-side, button.dock-side, button[aria-pressed], .dock-side"
     ) || null;
   }
+  function ensureModernDownloadStatus(document2) {
+    const header = document2?.querySelector(".thread-header");
+    if (!header) return null;
+    const row = header.querySelector(".thread-header-nums") || header;
+    const actions = row.querySelector(".thread-header-actions");
+    let status = document2.getElementById("x1080x-ex-download-status");
+    if (!status) {
+      status = document2.createElement("span");
+      status.id = "x1080x-ex-download-status";
+      status.setAttribute("role", "status");
+      Object.assign(status.style, {
+        flex: "1 1 0px",
+        width: "0",
+        minWidth: "0",
+        contain: "inline-size",
+        fontSize: "12px",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        alignSelf: "center"
+      });
+    }
+    if (actions) {
+      if (status.parentElement !== row || status.nextElementSibling !== actions) row.insertBefore(status, actions);
+    } else if (status.parentElement !== row) row.prepend(status);
+    return status;
+  }
   function ensureModernResourceActionGroup(document2) {
     if (!document2?.querySelector(".thread-header h1")) return null;
     const actions = document2.querySelector(".thread-header .thread-actions");
@@ -1877,8 +1904,10 @@ ${settings.password}`;
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
-      width: "max-content",
-      minWidth: "38px",
+      width: button.id === "x1080x-ex-download" ? "112px" : "max-content",
+      minWidth: button.id === "x1080x-ex-download" ? "112px" : "38px",
+      maxWidth: button.id === "x1080x-ex-download" ? "112px" : "",
+      boxSizing: "border-box",
       margin: "0",
       flex: "0 0 auto",
       verticalAlign: "middle"
@@ -2883,7 +2912,7 @@ ${failures.join("\n")}`);
   async function download(job, { deferImageSave = false } = {}) {
     if (job.kind === "torrent") {
       const result2 = await requestTorrentBytes(job.url);
-      const saved = await saveDownloadBlob(new Blob([result2.bytes], { type: "application/x-bittorrent" }), job.name);
+      const saved = await saveDownloadBlob(new Blob([result2.bytes], { type: "application/x-bittorrent" }), job.name, document, { browserDownload: true });
       console.info("[x1080x-ex] integrated torrent download", {
         name: job.name,
         hash: result2.hash,
@@ -2945,25 +2974,29 @@ ${failures.join("\n")}`);
     }
     return { skipped: false, ...await saveDownloadBlob(result.blob, job.name) };
   }
-  function setDownloadStatus(button, text) {
+  var activeDownloadState = null;
+  function setDownloadStatus(button, text, label = text) {
+    if (activeDownloadState?.button === button) {
+      Object.assign(activeDownloadState, { text, label });
+      if (activeDownloadState.pathname !== location.pathname) return;
+      button = document.getElementById(BUTTON_ID) || button;
+    }
     button.title = text;
+    button.setAttribute("aria-label", text);
     if (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) {
-      button.textContent = text;
+      if (button.textContent !== text) button.textContent = text;
       return;
     }
-    let status = document.getElementById("x1080x-ex-download-status");
-    if (!status) {
-      status = document.createElement("span");
-      status.id = "x1080x-ex-download-status";
-      status.setAttribute("role", "status");
-      Object.assign(status.style, { fontSize: "12px", marginLeft: "8px", whiteSpace: "normal" });
-      const host = button.closest(".thread-header")?.querySelector(".thread-header-nums") || button.parentElement;
-      host.append(status);
+    if (button.textContent !== label) button.textContent = label;
+    const status = ensureModernDownloadStatus(document);
+    if (status) {
+      if (status.textContent !== text) status.textContent = text;
+      status.title = text;
     }
-    status.textContent = text;
   }
+  var downloadResetTimers = /* @__PURE__ */ new WeakMap();
   async function downloadAll(button) {
-    if (button.disabled) return;
+    if (button.disabled || activeDownloadState) return;
     const jobs = buildDownloadJobs(document);
     const nativeFiles = collectModernNativeAttachments(document);
     const totalTasks = jobs.length + nativeFiles.length;
@@ -2971,6 +3004,8 @@ ${failures.join("\n")}`);
       window.alert("\u4E3B\u697C\u4E2D\u6CA1\u6709\u627E\u5230\u9644\u4EF6\u3001\u78C1\u529B\u94FE\u6216\u53EF\u4E0B\u8F7D\u56FE\u7247\u3002");
       return;
     }
+    window.clearTimeout(downloadResetTimers.get(button));
+    activeDownloadState = { button, pathname: location.pathname, text: "", label: "" };
     const endDownloadGuard = beginDownloadGuard(document, {
       enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY)
     });
@@ -2985,7 +3020,7 @@ ${failures.join("\n")}`);
       if (result?.confirmed) saved += 1;
       else started += 1;
     };
-    const progress = () => setDownloadStatus(button, `\u5904\u7406\u4E2D ${processed}/${totalTasks} \xB7 \u5DF2\u4FDD\u5B58 ${saved}${started ? ` \xB7 \u5DF2\u53D1\u8D77 ${started}` : ""}`);
+    const progress = () => setDownloadStatus(button, `\u5904\u7406\u4E2D ${processed}/${totalTasks} \xB7 \u5DF2\u4FDD\u5B58 ${saved}${started ? ` \xB7 \u5DF2\u53D1\u8D77 ${started}` : ""}`, `\u4E0B\u8F7D\u4E2D ${processed}/${totalTasks}`);
     try {
       const nativeResult = requestModernNativeAttachmentDownload(document, nativeFiles);
       processed += nativeResult.attempted || 0;
@@ -3029,10 +3064,13 @@ ${failures.join("\n")}`);
       if (failures.length) summary.push(`\u5931\u8D25 ${failures.length}`);
       if (nativeResult.total) summary.push(`\u7AD9\u5185\u9644\u4EF6\u5DF2\u8BF7\u6C42 ${nativeResult.total}\uFF08\u7ED3\u679C\u8BF7\u67E5\u770B\u7F51\u7AD9\u63D0\u793A\uFF09`);
       const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
-      setDownloadStatus(button, !modern && skipped && !failures.length ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : summary.join(" \xB7 "));
-      if (!modern) window.setTimeout(() => {
-        button.textContent = "\u2B07";
-      }, 2500);
+      const completedLabel = failures.length ? `\u26A0 \u5931\u8D25 ${failures.length}` : started || nativeResult.total || skipped ? `\u2713 \u5DF2\u5904\u7406 ${processed}/${totalTasks}` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
+      setDownloadStatus(button, !modern && skipped && !failures.length ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : summary.join(" \xB7 "), completedLabel);
+      const visibleButton = activeDownloadState.pathname === location.pathname ? document.getElementById(BUTTON_ID) || button : button;
+      downloadResetTimers.set(visibleButton, window.setTimeout(() => {
+        visibleButton.textContent = "\u2B07";
+        visibleButton.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
+      }, 2500));
       if (failures.length) {
         window.alert(`\u4EE5\u4E0B\u6587\u4EF6\u4E0B\u8F7D\u5931\u8D25\uFF1A
 
@@ -3042,17 +3080,28 @@ ${failures.join("\n")}
       }
     } finally {
       button.disabled = false;
+      if (activeDownloadState.pathname === location.pathname) {
+        const visibleButton = document.getElementById(BUTTON_ID);
+        if (visibleButton) visibleButton.disabled = false;
+      }
+      activeDownloadState = null;
       endDownloadGuard();
     }
   }
   function addDownloadButton() {
+    if (isAgaghhhHost(location) && typeof GM_getValue === "function" && GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) === false) return;
     const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
     const title = document.querySelector(modern ? ".thread-header h1" : "#thread_subject");
     const actionGroup = modern ? ensureModernResourceActionGroup(document) : null;
+    if (modern) ensureModernDownloadStatus(document);
     const host = modern ? actionGroup || title?.closest(".thread-header") : title?.closest(".vwthd, .ts") || title?.parentElement;
     if (!title || !host) return;
     let button = document.getElementById(BUTTON_ID);
     if (button) {
+      if (activeDownloadState?.pathname === location.pathname) {
+        button.disabled = true;
+        setDownloadStatus(activeDownloadState.button, activeDownloadState.text, activeDownloadState.label);
+      }
       if (modern) {
         if (placeModernResourceActionButton(document, button)) return;
         if (title.nextElementSibling !== button) title.after(button);
@@ -3081,7 +3130,8 @@ ${failures.join("\n")}
       background: "#398bd4",
       cursor: "pointer",
       fontSize: "14px",
-      lineHeight: "20px"
+      lineHeight: "20px",
+      ...modern ? { padding: "7px 6px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontVariantNumeric: "tabular-nums" } : {}
     });
     button.addEventListener("mouseenter", () => {
       button.style.background = "#246eaf";

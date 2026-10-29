@@ -1,8 +1,8 @@
 // Use the userscript manager's completion callback when available. A synthetic
 // anchor click only starts a download and cannot prove that the file was saved.
-export async function saveDownloadBlob(blob, name, document = globalThis.document) {
+export async function saveDownloadBlob(blob, name, document = globalThis.document, { browserDownload = false } = {}) {
   const view = document.defaultView;
-  if (typeof GM_download === 'function') {
+  if (!browserDownload && typeof GM_download === 'function') {
     const info = typeof GM_info === 'object' ? GM_info : {};
     const version = String(info.version || '').split('.').map(Number);
     const supportsBlob = info.scriptHandler === 'Tampermonkey' && (

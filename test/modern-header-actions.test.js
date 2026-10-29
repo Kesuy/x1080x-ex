@@ -4,6 +4,7 @@ import { JSDOM } from 'jsdom';
 import {
   ensureModernResourceActionGroup,
   placeModernResourceActionButton,
+  ensureModernDownloadStatus,
 } from '../src/modern-header-actions.js';
 
 function headerDom() {
@@ -44,6 +45,30 @@ test('modern resource actions are grouped in stable download/search/copy order i
   ]);
   assert.equal(download.style.float, 'none');
   assert.equal(copy.style.margin, '0px');
+  dom.window.close();
+});
+
+test('download details reserve the flexible space before actions and the button keeps a fixed width', () => {
+  const dom = headerDom();
+  const doc = dom.window.document;
+  const status = ensureModernDownloadStatus(doc);
+  const actions = doc.querySelector('.thread-header-actions');
+  assert.equal(status.nextElementSibling, actions);
+  assert.equal(status.style.flex, '1 1 0px');
+  assert.equal(status.style.minWidth, '0');
+  assert.equal(status.style.contain, 'inline-size');
+  assert.equal(status.style.overflow, 'hidden');
+  const button = doc.createElement('button');
+  button.id = 'x1080x-ex-download';
+  placeModernResourceActionButton(doc, button);
+  const width = button.style.width;
+  button.textContent = '下载中 1/3';
+  status.textContent = '已处理 3/3 · 已保存 2 · 失败 1';
+  placeModernResourceActionButton(doc, button);
+  assert.equal(button.style.width, width);
+  assert.equal(width, '112px');
+  assert.equal(ensureModernDownloadStatus(doc), status);
+  assert.equal(status.nextElementSibling, actions);
   dom.window.close();
 });
 

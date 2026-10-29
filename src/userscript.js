@@ -42,7 +42,7 @@ import {
 } from './history-migration.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
-import { ensureModernResourceActionGroup, placeModernResourceActionButton } from './modern-header-actions.js';
+import { ensureModernResourceActionGroup, placeModernResourceActionButton, ensureModernDownloadStatus } from './modern-header-actions.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
@@ -1231,7 +1231,9 @@ function isLikelyUnavailablePixhostPreview(job, blob) {
 async function download(job, { deferImageSave = false } = {}) {
   if (job.kind === 'torrent') {
     const result = await requestTorrentBytes(job.url);
-    const saved = await saveDownloadBlob(new Blob([result.bytes], { type: 'application/x-bittorrent' }), job.name);
+    // Keep validated torrents on the original browser save path. GM_download
+    // applies its own extension whitelist and commonly rejects .torrent files.
+    const saved = await saveDownloadBlob(new Blob([result.bytes], { type: 'application/x-bittorrent' }), job.name, document, { browserDownload: true });
     console.info('[x1080x-ex] integrated torrent download', {
       name: job.name,
       hash: result.hash,
@@ -1298,27 +1300,32 @@ async function download(job, { deferImageSave = false } = {}) {
   return { skipped: false, ...await saveDownloadBlob(result.blob, job.name) };
 }
 
-function setDownloadStatus(button, text) {
+let activeDownloadState = null;
+
+function setDownloadStatus(button, text, label = text) {
+  if (activeDownloadState?.button === button) {
+    Object.assign(activeDownloadState, { text, label });
+    if (activeDownloadState.pathname !== location.pathname) return;
+    button = document.getElementById(BUTTON_ID) || button;
+  }
   button.title = text;
+  button.setAttribute('aria-label', text);
   if (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) {
-    button.textContent = text;
+    if (button.textContent !== text) button.textContent = text;
     return;
   }
-  // Keep the action itself icon-only, including progress and error states.
-  let status = document.getElementById('x1080x-ex-download-status');
-  if (!status) {
-    status = document.createElement('span');
-    status.id = 'x1080x-ex-download-status';
-    status.setAttribute('role', 'status');
-    Object.assign(status.style, { fontSize: '12px', marginLeft: '8px', whiteSpace: 'normal' });
-    const host = button.closest('.thread-header')?.querySelector('.thread-header-nums') || button.parentElement;
-    host.append(status);
+  if (button.textContent !== label) button.textContent = label;
+  const status = ensureModernDownloadStatus(document);
+  if (status) {
+    if (status.textContent !== text) status.textContent = text;
+    status.title = text;
   }
-  status.textContent = text;
 }
 
+const downloadResetTimers = new WeakMap();
+
 async function downloadAll(button) {
-  if (button.disabled) return;
+  if (button.disabled || activeDownloadState) return;
   const jobs = buildDownloadJobs(document);
   const nativeFiles = collectModernNativeAttachments(document);
   const totalTasks = jobs.length + nativeFiles.length;
@@ -1326,6 +1333,8 @@ async function downloadAll(button) {
     window.alert('主楼中没有找到附件、磁力链或可下载图片。');
     return;
   }
+  window.clearTimeout(downloadResetTimers.get(button));
+  activeDownloadState = { button, pathname: location.pathname, text: '', label: '' };
 
   const endDownloadGuard = beginDownloadGuard(document, {
     enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY),
@@ -1338,7 +1347,7 @@ async function downloadAll(button) {
   let saved = 0;
   let started = 0;
   const recordSave = (result) => { if (result?.confirmed) saved += 1; else started += 1; };
-  const progress = () => setDownloadStatus(button, `处理中 ${processed}/${totalTasks} · 已保存 ${saved}${started ? ` · 已发起 ${started}` : ''}`);
+  const progress = () => setDownloadStatus(button, `处理中 ${processed}/${totalTasks} · 已保存 ${saved}${started ? ` · 已发起 ${started}` : ''}`, `下载中 ${processed}/${totalTasks}`);
 
   try {
     // Delegate while the user gesture is still active. Native controls may rely
@@ -1389,24 +1398,39 @@ async function downloadAll(button) {
     if (failures.length) summary.push(`失败 ${failures.length}`);
     if (nativeResult.total) summary.push(`站内附件已请求 ${nativeResult.total}（结果请查看网站提示）`);
     const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
+    const completedLabel = failures.length ? `⚠ 失败 ${failures.length}`
+      : started || nativeResult.total || skipped ? `✓ 已处理 ${processed}/${totalTasks}` : '✓ 下载完成';
     setDownloadStatus(button, !modern && skipped && !failures.length
       ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
-      : summary.join(' · '));
-    if (!modern) window.setTimeout(() => { button.textContent = '⬇'; }, 2500);
+      : summary.join(' · '), completedLabel);
+    const visibleButton = activeDownloadState.pathname === location.pathname
+      ? document.getElementById(BUTTON_ID) || button : button;
+    downloadResetTimers.set(visibleButton, window.setTimeout(() => {
+      visibleButton.textContent = '⬇';
+      visibleButton.setAttribute('aria-label', '下载资源');
+    }, 2500));
 
     if (failures.length) {
       window.alert(`以下文件下载失败：\n\n${failures.join('\n')}\n\n可检查登录状态或浏览器下载权限后重试。`);
     }
   } finally {
     button.disabled = false;
+    if (activeDownloadState.pathname === location.pathname) {
+      const visibleButton = document.getElementById(BUTTON_ID);
+      if (visibleButton) visibleButton.disabled = false;
+    }
+    activeDownloadState = null;
     endDownloadGuard();
   }
 }
 
 function addDownloadButton() {
+  if (isAgaghhhHost(location) && typeof GM_getValue === 'function'
+    && GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) === false) return;
   const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
   const title = document.querySelector(modern ? '.thread-header h1' : '#thread_subject');
   const actionGroup = modern ? ensureModernResourceActionGroup(document) : null;
+  if (modern) ensureModernDownloadStatus(document);
   const host = modern
     ? (actionGroup || title?.closest('.thread-header'))
     : (title?.closest('.vwthd, .ts') || title?.parentElement);
@@ -1414,6 +1438,10 @@ function addDownloadButton() {
 
   let button = document.getElementById(BUTTON_ID);
   if (button) {
+    if (activeDownloadState?.pathname === location.pathname) {
+      button.disabled = true;
+      setDownloadStatus(activeDownloadState.button, activeDownloadState.text, activeDownloadState.label);
+    }
     if (modern) {
       if (placeModernResourceActionButton(document, button)) return;
       if (title.nextElementSibling !== button) title.after(button);
@@ -1446,6 +1474,7 @@ function addDownloadButton() {
     cursor: 'pointer',
     fontSize: '14px',
     lineHeight: '20px',
+    ...(modern ? { padding: '7px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontVariantNumeric: 'tabular-nums' } : {}),
   });
   button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
   button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
