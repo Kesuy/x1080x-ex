@@ -374,7 +374,7 @@ export function hdblogAgaghhhSearchKeyword(code) {
 export function buildAgaghhhSearchUrl(code) {
   const keyword = hdblogAgaghhhSearchKeyword(code);
   if (!keyword) return '';
-  return `${getAgaghhhOrigin()}/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
+  return `${getAgaghhhOrigin()}/search?q=${encodeURIComponent(keyword)}`;
 }
 
 function openSearchTab(document, url) {

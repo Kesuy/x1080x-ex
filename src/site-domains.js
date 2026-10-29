@@ -1,6 +1,7 @@
 import { isAllowedHost, parseDomainList } from './core.js';
 
 export const AGAGHHH_PRIMARY_DOMAIN_KEY = 'x1080x-ex:agaghhh-primary-domain';
+export const AGAGHHH_DOMAIN_ALIASES_KEY = 'x1080x-ex:agaghhh-domain-aliases';
 export const DEFAULT_AGAGHHH_PRIMARY_DOMAIN = '1080xin.com';
 export const LEGACY_AGAGHHH_DOMAIN = 'agaghhh.cc';
 
@@ -20,11 +21,24 @@ export function getAgaghhhPrimaryDomain() {
 }
 
 export function getAgaghhhDomains() {
+  const stored = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_DOMAIN_ALIASES_KEY, []) : [];
+  const aliases = Array.isArray(stored) ? stored.map(parseAgaghhhPrimaryDomain).filter(Boolean) : [];
   return [...new Set([
     getAgaghhhPrimaryDomain(),
     DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
     LEGACY_AGAGHHH_DOMAIN,
+    ...aliases,
   ])];
+}
+
+// Preserve each previously configured forum domain so saved progress URLs can
+// still be rewritten after a second or later domain change.
+export function saveAgaghhhPrimaryDomain(value) {
+  const domain = parseAgaghhhPrimaryDomain(value);
+  if (!domain || typeof GM_setValue !== 'function') return false;
+  GM_setValue(AGAGHHH_DOMAIN_ALIASES_KEY, [...new Set([...getAgaghhhDomains(), domain])]);
+  GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+  return true;
 }
 
 export function isAgaghhhHost(locationObject = globalThis.location) {

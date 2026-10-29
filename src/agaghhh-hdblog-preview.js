@@ -1,4 +1,4 @@
-import { parseThreadTitle } from './core.js';
+import { getThreadHeadingText, parseThreadTitle } from './core.js';
 import {
   collectHdblogSearchResults,
   filterSearchCandidates,
@@ -458,23 +458,23 @@ export async function fetchHdblogPreviewForCode(
 }
 
 function threadCode(document) {
-  const rawTitle = document.querySelector('#thread_subject')?.textContent
-    || document.querySelector('h1.ts, .vwthd h1, h1')?.textContent
-    || document.title;
-  return parseThreadTitle(rawTitle).code;
+  return parseThreadTitle(getThreadHeadingText(document)).code;
 }
 
 function firstPostContent(document) {
   const firstPost = [...document.querySelectorAll('#postlist [id^="post_"]')]
     .find((element) => /^post_\d+$/i.test(element.id))
-    || document.querySelector('#postlist > div, #postlist');
-  return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
+    || document.querySelector('#postlist > div, #postlist')
+    || document.querySelector('#first-post');
+  return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text')
+    || firstPost || null;
 }
 
 function isThreadPage(locationObject) {
   try {
     const url = new URL(locationObject?.href || '');
-    return url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid');
+    return /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname)
+      || (url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid'));
   } catch {
     return false;
   }

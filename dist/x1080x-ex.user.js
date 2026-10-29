@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.22
+// @version      1.10.29
 // @description  一键下载主楼资源，并增强 hdblog 文章宽度、封面下载、Preview 大图、搜索过滤及主题批量后台打开
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -66,6 +66,10 @@
       ...[...document2.querySelectorAll("main#genesis-content article.entry")].map((article) => ({
         kind: "wordpress",
         link: article.querySelector(".entry-header .entry-title a[href], h2.entry-title a[href]")
+      })),
+      ...[...document2.querySelectorAll("article.thread-row:not(.is-sticky)")].map((article) => ({
+        kind: "modern",
+        link: article.querySelector('a.resource-title[href*="/resources/"]')
       }))
     ];
     return candidates.filter((candidate) => candidate.link).map(({ kind, link }) => {
@@ -81,8 +85,19 @@
     }).filter(Boolean).filter((thread) => {
       if (thread.kind === "discuz") return isThreadUrl(thread.url, document2.baseURI);
       const url = new URL(thread.url);
+      if (thread.kind === "modern") {
+        return url.origin === new URL(document2.baseURI).origin && /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname);
+      }
       return /^https?:$/.test(url.protocol) && url.origin === new URL(document2.baseURI).origin;
     }).filter((thread) => !seen.has(thread.url) && seen.add(thread.url));
+  }
+  function getThreadHeadingText(document2) {
+    const heading = document2?.querySelector("#thread_subject") || document2?.querySelector(".thread-header h1") || document2?.querySelector("h1.ts, .vwthd h1, h1");
+    if (!heading) return document2?.title || "";
+    if (!heading.matches(".thread-header h1")) return heading.textContent || "";
+    const copy = heading.cloneNode(true);
+    copy.querySelector(".topic-tags")?.remove();
+    return copy.textContent || "";
   }
   function parseThreadTitle(rawTitle) {
     const normalized = String(rawTitle ?? "").replace(/\s+/g, " ").trim();
@@ -211,6 +226,7 @@
   function isContentImage(image) {
     if (image.hasAttribute(HDBLOG_PREVIEW_URL_ATTR)) return false;
     if (image.closest(".attp, .attach, .pattl, .smilie, .avatar")) return false;
+    if (image.matches(".post-text img.body-image")) return true;
     const className = image.className || "";
     const src = image.getAttribute("src") || "";
     if (/\b(?:smilie|avatar|qqemoji)\b/i.test(className)) return false;
@@ -336,10 +352,10 @@
     return total === 1 ? `${safeCode}.jpg` : `${safeCode} ${alphabeticImageLabel(index)}.jpg`;
   }
   function extractThreadResources(document2) {
-    const rawTitle = document2.querySelector("#thread_subject")?.textContent || document2.querySelector("h1.ts, .vwthd h1, h1")?.textContent || document2.title;
+    const rawTitle = getThreadHeadingText(document2);
     const title = parseThreadTitle(rawTitle);
-    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
-    const content = firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost;
+    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist") || document2.querySelector("#first-post");
+    const content = firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text') || firstPost;
     const attachmentLinks = firstPost ? [...firstPost.querySelectorAll('a[href*="mod=attachment"], a[href*="attachment.php"]')] : [];
     const attachments = attachmentLinks.map((link) => ({
       url: absoluteUrl(document2, link.getAttribute("href")),
@@ -391,6 +407,7 @@
       const downloadImages = [
         ...resources.images.map((image) => ({
           url: image.cacheUrl || image.url,
+          ...image.url && image.url !== (image.cacheUrl || image.url) ? { fallbackUrls: [image.url] } : {},
           ...image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {},
           ...image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {}
         })),
@@ -400,7 +417,7 @@
         jobs.push({
           kind: "image",
           url: image.url,
-          name: sequencedImageFilename(resources.title.code, index, downloadImages.length),
+          name: /\.webp(?:[?#]|$)/i.test(image.url) && document2.querySelector("#first-post") ? sequencedImageFilename(resources.title.code, index, downloadImages.length).replace(/\.jpg$/, ".webp") : sequencedImageFilename(resources.title.code, index, downloadImages.length),
           ...image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {},
           ...image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {},
           ...image.hdblogPreview ? { hdblogPreview: true } : {},
@@ -413,7 +430,8 @@
         jobs.push({
           kind: "image",
           url: preferredUrl,
-          name: resources.hdblogPreviews.length ? `${sanitizeFilename(resources.title.code || "thread-image")} A.jpg` : resources.imageFilename
+          ...resources.imageUrl && resources.imageUrl !== preferredUrl ? { fallbackUrls: [resources.imageUrl] } : {},
+          name: /\.webp(?:[?#]|$)/i.test(preferredUrl) && document2.querySelector("#first-post") ? resources.hdblogPreviews.length ? `${sanitizeFilename(resources.title.code || "thread-image")} A.webp` : resources.imageFilename.replace(/\.jpg$/, ".webp") : resources.hdblogPreviews.length ? `${sanitizeFilename(resources.title.code || "thread-image")} A.jpg` : resources.imageFilename
         });
       }
       if (resources.hdblogPreviews.length) {
@@ -849,6 +867,7 @@
 
   // src/site-domains.js
   var AGAGHHH_PRIMARY_DOMAIN_KEY = "x1080x-ex:agaghhh-primary-domain";
+  var AGAGHHH_DOMAIN_ALIASES_KEY = "x1080x-ex:agaghhh-domain-aliases";
   var DEFAULT_AGAGHHH_PRIMARY_DOMAIN = "1080xin.com";
   var LEGACY_AGAGHHH_DOMAIN = "agaghhh.cc";
   function parseAgaghhhPrimaryDomain(value) {
@@ -863,11 +882,21 @@
     return parseAgaghhhPrimaryDomain(stored) || DEFAULT_AGAGHHH_PRIMARY_DOMAIN;
   }
   function getAgaghhhDomains() {
+    const stored = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_DOMAIN_ALIASES_KEY, []) : [];
+    const aliases = Array.isArray(stored) ? stored.map(parseAgaghhhPrimaryDomain).filter(Boolean) : [];
     return [.../* @__PURE__ */ new Set([
       getAgaghhhPrimaryDomain(),
       DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
-      LEGACY_AGAGHHH_DOMAIN
+      LEGACY_AGAGHHH_DOMAIN,
+      ...aliases
     ])];
+  }
+  function saveAgaghhhPrimaryDomain(value) {
+    const domain = parseAgaghhhPrimaryDomain(value);
+    if (!domain || typeof GM_setValue !== "function") return false;
+    GM_setValue(AGAGHHH_DOMAIN_ALIASES_KEY, [.../* @__PURE__ */ new Set([...getAgaghhhDomains(), domain])]);
+    GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+    return true;
   }
   function isAgaghhhHost(locationObject = globalThis.location) {
     const host = typeof locationObject === "string" ? locationObject : locationObject?.hostname;
@@ -915,7 +944,18 @@
         ".pg a[href], .archive-pagination a[href], .pagination a[href]"
       )].find((anchor) => /^(?:下一页|下一頁|next|older(?: posts?)?|»|›|→)(?:\s*[»›→])?$/i.test(String(anchor.textContent || "").trim()));
     }
-    if (!link) return "";
+    if (!link) {
+      const nextButton = document2.querySelector(
+        '.pgt .pg button[aria-label="\u4E0B\u4E00\u9875"], .pg button[aria-label="\u4E0B\u4E00\u9875"], .pg button[aria-label="\u4E0B\u4E00\u9801"]'
+      );
+      if (!nextButton || nextButton.disabled) return "";
+      const url = new URL(baseUrl);
+      if (!/^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) return "";
+      const active = Number.parseInt(document2.querySelector(".pgt .pg strong, .pg strong")?.textContent || "", 10);
+      const current = Number.isInteger(active) && active > 0 ? active : Number.parseInt(url.searchParams.get("page") || "1", 10) || 1;
+      url.searchParams.set("page", String(current + 1));
+      return url.href;
+    }
     try {
       const url = new URL(link.getAttribute("href"), baseUrl);
       return /^https?:$/.test(url.protocol) ? url.href : "";
@@ -941,6 +981,7 @@
     loadPage,
     collectThreads,
     getId,
+    getIds,
     getScope,
     maxPages = 120,
     onProgress = () => {
@@ -975,8 +1016,8 @@
         return { status: "unreadable", checked, pageUrl: normalized };
       }
       const opened = threads.filter((thread) => {
-        const id = getId(thread.url);
-        return id && history.has(id);
+        const ids = typeof getIds === "function" ? getIds(thread) : [getId(thread.url)];
+        return Array.isArray(ids) && ids.some((id) => id && history.has(id));
       }).length;
       const unopened = threads.length - opened;
       visitedFound ||= opened > 0;
@@ -1567,6 +1608,113 @@ ${settings.password}`;
     }
   }
 
+  // src/modern-attachments.js
+  var pendingClaims = /* @__PURE__ */ new WeakMap();
+  function collectModernNativeAttachments(document2) {
+    if (!document2?.querySelector("#first-post")) return [];
+    return [...document2.querySelectorAll("#first-post .attachments-section .attachment")].map((element) => {
+      const button = element.querySelector(".file-get button:not([disabled])");
+      const name = element.querySelector(".file-name")?.getAttribute("title") || element.querySelector(".file-name")?.textContent?.trim() || "";
+      if (!button) return null;
+      return { name: String(name).trim() || "\u672A\u547D\u540D\u9644\u4EF6", button, slotId: element.getAttribute("data-slot-id") || "" };
+    }).filter(Boolean);
+  }
+  async function prepareModernAttachmentDownload(document2, file, fetchImpl = document2.defaultView.fetch.bind(document2.defaultView)) {
+    if (!/^[a-z0-9]+$/i.test(file.slotId || "")) throw new Error("\u7AD9\u5185\u9644\u4EF6\u7F3A\u5C11\u6709\u6548\u7F16\u53F7\uFF0C\u8BF7\u5237\u65B0\u9875\u9762");
+    const view = document2.defaultView;
+    const origin = view.location.origin;
+    const name = buildAttachmentFilename(parseThreadTitle(getThreadHeadingText(document2)), file.name);
+    const request = async (url, options = {}) => {
+      const controller = new view.AbortController();
+      const timer = view.setTimeout(() => controller.abort(), 3e4);
+      try {
+        const response = await fetchImpl(new URL(url, origin).href, {
+          ...options,
+          credentials: "same-origin",
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`\u7AD9\u5185\u9644\u4EF6\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\uFF0C\u8BF7\u5237\u65B0\u9875\u9762\u6216\u4F7F\u7528\u7F51\u7AD9\u6309\u94AE\u67E5\u770B\u539F\u56E0`);
+        return await response.json();
+      } finally {
+        view.clearTimeout(timer);
+      }
+    };
+    const quote = await request(`/api/slots/${file.slotId}/preview`);
+    if (quote.status === "denied" || quote.file_ready !== true) throw new Error("\u5F53\u524D\u8D26\u53F7\u65E0\u4E0B\u8F7D\u8D44\u683C\u6216\u9644\u4EF6\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u67E5\u770B\u7F51\u7AD9\u63D0\u793A");
+    if (quote.payable_points === null || quote.payable_points === void 0 || !/^\d+(?:\.\d+)?$/.test(String(quote.payable_points))) throw new Error("\u65E0\u6CD5\u786E\u8BA4\u9644\u4EF6\u4EF7\u683C\uFF0C\u672A\u7533\u8BF7\u4E0B\u8F7D");
+    if (Number(quote.payable_points) > 0) {
+      const result = requestModernNativeAttachmentDownload(document2, [file]);
+      if (!result.total) throw new Error("\u65E0\u6CD5\u6253\u5F00\u7F51\u7AD9\u7684\u9644\u4EF6\u8D2D\u4E70\u786E\u8BA4");
+      return { delegated: true };
+    }
+    if (!quote.viewer_id || !quote.version_id || quote.price_points === void 0) throw new Error("\u7F51\u7AD9\u4E0B\u8F7D\u62A5\u4EF7\u4FE1\u606F\u4E0D\u5B8C\u6574\uFF0C\u672A\u7533\u8BF7\u4E0B\u8F7D");
+    let claims = pendingClaims.get(document2);
+    if (!claims) {
+      claims = /* @__PURE__ */ new Map();
+      pendingClaims.set(document2, claims);
+    }
+    const quoteKey = JSON.stringify([quote.viewer_id, quote.version_id, quote.price_points, quote.payable_points]);
+    let attempt = claims.get(file.slotId);
+    if (!attempt || attempt.quoteKey !== quoteKey) {
+      attempt = { quoteKey, payload: {
+        expected_user_id: quote.viewer_id,
+        slot_id: file.slotId,
+        expected_version: quote.version_id,
+        expected_price: quote.price_points,
+        expected_payable: quote.payable_points,
+        idempotency_key: view.crypto.randomUUID()
+      } };
+      claims.set(file.slotId, attempt);
+    }
+    if (!attempt.receiptId) {
+      const csrf = await request("/api/auth/csrf");
+      if (!csrf.csrf_token) throw new Error("\u65E0\u6CD5\u53D6\u5F97\u7F51\u7AD9\u7684\u4E0B\u8F7D\u6821\u9A8C\u4FE1\u606F\uFF0C\u8BF7\u5237\u65B0\u9875\u9762");
+      const claim = await request("/api/downloads/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf.csrf_token },
+        body: JSON.stringify(attempt.payload)
+      });
+      if (claim.requires_new_claim) {
+        claims.delete(file.slotId);
+        throw new Error("\u7F51\u7AD9\u4E0B\u8F7D\u51ED\u8BC1\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u518D\u6B21\u70B9\u51FB\u4E0B\u8F7D");
+      }
+      if (!/^[a-z0-9-]{1,128}$/i.test(claim.receipt_id || "")) throw new Error("\u7F51\u7AD9\u672A\u8FD4\u56DE\u6709\u6548\u4E0B\u8F7D\u51ED\u8BC1\uFF0C\u672A\u91CD\u590D\u7533\u8BF7");
+      attempt.receiptId = claim.receipt_id;
+      view.dispatchEvent(new view.Event("memberchanged"));
+    }
+    return {
+      url: new URL(`/api/downloads/file/${attempt.receiptId}`, origin).href,
+      name,
+      complete: () => claims.delete(file.slotId)
+    };
+  }
+  function requestModernNativeAttachmentDownload(document2, files = collectModernNativeAttachments(document2)) {
+    if (!files.length) return { status: "none", total: 0 };
+    const triggered = [];
+    const failedNames = [];
+    for (const file of files) {
+      try {
+        if (!file.button.isConnected || file.button.disabled) throw new Error("\u9644\u4EF6\u6309\u94AE\u5DF2\u4E0D\u53EF\u7528");
+        file.button.click();
+        triggered.push(file.name);
+      } catch (error) {
+        failedNames.push(file.name);
+        console.warn("[x1080x-ex] native attachment click failed", {
+          name: file.name,
+          error: String(error?.message || error)
+        });
+      }
+    }
+    return {
+      status: triggered.length ? "triggered" : "failed",
+      total: triggered.length,
+      attempted: files.length,
+      failedNames,
+      names: triggered
+    };
+  }
+
   // src/download-guard.js
   var AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY = "x1080x-ex:agaghhh-download-guard-enabled";
   var HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY = "x1080x-ex:hdblog-download-guard-enabled";
@@ -1627,16 +1775,488 @@ ${settings.password}`;
     return image;
   }
 
+  // src/history-migration.js
+  var GENERIC_HISTORY_TITLES = /^(?:404|notfound|pagenotfound|请先登录|請先登入|登录|登錄|歡迎訪問(?:x1080x)?|欢迎访问(?:x1080x)?|請使用下面地址之一訪問論壇|会员方案与点数储值|會員方案與點數儲值)$/i;
+  function isUsableHistoryAlias(value) {
+    if (typeof value !== "string" || !/^(?:resource|code|title|number):.+/i.test(value)) return false;
+    return !value.startsWith("title:") || !GENERIC_HISTORY_TITLES.test(value.slice(6));
+  }
+  function historyAliasesForTitle(value) {
+    const title = String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
+    if (!title) return [];
+    const aliases = [];
+    const fc2 = title.match(/\b(?:FC2\s*[- ]?\s*PPV\s*[- ]?\s*|FC2\s*[- ]?\s*|FC)(\d+)\b/i);
+    if (fc2) aliases.push(`code:FC2-${fc2[1]}`);
+    const codeMatches = [...title.matchAll(/\b([A-Z0-9]{2,12}-\d+[A-Z]?)\b/gi)];
+    const code = codeMatches.find((match) => /[A-Z]/i.test(match[1].split("-")[0]));
+    if (code) {
+      const normalizedCode = code[1].toUpperCase();
+      if (!aliases.includes(`code:${normalizedCode}`)) aliases.push(`code:${normalizedCode}`);
+    }
+    if (!aliases.length) {
+      const numeric = title.match(/\b(\d{6,})\b/);
+      if (numeric) aliases.push(`number:${numeric[1]}`);
+    }
+    const normalizedTitle = title.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    if (normalizedTitle.length >= 6) aliases.push(`title:${normalizedTitle}`);
+    return [...new Set(aliases)];
+  }
+  function legacyTidFromHistoryValue(value) {
+    if (value && typeof value === "object") return legacyTidFromHistoryValue(value.tid || value.url || value.id || "");
+    const raw = String(value ?? "").trim();
+    if (/^\d+$/.test(raw)) return raw;
+    const pathTid = raw.match(/(?:^|\/)(?:thread|viewthread)[-_](\d+)(?:[-_.]|$)/i);
+    if (pathTid) return pathTid[1];
+    const match = raw.match(/^(?:tid:|.*[?&]tid=)(\d+)(?:$|[&#])/i);
+    if (match) return match[1];
+    const direct = raw.match(/^tid:(\d+)$/i);
+    return direct?.[1] || "";
+  }
+  function compatibleHistoryKeys(value) {
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        value = [value];
+      }
+    }
+    const entries = Array.isArray(value) ? value : Array.isArray(value?.entries) ? value.entries : [];
+    const keys = [];
+    for (const entry of entries) {
+      const tid = legacyTidFromHistoryValue(entry);
+      if (tid) keys.push(`tid:${tid}`);
+      if (entry && typeof entry === "object") {
+        keys.push(...historyAliasesForTitle(entry.title || ""));
+        if (/^[a-z0-9]+$/i.test(entry.resource_id || "")) keys.push(`resource:${entry.resource_id}`);
+      }
+      const raw = typeof entry === "string" ? entry : entry?.url || "";
+      if (isUsableHistoryAlias(raw)) keys.push(raw);
+      const resource = raw.match(/\/resources\/([a-z0-9]+)(?:[/?#]|$)/i)?.[1];
+      if (resource) keys.push(`resource:${resource}`);
+    }
+    return [...new Set(keys)];
+  }
+  function legacyThreadUrl(tid, origin = "https://agaghhh.cc") {
+    const id = String(tid ?? "");
+    return /^\d+$/.test(id) ? `${origin}/forum.php?mod=viewthread&tid=${id}` : "";
+  }
+  function extractLegacyHistoryAliases(html, Parser = globalThis.DOMParser) {
+    if (typeof Parser !== "function") return [];
+    const document2 = new Parser().parseFromString(String(html ?? ""), "text/html");
+    const heading = document2.querySelector(
+      "#thread_subject, .vwthd h1, h1.ts, .thread-header h1"
+    );
+    if (!heading) return [];
+    const title = getThreadHeadingText(document2) || heading.textContent || "";
+    if (/^(?:404|not found|page not found|请先登录|請先登入|登录|登錄|歡迎訪問|欢迎访问|會員方案與點數儲值|会员方案与点数储值)(?:\s*[·|—-]\s*x1080x)?$/i.test(title.trim())) return [];
+    return historyAliasesForTitle(title);
+  }
+  function resolvedLegacyHistoryAliases(state) {
+    if (!state?.resolved || typeof state.resolved !== "object") return [];
+    return [...new Set(Object.values(state.resolved).flatMap((values) => Array.isArray(values) ? values : []).filter(isUsableHistoryAlias))];
+  }
+
+  // src/history-recovery.js
+  var HISTORY_RECOVERY_FORMAT = "x1080x-history-recovery-v1";
+  var OLD_FORUM_HOSTS = ["agaghhh.cc", "1080xin.com", "1080xin.vip", "x1080x.com"];
+  function forumTid(value) {
+    try {
+      const url = new URL(value);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || !OLD_FORUM_HOSTS.includes(url.hostname.toLowerCase().replace(/^www\./, ""))) return "";
+      if (!(/^\/(?:forum|viewthread)\.php$/i.test(url.pathname) && url.searchParams.get("mod") === "viewthread") && !/^\/(?:thread|viewthread)[-_]\d+/i.test(url.pathname)) return "";
+      return legacyTidFromHistoryValue(url.href);
+    } catch {
+      return "";
+    }
+  }
+  function recoveredTitleAliases(value) {
+    const title = String(value || "").replace(/\s+/g, " ").trim().replace(/\s*[-|–—]\s*(?:(?:x1080x|agaghhh|1080xin)(?:\.(?:com|cc|vip))?\s*[-|–—]?\s*)?(?:Powered by Discuz!?)?\s*$/i, "").trim();
+    const normalized = title.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+    if (/^(?:justamoment|attentionrequiredcloudflare|请稍候|請稍候|稍等片刻|安全验证|安全驗證|正在进行安全验证|正在進行安全驗證|正在加载|正在載入|x1080x(?:com)?|agaghhh(?:cc)?|1080xin(?:com)?)$/.test(normalized)) return [];
+    return historyAliasesForTitle(title).filter(isUsableHistoryAlias);
+  }
+  function buildHistoryRecovery(rows, legacyValue) {
+    if (!Array.isArray(rows)) throw new Error("\u5386\u53F2\u8BB0\u5F55\u5FC5\u987B\u662F\u6570\u7EC4");
+    const allowed = legacyValue === void 0 ? null : new Set(compatibleHistoryKeys(legacyValue).filter((key) => key.startsWith("tid:")).map((key) => key.slice(4)));
+    const entries = /* @__PURE__ */ new Map();
+    const ambiguous = /* @__PURE__ */ new Set();
+    let ignored = 0;
+    for (const row of rows) {
+      const tid = forumTid(row?.url);
+      const aliases = recoveredTitleAliases(row?.title);
+      if (!tid || allowed && !allowed.has(tid) || !aliases.length || row.tid !== void 0 && String(row.tid) !== tid) {
+        ignored += 1;
+        continue;
+      }
+      const existing = entries.get(tid);
+      const strong = (values) => values.find((value) => value.startsWith("code:FC2-")) || values.find((value) => /^(?:code|number):/.test(value));
+      if (existing && strong(existing.aliases) && strong(aliases) && strong(existing.aliases) !== strong(aliases)) {
+        ambiguous.add(tid);
+      }
+      if (!existing || !strong(existing.aliases) && strong(aliases)) entries.set(tid, {
+        tid,
+        url: row.url,
+        title: String(row.title).trim(),
+        aliases
+      });
+    }
+    const recoveredEntries = [...entries.values()].filter((entry) => !ambiguous.has(entry.tid)).map(({ tid, url, title }) => ({ tid, url, title }));
+    return {
+      format: HISTORY_RECOVERY_FORMAT,
+      entries: recoveredEntries,
+      stats: {
+        rows: rows.length,
+        ignored,
+        ambiguous: ambiguous.size,
+        ...allowed ? { legacyCount: allowed.size, remaining: allowed.size - recoveredEntries.length } : {}
+      }
+    };
+  }
+  function planHistoryRecovery(payload, legacyValue, previousState = {}, recoveredState = {}) {
+    if (payload?.format !== HISTORY_RECOVERY_FORMAT || !Array.isArray(payload.entries)) throw new Error("\u8BF7\u9009\u62E9\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u5DE5\u5177\u751F\u6210\u7684 JSON \u6587\u4EF6");
+    const validated = buildHistoryRecovery(payload.entries, legacyValue);
+    const resolved = previousState.resolved && typeof previousState.resolved === "object" && !Array.isArray(previousState.resolved) ? { ...previousState.resolved } : {};
+    if (recoveredState?.resolved && typeof recoveredState.resolved === "object") {
+      for (const [tid, values] of Object.entries(recoveredState.resolved)) {
+        if (!/^\d+$/.test(tid) || !Array.isArray(values)) continue;
+        const existing = Array.isArray(resolved[tid]) ? resolved[tid].filter(isUsableHistoryAlias) : [];
+        resolved[tid] = [.../* @__PURE__ */ new Set([...existing, ...values.filter(isUsableHistoryAlias)])];
+      }
+    }
+    let changed = 0;
+    const aliases = [];
+    const recovered = {};
+    for (const entry of validated.entries) {
+      const existing = Array.isArray(resolved[entry.tid]) ? resolved[entry.tid].filter(isUsableHistoryAlias) : [];
+      const added = recoveredTitleAliases(entry.title);
+      if (added.some((value) => !existing.includes(value))) changed += 1;
+      resolved[entry.tid] = [.../* @__PURE__ */ new Set([...existing, ...added])];
+      recovered[entry.tid] = resolved[entry.tid];
+      aliases.push(...added);
+    }
+    return {
+      changed,
+      matched: validated.entries.length,
+      ignored: payload.entries.length - validated.entries.length,
+      aliases: [...new Set(aliases)],
+      recovered,
+      state: { ...previousState, resolverVersion: 2, resolved }
+    };
+  }
+
+  // src/history-import.js
+  var HOST_ID = "x1080x-ex-history-import";
+  function showHistoryImportDialog(document2, importFile) {
+    const existing = document2.getElementById(HOST_ID);
+    if (existing) {
+      existing.shadowRoot?.querySelector("input")?.focus();
+      return existing;
+    }
+    const previousFocus = document2.activeElement;
+    const host = document2.createElement("div");
+    host.id = HOST_ID;
+    host.style.setProperty("position", "fixed", "important");
+    host.style.setProperty("inset", "0", "important");
+    host.style.setProperty("z-index", "2147483647", "important");
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `
+    <style>
+      :host { color-scheme:light; font:14px/1.6 system-ui,sans-serif; color:#172033; }
+      * { box-sizing:border-box; }
+      .overlay { display:flex; align-items:center; justify-content:center; width:100%; height:100%; padding:20px; background:#0009; }
+      form { width:min(480px,100%); max-height:100%; overflow:auto; padding:24px; border-radius:12px; background:#fff; box-shadow:0 16px 60px #0005; }
+      h2 { margin:0 0 12px; font-size:20px; }
+      p { margin:0 0 18px; color:#526077; }
+      label { display:block; font-weight:600; }
+      input { display:block; width:100%; margin:8px 0 16px; padding:10px; border:1px solid #cbd5e1; border-radius:6px; }
+      [role=status] { min-height:24px; margin-bottom:18px; white-space:pre-line; overflow-wrap:anywhere; }
+      footer { display:flex; justify-content:flex-end; gap:10px; }
+      button { padding:8px 18px; border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:#172033; font:inherit; cursor:pointer; }
+      button[type=submit] { border-color:#2563eb; background:#2563eb; color:#fff; }
+      button:disabled { opacity:.5; cursor:default; }
+      :focus-visible { outline:2px solid #2563eb; outline-offset:3px; }
+    </style>
+    <div class="overlay">
+      <form role="dialog" aria-modal="true" aria-labelledby="history-import-title">
+        <h2 id="history-import-title">\u5BFC\u5165\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u6587\u4EF6</h2>
+        <p>\u4EC5\u5728\u9700\u8981\u8865\u5145\u65E7\u8BB0\u5F55\u65F6\u4F7F\u7528\u3002\u9009\u62E9\u6062\u590D\u5DE5\u5177\u751F\u6210\u7684 JSON \u6587\u4EF6\uFF0C\u518D\u70B9\u51FB\u201C\u5BFC\u5165\u201D\uFF1B\u539F\u59CB\u65E7\u8BB0\u5F55\u4F1A\u4FDD\u7559\u3002</p>
+        <label for="history-import-file">\u9009\u62E9\u6062\u590D\u6587\u4EF6</label>
+        <input id="history-import-file" type="file" accept=".json,application/json">
+        <div role="status" aria-live="polite">\u5C1A\u672A\u9009\u62E9\u6587\u4EF6\u3002</div>
+        <footer><button type="button" data-close>\u5173\u95ED</button><button type="submit" disabled>\u5BFC\u5165</button></footer>
+      </form>
+    </div>`;
+    const form = root.querySelector("form");
+    const input = root.querySelector("input");
+    const submit = root.querySelector("[type=submit]");
+    const status = root.querySelector("[role=status]");
+    const close = () => {
+      host.remove();
+      previousFocus?.focus?.();
+    };
+    root.querySelector("[data-close]").addEventListener("click", close);
+    root.querySelector(".overlay").addEventListener("click", (event) => {
+      if (event.target.classList.contains("overlay")) close();
+    });
+    form.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+      if (event.key === "Tab") {
+        const controls = [...form.querySelectorAll("input, button")].filter((control) => !control.disabled);
+        const current = root.activeElement;
+        if (event.shiftKey && current === controls[0]) {
+          event.preventDefault();
+          controls.at(-1).focus();
+        } else if (!event.shiftKey && current === controls.at(-1)) {
+          event.preventDefault();
+          controls[0].focus();
+        }
+      }
+    });
+    input.addEventListener("change", () => {
+      submit.disabled = !input.files?.length;
+      status.textContent = input.files?.length ? "\u6587\u4EF6\u5DF2\u9009\u62E9\uFF0C\u70B9\u51FB\u201C\u5BFC\u5165\u201D\u540E\u5904\u7406\u3002" : "\u5C1A\u672A\u9009\u62E9\u6587\u4EF6\u3002";
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = input.files?.[0];
+      if (!file || submit.disabled) return;
+      submit.disabled = true;
+      input.disabled = true;
+      status.textContent = "\u6B63\u5728\u5904\u7406\u6062\u590D\u6587\u4EF6\u2026";
+      try {
+        if (file.size > 20 * 1024 * 1024) throw new Error("\u6062\u590D\u6587\u4EF6\u8D85\u8FC7 20 MB\uFF0C\u8BF7\u53EA\u5BFC\u51FA\u65E7\u8BBA\u575B\u76F8\u5173\u8BB0\u5F55");
+        status.textContent = await importFile(file);
+      } catch (error) {
+        status.textContent = `\u5BFC\u5165\u5931\u8D25\uFF1A${error?.message || error}`;
+        submit.disabled = false;
+      } finally {
+        input.disabled = false;
+      }
+    });
+    document2.body.append(host);
+    input.focus();
+    return host;
+  }
+
+  // src/image-fallbacks.js
+  function alternateImageUrls(value) {
+    try {
+      const url = new URL(value);
+      if (!/^https?:$/.test(url.protocol) || !/(?:^|\.)hxmmdd\.com$/i.test(url.hostname)) return [];
+      let alternatePath = "";
+      if (url.pathname.includes("/images/pics/")) {
+        alternatePath = url.pathname.replace("/images/pics/", "/images-v2/pics/");
+      } else if (url.pathname.includes("/images-v2/pics/")) {
+        alternatePath = url.pathname.replace("/images-v2/pics/", "/images/pics/");
+      }
+      if (!alternatePath || alternatePath === url.pathname) return [];
+      url.pathname = alternatePath;
+      return [url.href];
+    } catch {
+      return [];
+    }
+  }
+
+  // src/blob-download.js
+  async function saveDownloadBlob(blob, name, document2 = globalThis.document, { browserDownload = false } = {}) {
+    const view = document2.defaultView;
+    if (!browserDownload && typeof GM_download === "function") {
+      const info = typeof GM_info === "object" ? GM_info : {};
+      const version = String(info.version || "").split(".").map(Number);
+      const supportsBlob = info.scriptHandler === "Tampermonkey" && (version[0] > 5 || version[0] === 5 && (version[1] > 4 || version[1] === 4 && version[2] >= 6226));
+      const objectUrl2 = supportsBlob ? null : view.URL.createObjectURL(blob);
+      let timer;
+      try {
+        await new Promise((resolve, reject) => {
+          let handle;
+          timer = view.setTimeout(() => {
+            handle?.abort?.();
+            reject(new Error("\u4FDD\u5B58\u6587\u4EF6\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868"));
+          }, 6e4);
+          const finish = (callback) => (value) => {
+            view.clearTimeout(timer);
+            callback(value);
+          };
+          handle = GM_download({
+            url: objectUrl2 || blob,
+            name,
+            saveAs: false,
+            onload: finish(resolve),
+            onerror: finish((error) => {
+              const reasons = {
+                not_enabled: "\u8BF7\u5728 Tampermonkey \u8BBE\u7F6E\u4E2D\u542F\u7528\u4E0B\u8F7D\u529F\u80FD",
+                not_whitelisted: "\u8BF7\u5728 Tampermonkey \u8BBE\u7F6E\u4E2D\u5141\u8BB8\u6B64\u6587\u4EF6\u6269\u5C55\u540D",
+                not_permitted: "\u8BF7\u6388\u4E88 Tampermonkey \u4E0B\u8F7D\u6743\u9650",
+                not_supported: "\u5F53\u524D\u811A\u672C\u7BA1\u7406\u5668\u4E0D\u652F\u6301\u6B64\u4E0B\u8F7D\u65B9\u5F0F"
+              };
+              reject(new Error(reasons[error?.error] || "\u6587\u4EF6\u4FDD\u5B58\u5931\u8D25\u6216\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868"));
+            }),
+            ontimeout: finish(() => reject(new Error("\u4FDD\u5B58\u6587\u4EF6\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868")))
+          });
+        });
+        return { confirmed: true };
+      } finally {
+        view.clearTimeout(timer);
+        if (objectUrl2) view.URL.revokeObjectURL(objectUrl2);
+      }
+    }
+    const objectUrl = view.URL.createObjectURL(blob);
+    const anchor = document2.createElement("a");
+    anchor.hidden = true;
+    anchor.download = name;
+    anchor.href = objectUrl;
+    document2.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+      view.setTimeout(() => view.URL.revokeObjectURL(objectUrl), 1e4);
+    }
+    return { confirmed: false };
+  }
+
+  // src/modern-header-actions.js
+  var MODERN_RESOURCE_ACTIONS_ID = "x1080x-ex-resource-actions";
+  var ACTION_ORDER = [
+    "x1080x-ex-download",
+    "x1080x-ex-agaghhh-hdblog-search",
+    "x1080x-ex-agaghhh-copy-code"
+  ];
+  function favoriteButton(actions) {
+    return actions?.querySelector(
+      ".button.dock-side, button.dock-side, button[aria-pressed], .dock-side"
+    ) || null;
+  }
+  function renderModernDownloadButton(button, state = "idle", count = "") {
+    const key = `${state}:${count}`;
+    if (button.dataset.downloadRender === key && button.querySelector("svg")) return;
+    button.dataset.downloadRender = key;
+    button.dataset.downloadState = state;
+    const svg = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+    for (const [name, value] of Object.entries({ viewBox: "0 0 24 24", width: count ? "13" : "19", height: count ? "13" : "19", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", "data-icon": state })) svg.setAttribute(name, value);
+    const path = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", state === "done" ? "m5 12 4 4L19 6" : state === "error" ? "M12 4 2 21h20L12 4m0 6v5m0 3v.1" : "M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5");
+    svg.append(path);
+    const children = [svg];
+    if (count) {
+      const badge = button.ownerDocument.createElement("span");
+      badge.setAttribute("data-download-count", "");
+      badge.textContent = count;
+      Object.assign(badge.style, { fontSize: "10px", lineHeight: "12px", fontWeight: "600" });
+      children.push(badge);
+    }
+    button.replaceChildren(...children);
+    button.style.background = state === "error" ? "#a96b26" : state === "done" ? "#257b61" : "#398bd4";
+  }
+  function ensureModernDownloadStatus(document2) {
+    const header = document2?.querySelector(".thread-header");
+    if (!header) return null;
+    const row = header.querySelector(".thread-header-nums") || header;
+    const actions = row.querySelector(".thread-header-actions");
+    let status = document2.getElementById("x1080x-ex-download-status");
+    if (!status) {
+      status = document2.createElement("span");
+      status.id = "x1080x-ex-download-status";
+      status.setAttribute("role", "status");
+      Object.assign(status.style, {
+        flex: "1 1 0px",
+        width: "0",
+        minWidth: "0",
+        contain: "inline-size",
+        fontSize: "12px",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        alignSelf: "center"
+      });
+    }
+    if (actions) {
+      if (status.parentElement !== row || status.nextElementSibling !== actions) row.insertBefore(status, actions);
+    } else if (status.parentElement !== row) row.prepend(status);
+    return status;
+  }
+  function ensureModernResourceActionGroup(document2) {
+    if (!document2?.querySelector(".thread-header h1")) return null;
+    const actions = document2.querySelector(".thread-header .thread-actions");
+    if (!actions) return null;
+    let group = document2.getElementById(MODERN_RESOURCE_ACTIONS_ID);
+    if (!group || group.parentElement !== actions) {
+      group = document2.createElement("div");
+      group.id = MODERN_RESOURCE_ACTIONS_ID;
+      group.setAttribute("role", "group");
+      group.setAttribute("aria-label", "\u8D44\u6E90\u5FEB\u6377\u64CD\u4F5C");
+      Object.assign(group.style, {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: "8px",
+        flex: "0 0 auto",
+        minWidth: "0",
+        whiteSpace: "nowrap",
+        verticalAlign: "middle"
+      });
+    }
+    const favorite = favoriteButton(actions);
+    if (favorite) {
+      if (group.parentElement !== actions || group.nextElementSibling !== favorite) {
+        actions.insertBefore(group, favorite);
+      }
+    } else if (group.parentElement !== actions) {
+      actions.prepend(group);
+    }
+    return group;
+  }
+  function placeModernResourceActionButton(document2, button) {
+    if (!button) return false;
+    const group = ensureModernResourceActionGroup(document2);
+    if (!group) return false;
+    Object.assign(button.style, {
+      float: "none",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: button.id === "x1080x-ex-download" ? "44px" : "max-content",
+      minWidth: button.id === "x1080x-ex-download" ? "44px" : "38px",
+      maxWidth: button.id === "x1080x-ex-download" ? "44px" : "",
+      boxSizing: "border-box",
+      margin: "0",
+      flex: "0 0 auto",
+      verticalAlign: "middle"
+    });
+    const rank = ACTION_ORDER.indexOf(button.id);
+    const next = [...group.children].find((candidate) => {
+      const candidateRank = ACTION_ORDER.indexOf(candidate.id);
+      return rank >= 0 && candidateRank > rank;
+    }) || null;
+    if (button.parentElement !== group || button.nextElementSibling !== next) {
+      group.insertBefore(button, next);
+    }
+    return true;
+  }
+
   // src/userscript.js
   var STORAGE_KEY = "x1080x-ex:domains";
   var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = "x1080x-ex:hdblog-expand-preview-images";
   var AGAGHHH_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:agaghhh-batch-open-enabled";
+  var AGAGHHH_DOWNLOAD_ENABLED_KEY = "x1080x-ex:agaghhh-download-enabled";
   var HDBLOG_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-enabled";
   var AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = "x1080x-ex:agaghhh-batch-open-interval-min-ms";
   var AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:agaghhh-batch-open-interval-max-ms";
   var AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = "x1080x-ex:agaghhh-batch-open-history-enabled";
   var AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = "x1080x-ex:agaghhh-batch-open-history-limit";
   var AGAGHHH_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:agaghhh-batch-open-history";
+  var MODERN_RESOURCE_HISTORY_KEY = "x1080x-ex:1080xin-resource-history";
+  var AGAGHHH_HISTORY_ALIASES_KEY = "x1080x-ex:agaghhh-history-title-aliases";
+  var AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY = "x1080x-ex:agaghhh-legacy-history-migration-v1";
+  var AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY = "x1080x-ex:agaghhh-history-recovery-backup-v1";
+  var AGAGHHH_HISTORY_RECOVERED_KEY = "x1080x-ex:agaghhh-history-recovered-titles-v1";
+  var LEGACY_HISTORY_AUTO_MIGRATION_LIMIT = 100;
+  var LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT = 5e3;
+  var legacyHistoryMigrationInProgress = false;
+  var legacyHistoryMigrationStartedThisPage = false;
   var AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = "x1080x-ex:agaghhh-batch-open-history-color";
   var AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:agaghhh-batch-open-unopened-only";
   var AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = "x1080x-ex:agaghhh-batch-progress-locator-enabled";
@@ -1708,7 +2328,7 @@ ${settings.password}`;
         window.alert("\u8BF7\u8F93\u5165\u6709\u6548\u7684\u7AD9\u70B9\u57DF\u540D\uFF0C\u4F8B\u5982 1080xin.com");
         return;
       }
-      GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+      saveAgaghhhPrimaryDomain(domain);
       window.alert(`x1080x \u7AD9\u70B9\u57DF\u540D\u5DF2\u4FDD\u5B58\uFF1A${domain}
 \u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002\u539F\u6709\u6D4F\u89C8\u8BB0\u5F55\u5C06\u7EE7\u7EED\u4FDD\u7559\u3002`);
     });
@@ -1740,8 +2360,80 @@ ${domains.join("\n")}
     });
     GM_registerMenuCommand("\u21A9\uFE0F \u91CD\u7F6E\u9ED8\u8BA4\u57DF\u540D", () => {
       saveDomains(parseDomainList(DEFAULT_DOMAINS));
-      GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
+      saveAgaghhhPrimaryDomain(DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
       window.alert(`\u5DF2\u6062\u590D\u9ED8\u8BA4\u57DF\u540D\uFF1A${DEFAULT_DOMAINS}`);
+    });
+    GM_registerMenuCommand("\u21AA\uFE0F \u8FC1\u79FB\u65E7\u7248 x1080x \u6D4F\u89C8\u8BB0\u5F55\u5230\u65B0\u7248", () => {
+      const legacy = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : [];
+      const total = compatibleHistoryKeys(legacy).filter((value) => value.startsWith("tid:")).length;
+      if (!total) {
+        const aliases = compatibleHistoryKeys(legacy).filter(isUsableHistoryAlias);
+        if (aliases.length) {
+          saveHistoryAliases(aliases);
+          if (isBatchOpenPage()) applyBatchOpenHistory(document);
+          window.alert(`\u5DF2\u8F7D\u5165 ${aliases.length} \u9879\u65E7\u7248\u6807\u9898/\u8D44\u6E90\u4FE1\u606F\uFF0C\u65E0\u9700\u901A\u8FC7\u6570\u5B57 TID \u67E5\u8BE2\u3002`);
+        } else window.alert("\u6CA1\u6709\u5728\u5F53\u524D\u8FD9\u4EFD\u811A\u672C\u4E2D\u627E\u5230\u65E7\u7248\u8BB0\u5F55\u3002\u8BF7\u5728\u539F\u6765\u7684\u6CB9\u7334\u811A\u672C\u4E2D\u68C0\u67E5\u6216\u5BFC\u51FA\u5B58\u50A8\u6570\u636E\u3002");
+        return;
+      }
+      if (!window.confirm(`\u53D1\u73B0\u7EA6 ${total} \u6761\u65E7\u7248\u8BB0\u5F55\u3002\u811A\u672C\u5C06\u9010\u6761\u8BFB\u53D6\u65E7\u5E16\u6807\u9898\uFF0C\u6309\u756A\u53F7/\u6807\u9898\u5339\u914D\u65B0\u7248\u8D44\u6E90\uFF1B\u8FD9\u53EF\u80FD\u9700\u8981\u51E0\u5206\u949F\uFF0C\u4E0D\u4F1A\u5220\u9664\u65E7\u8BB0\u5F55\u3002\u662F\u5426\u5F00\u59CB\u5B8C\u6574\u8FC1\u79FB\uFF1F`)) return;
+      void migrateLegacyHistory({ limit: LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT, force: true }).then((result) => {
+        if (isBatchOpenPage()) applyBatchOpenHistory(document);
+        window.alert(`\u65E7\u7248\u5386\u53F2\u68C0\u67E5\u7ED3\u675F\u3002
+\u672C\u6B21\u68C0\u67E5\uFF1A${result.checked} \u6761
+\u65B0\u589E\u5339\u914D\uFF1A${result.matched} \u6761
+\u5269\u4F59\u672A\u89E3\u6790\uFF1A${result.unresolved} \u6761
+\u65E7\u8BB0\u5F55\u672A\u5220\u9664\u3002${result.unresolved ? "\n\u672A\u89E3\u6790\u8BB0\u5F55\u53EA\u6709\u65E7 TID\uFF0C\u9700\u8981\u53EF\u8BBF\u95EE\u7684\u65E7\u5E16\u6216\u7AD9\u70B9\u65B0\u65E7 ID \u6620\u5C04\u624D\u80FD\u6062\u590D\u3002" : ""}`);
+      }).catch((error) => window.alert(`\u8FC1\u79FB\u5931\u8D25\uFF1A${error?.message || error}`));
+    });
+    GM_registerMenuCommand("\u{1F9FE} \u68C0\u67E5\u65E7\u7248\u6D4F\u89C8\u8BB0\u5F55", () => {
+      const legacy = compatibleHistoryKeys(typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : []);
+      const modern = compatibleHistoryKeys(typeof GM_getValue === "function" ? GM_getValue(MODERN_RESOURCE_HISTORY_KEY, []) : []);
+      const aliases = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
+      const state = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {}) : {};
+      const recovered = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}) : {};
+      const tids = legacy.filter((value) => value.startsWith("tid:"));
+      const matched = tids.filter((value) => resolvedLegacyHistoryAliases({ resolved: {
+        cached: state?.resolved?.[value.slice(4)],
+        recovered: recovered?.resolved?.[value.slice(4)]
+      } }).length > 0).length;
+      window.alert(`\u65E7\u7248\u6570\u5B57 TID\uFF1A${tids.length} \u6761
+\u5DF2\u53D6\u5F97\u5BF9\u5E94\u4FE1\u606F\uFF1A${matched} \u6761
+\u4ECD\u7F3A\u5BF9\u5E94\u4FE1\u606F\uFF1A${tids.length - matched} \u6761
+\u65E7\u8BB0\u5F55\u4E2D\u7684\u6807\u9898/\u8D44\u6E90\u4FE1\u606F\uFF1A${legacy.filter(isUsableHistoryAlias).length} \u9879
+\u5171\u4EAB\u6807\u9898/\u756A\u53F7\u7D22\u5F15\uFF1A${Array.isArray(aliases) ? aliases.length : 0} \u9879
+\u65B0\u7248\u8D44\u6E90\u8BB0\u5F55\uFF1A${modern.filter((value) => value.startsWith("resource:")).length} \u6761
+
+\u65E7 TID \u6570\u91CF\u5927\u4E8E 0 \u8868\u793A\u6570\u636E\u5DF2\u8BFB\u5230\uFF1B\u4ECD\u7F3A\u5BF9\u5E94\u4FE1\u606F\u7684\u8BB0\u5F55\u65E0\u6CD5\u4EC5\u51ED\u7F16\u53F7\u5224\u65AD\u65B0\u7248\u5E16\u5B50\u662F\u5426\u6D4F\u89C8\u8FC7\u3002\u82E5\u65E7 TID \u4E3A 0\uFF0C\u8BF7\u5728\u539F\u6765\u90A3\u4EFD\u6CB9\u7334\u811A\u672C\u4E2D\u68C0\u67E5\u6216\u5BFC\u51FA\u5B58\u50A8\u6570\u636E\u3002`);
+    });
+    GM_registerMenuCommand("\u{1F4E5} \u5BFC\u5165\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u6587\u4EF6", () => {
+      showHistoryImportDialog(document, async (file) => {
+        const payload = JSON.parse((await file.text()).replace(/^\uFEFF/, ""));
+        const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+        const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+        const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+        const plan = planHistoryRecovery(payload, legacy, state, recovered);
+        if (!plan.matched) {
+          return "\u6062\u590D\u6587\u4EF6\u4E2D\u6CA1\u6709\u5339\u914D\u5F53\u524D\u65E7 TID \u7684\u6709\u6548\u5E16\u5B50\u6807\u9898\uFF0C\u539F\u8BB0\u5F55\u672A\u4FEE\u6539\u3002";
+        }
+        GM_setValue(AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY, {
+          migration: state,
+          recovered,
+          aliases: GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []),
+          recoveredAt: Date.now()
+        });
+        GM_setValue(AGAGHHH_HISTORY_RECOVERED_KEY, { resolved: { ...recovered?.resolved, ...plan.recovered } });
+        GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, plan.state);
+        saveHistoryAliases(plan.aliases);
+        if (isBatchOpenPage() && isBatchOpenHistoryEnabled()) {
+          applyBatchOpenHistory(document);
+          const button = document.getElementById(BATCH_BUTTON_ID);
+          if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+          refreshBatchProgressLocatorButton();
+        }
+        return `\u5DF2\u5339\u914D ${plan.matched} \u6761\u65E7 TID\uFF0C\u672C\u6B21\u8865\u5145 ${plan.changed} \u6761\u5BF9\u5E94\u4FE1\u606F\u3002
+\u5FFD\u7565\u4E0D\u5339\u914D\u8BB0\u5F55\uFF1A${plan.ignored} \u6761\u3002
+\u539F\u59CB\u65E7 TID \u5DF2\u4FDD\u7559\uFF0C\u5BFC\u5165\u524D\u7684\u6620\u5C04\u548C\u7D22\u5F15\u5DF2\u53E6\u884C\u5907\u4EFD\u3002`;
+      });
     });
   }
   function currentHost() {
@@ -1761,10 +2453,12 @@ ${domains.join("\n")}
   function batchOpenHistoryConfig() {
     const host = currentHost();
     if (isAgaghhhHost(host)) {
+      const modern = host !== LEGACY_AGAGHHH_DOMAIN && !/^\/(?:forum|search)\.php$/i.test(location.pathname);
       return {
         enabledKey: AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY,
         limitKey: AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
-        historyKey: AGAGHHH_BATCH_OPEN_HISTORY_KEY,
+        historyKey: modern ? MODERN_RESOURCE_HISTORY_KEY : AGAGHHH_BATCH_OPEN_HISTORY_KEY,
+        modern,
         colorKey: AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
         unopenedOnlyKey: AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY,
         progressLocatorEnabledKey: AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY,
@@ -1819,6 +2513,8 @@ ${domains.join("\n")}
     try {
       const url = new URL(value, location.href);
       if (config.kind === "agaghhh") {
+        const resourceId = url.pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
+        if (resourceId) return `resource:${resourceId}`;
         const queryTid = url.searchParams.get("mod") === "viewthread" ? url.searchParams.get("tid") : "";
         if (queryTid && /^\d+$/.test(queryTid)) return `tid:${queryTid}`;
         const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
@@ -1831,12 +2527,155 @@ ${domains.join("\n")}
       return "";
     }
   }
+  function batchThreadHistoryKeys(thread) {
+    if (!thread) return [];
+    const id = batchOpenHistoryId(thread.url);
+    const title = thread.link?.getAttribute("title") || thread.link?.textContent || "";
+    return [...new Set([id, ...historyAliasesForTitle(title)].filter(Boolean))];
+  }
+  function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory())) {
+    return batchThreadHistoryKeys(thread).some((key) => history.has(key));
+  }
   function readBatchOpenHistory() {
     const config = batchOpenHistoryConfig();
     if (!config || typeof GM_getValue !== "function") return [];
-    const stored = GM_getValue(config.historyKey, []);
-    const values = Array.isArray(stored) ? stored : [];
-    return [...new Set(values.filter((value) => typeof value === "string" && (/^(?:tid|post):\d+$/.test(value) || /^url:\//.test(value))))];
+    const rawStored = GM_getValue(config.historyKey, []);
+    const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : rawStored;
+    const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
+    const aliases = config.kind === "agaghhh" ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
+    const resolvedAliases = config.kind === "agaghhh" ? [
+      ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {})),
+      ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}))
+    ] : [];
+    const values = [
+      ...Array.isArray(stored) ? stored : [],
+      ...Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : [],
+      ...Array.isArray(aliases) ? aliases : [],
+      ...resolvedAliases
+    ];
+    return [...new Set(values.filter((value) => typeof value === "string" && (!/^(?:code|title|number):/i.test(value) || isUsableHistoryAlias(value)) && (config.modern ? /^resource:[a-z0-9]+$/i.test(value) || /^(?:code|title|number):/i.test(value) : /^(?:tid|post):\d+$/.test(value) || /^resource:[a-z0-9]+$/i.test(value) || /^url:\//.test(value) || /^(?:code|title|number):/i.test(value))))];
+  }
+  function saveHistoryAliases(aliases) {
+    if (typeof GM_getValue !== "function" || typeof GM_setValue !== "function") return 0;
+    const existing = GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []);
+    const merged = [...new Set([
+      ...Array.isArray(existing) ? existing : [],
+      ...Array.isArray(aliases) ? aliases : []
+    ].filter(isUsableHistoryAlias))].slice(-2e4);
+    GM_setValue(AGAGHHH_HISTORY_ALIASES_KEY, merged);
+    return merged.length;
+  }
+  async function requestLegacyHistoryAliases(tid) {
+    const urls = [...new Set([
+      legacyThreadUrl(tid, `https://${getAgaghhhPrimaryDomain()}`),
+      legacyThreadUrl(tid)
+    ].filter(Boolean))];
+    for (const url of urls) {
+      const result = await new Promise((resolve) => {
+        if (typeof GM_xmlhttpRequest !== "function") {
+          resolve([]);
+          return;
+        }
+        GM_xmlhttpRequest({
+          method: "GET",
+          url,
+          timeout: 15e3,
+          onload: (response) => {
+            const aliases = response.status >= 200 && response.status < 400 ? extractLegacyHistoryAliases(
+              response.responseText || "",
+              document.defaultView?.DOMParser || globalThis.DOMParser
+            ) : [];
+            const finalUrl = response.finalUrl || response.responseURL || "";
+            try {
+              const resourceId = new URL(finalUrl, url).pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
+              if (resourceId && response.status >= 200 && response.status < 400 && isAgaghhhHost(new URL(finalUrl, url).hostname)) aliases.unshift(`resource:${resourceId}`);
+            } catch {
+            }
+            resolve([...new Set(aliases)]);
+          },
+          onerror: () => resolve([]),
+          ontimeout: () => resolve([])
+        });
+      });
+      if (result.length) return result;
+    }
+    return [];
+  }
+  async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMIT, force = false } = {}) {
+    if (legacyHistoryMigrationInProgress) {
+      return { checked: 0, matched: 0, unresolved: 0, busy: true };
+    }
+    if (typeof GM_getValue !== "function" || typeof GM_setValue !== "function" || typeof GM_xmlhttpRequest !== "function") {
+      return { checked: 0, matched: 0, unresolved: 0, unsupported: true };
+    }
+    const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+    const legacyKeys = compatibleHistoryKeys(legacy);
+    saveHistoryAliases(legacyKeys.filter(isUsableHistoryAlias));
+    const tids = [...new Set(legacyKeys.map(legacyTidFromHistoryValue).filter(Boolean))];
+    const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+    const attemptedAt = state?.resolverVersion === 2 && state?.attemptedAt && typeof state.attemptedAt === "object" ? { ...state.attemptedAt } : {};
+    const resolved = state?.resolved && typeof state.resolved === "object" ? { ...state.resolved } : {};
+    const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+    if (recovered?.resolved && typeof recovered.resolved === "object") {
+      for (const [tid, values] of Object.entries(recovered.resolved)) {
+        if (!Array.isArray(values)) continue;
+        resolved[tid] = [.../* @__PURE__ */ new Set([...Array.isArray(resolved[tid]) ? resolved[tid] : [], ...values.filter(isUsableHistoryAlias)])];
+      }
+    }
+    for (const [tid, aliases] of Object.entries(resolved)) {
+      const valid = Array.isArray(aliases) ? aliases.filter(isUsableHistoryAlias) : [];
+      if (valid.length) resolved[tid] = valid;
+      else delete resolved[tid];
+    }
+    const now = Date.now();
+    saveHistoryAliases(resolvedLegacyHistoryAliases(state));
+    const pending = tids.slice().reverse().filter((tid) => !Array.isArray(resolved[tid]) && (force || !attemptedAt[tid] || now - Number(attemptedAt[tid]) > 7 * 24 * 60 * 60 * 1e3)).slice(0, Math.max(0, Number(limit) || 0));
+    if (!pending.length) {
+      return {
+        checked: 0,
+        matched: 0,
+        unresolved: tids.filter((tid) => !Array.isArray(resolved[tid])).length
+      };
+    }
+    legacyHistoryMigrationInProgress = true;
+    let matched = 0;
+    try {
+      for (let offset = 0; offset < pending.length; offset += 4) {
+        const batch = pending.slice(offset, offset + 4);
+        const results = await Promise.all(batch.map(async (tid) => ({
+          tid,
+          aliases: await requestLegacyHistoryAliases(tid)
+        })));
+        const latestState = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+        if (latestState?.resolved && typeof latestState.resolved === "object") {
+          for (const [tid, values] of Object.entries(latestState.resolved)) {
+            if (!Array.isArray(values)) continue;
+            const valid = values.filter(isUsableHistoryAlias);
+            if (valid.length) resolved[tid] = [.../* @__PURE__ */ new Set([...resolved[tid] || [], ...valid])];
+          }
+        }
+        if (latestState?.attemptedAt && typeof latestState.attemptedAt === "object") Object.assign(attemptedAt, latestState.attemptedAt);
+        for (const result of results) {
+          attemptedAt[result.tid] = Date.now();
+          if (result.aliases.length) {
+            resolved[result.tid] = [.../* @__PURE__ */ new Set([...resolved[result.tid] || [], ...result.aliases])];
+            saveHistoryAliases(result.aliases);
+            matched += 1;
+          }
+        }
+        GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { ...latestState, resolverVersion: 2, attemptedAt, resolved });
+        if (offset + 4 < pending.length) {
+          await new Promise((resolve) => window.setTimeout(resolve, 180));
+        }
+      }
+      return {
+        checked: pending.length,
+        matched,
+        unresolved: tids.filter((tid) => !Array.isArray(resolved[tid])).length
+      };
+    } finally {
+      legacyHistoryMigrationInProgress = false;
+    }
   }
   function batchProgressScopeKey(value = location.href) {
     const config = batchOpenHistoryConfig();
@@ -1844,6 +2683,12 @@ ${domains.join("\n")}
     try {
       const url = new URL(value, location.href);
       url.hash = "";
+      if (config.kind === "agaghhh" && /^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) {
+        url.searchParams.delete("page");
+        url.searchParams.delete("view");
+        url.searchParams.sort();
+        return `https://${LEGACY_AGAGHHH_DOMAIN}${url.pathname}${url.search}`;
+      }
       if (config.kind === "agaghhh") {
         const fid = url.searchParams.get("fid") || url.pathname.match(/forum[-_](\d+)(?:[-_]\d+)?(?:\.html)?/i)?.[1] || "";
         const legacyOrigin = `https://${LEGACY_AGAGHHH_DOMAIN}`;
@@ -1866,30 +2711,20 @@ ${domains.join("\n")}
     const stored = GM_getValue(config.progressMapKey, {});
     return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
   }
+  function startAutomaticLegacyHistoryMigration() {
+    if (legacyHistoryMigrationStartedThisPage || !isAgaghhhHost(location) || currentHost() === LEGACY_AGAGHHH_DOMAIN || !/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname) || !isBatchOpenHistoryEnabled()) return;
+    legacyHistoryMigrationStartedThisPage = true;
+    void migrateLegacyHistory({ limit: LEGACY_HISTORY_AUTO_MIGRATION_LIMIT }).then((result) => {
+      if (result.matched > 0 && isBatchOpenPage()) {
+        applyBatchOpenHistory(document);
+        const button = document.getElementById(BATCH_BUTTON_ID);
+        if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+        refreshBatchProgressLocatorButton();
+      }
+    }).catch((error) => console.warn("[x1080x-ex] legacy history migration failed", error));
+  }
   function nextBatchListPageUrl2(document2) {
-    if (!document2) return "";
-    const selectors = [
-      "a.nxt[href]",
-      ".pg a.nxt[href]",
-      'a[rel="next"][href]',
-      ".archive-pagination .pagination-next a[href]",
-      ".archive-pagination a.next[href]",
-      ".pagination a.next[href]"
-    ];
-    let link = null;
-    for (const selector of selectors) {
-      link = document2.querySelector(selector);
-      if (link) break;
-    }
-    if (!link) {
-      link = [...document2.querySelectorAll("a[href]")].find((anchor) => /^(?:下一页|next|older posts?|older)$/i.test(normalizedLabel(anchor.textContent)));
-    }
-    if (!link) return "";
-    try {
-      return new URL(link.getAttribute("href"), document2.baseURI).href;
-    } catch {
-      return "";
-    }
+    return nextBatchListPageUrl(document2, document2?.baseURI);
   }
   function rememberBatchProgressTarget(url) {
     const config = batchOpenHistoryConfig();
@@ -1910,19 +2745,26 @@ ${domains.join("\n")}
     const threads = collectForumThreadLinks(document2);
     if (!isBatchOpenUnopenedOnlyEnabled()) return threads;
     const history = new Set(readBatchOpenHistory());
-    return threads.filter((thread) => {
-      const id = batchOpenHistoryId(thread.url);
-      return !id || !history.has(id);
-    });
+    return threads.filter((thread) => !isBatchThreadVisited(thread, history));
   }
-  function rememberBatchOpenedThread(url) {
+  function rememberBatchOpenedThread(url, titleText = "") {
     const config = batchOpenHistoryConfig();
     if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== "function") return false;
     const id = batchOpenHistoryId(url);
     if (!id) return false;
-    const history = readBatchOpenHistory().filter((item) => item !== id);
+    const rawStored = GM_getValue(config.historyKey, []);
+    const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : rawStored;
+    const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
     history.push(id);
     GM_setValue(config.historyKey, history.slice(-batchOpenHistoryLimit()));
+    let title = titleText;
+    try {
+      if (!title && new URL(url, location.href).href === location.href) {
+        title = getThreadHeadingText(document);
+      }
+    } catch {
+    }
+    if (config.kind === "agaghhh") saveHistoryAliases(historyAliasesForTitle(title));
     return true;
   }
   function applyBatchOpenHistory(document2) {
@@ -1934,14 +2776,16 @@ ${domains.join("\n")}
       style.id = BATCH_OPEN_HISTORY_STYLE_ID;
       (document2.head || document2.documentElement).append(style);
     }
-    style.textContent = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }`;
+    const css = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }
+.thread-list .resource-title:visited, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"],
+.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
+    if (style.textContent !== css) style.textContent = css;
     document2.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`).forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
     if (!isBatchOpenHistoryEnabled()) return 0;
     const history = new Set(readBatchOpenHistory());
     let marked = 0;
     collectForumThreadLinks(document2).forEach((thread) => {
-      const id = batchOpenHistoryId(thread.url);
-      if (!id || !history.has(id)) return;
+      if (!isBatchThreadVisited(thread, history)) return;
       thread.link.setAttribute(BATCH_OPEN_HISTORY_ATTR, "1");
       marked += 1;
     });
@@ -1949,11 +2793,11 @@ ${domains.join("\n")}
   }
   function isThreadPage() {
     const url = new URL(location.href);
-    return url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid") || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
+    return /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname) || url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid") || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
   }
   function isForumDisplayPage() {
     const url = new URL(location.href);
-    return url.searchParams.get("mod") === "forumdisplay" || /forum[-_]\d+/i.test(url.pathname);
+    return url.searchParams.get("mod") === "forumdisplay" || /forum[-_]\d+/i.test(url.pathname) || /^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname);
   }
   function isBatchOpenPage() {
     return isForumDisplayPage() || Boolean(document.querySelector("main#genesis-content article.entry .entry-title a[href]"));
@@ -2131,8 +2975,9 @@ ${domains.join("\n")}
   }
   function setBatchButtonIdle(button, count) {
     const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
-    button.textContent = unopenedOnly ? `\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672A\u6253\u5F00\u4E3B\u9898\uFF08${count}\uFF09` : `\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\uFF08${count}\uFF09`;
-    button.title = unopenedOnly ? "\u6309\u9875\u9762\u987A\u5E8F\u4EC5\u540E\u53F0\u6253\u5F00\u672A\u8BB0\u5F55\u4E3A\u5DF2\u6253\u5F00\u7684\u4E3B\u9898\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62" : "\u6309\u9875\u9762\u987A\u5E8F\u5728\u540E\u53F0\u9010\u4E2A\u6253\u5F00\u666E\u901A\u4E3B\u9898\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62";
+    const label = unopenedOnly ? `\u6279\u91CF\u6253\u5F00\u672A\u6D4F\u89C8\uFF08${count}\uFF09` : `\u6279\u91CF\u6253\u5F00\u672C\u9875\uFF08${count}\uFF09`;
+    if (button.textContent !== label) button.textContent = label;
+    button.title = unopenedOnly ? "\u6309\u5217\u8868\u987A\u5E8F\u5728\u540E\u53F0\u9010\u4E2A\u6253\u5F00\u672C\u9875\u672A\u6D4F\u89C8\u4E3B\u9898\uFF08\u4EE5\u811A\u672C\u6D4F\u89C8\u8BB0\u5F55\u4E3A\u51C6\uFF09\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62" : "\u6309\u5217\u8868\u987A\u5E8F\u5728\u540E\u53F0\u9010\u4E2A\u6253\u5F00\u672C\u9875\u4E3B\u9898\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62";
     button.style.background = "#398bd4";
   }
   async function openCurrentPageThreads(button) {
@@ -2171,7 +3016,7 @@ ${domains.join("\n")}
             insert: false,
             setParent: true
           });
-          if (rememberBatchOpenedThread(thread.url)) applyBatchOpenHistory(document);
+          if (rememberBatchOpenedThread(thread.url, thread.link?.textContent || "")) applyBatchOpenHistory(document);
           opened += 1;
         } catch (error) {
           failures.push(`${index + 1}. ${redactDiagnostic(error?.message || error || "\u6253\u5F00\u5931\u8D25")}`);
@@ -2213,7 +3058,7 @@ ${failures.join("\n")}`);
     return headers;
   }
   function redactDiagnostic(value) {
-    return String(value ?? "").replace(/((?:cookie|authorization|token|auth|sid)=)[^;\s&]+/gi, "$1[\u5DF2\u8131\u654F]").replace(/([?&](?:token|auth|sid|key)=)[^&#\s]+/gi, "$1[\u5DF2\u8131\u654F]");
+    return String(value ?? "").replace(/(\/api\/downloads\/file\/)[a-z0-9-]+/gi, "$1[\u5DF2\u8131\u654F]").replace(/((?:cookie|authorization|token|auth|sid)=)[^;\s&]+/gi, "$1[\u5DF2\u8131\u654F]").replace(/([?&](?:token|auth|sid|key)=)[^&#\s]+/gi, "$1[\u5DF2\u8131\u654F]");
   }
   function safeErrorDetails(error) {
     if (!error || typeof error !== "object") {
@@ -2342,7 +3187,9 @@ ${failures.join("\n")}`);
         url: job.url,
         responseType: "blob",
         timeout: REQUEST_TIMEOUT2,
-        ...referer ? { headers: { Referer: referer } } : {},
+        // Omitting the header lets the manager supply its default page Referer.
+        // An explicit empty value is needed for images marked no-referrer.
+        headers: { Referer: referer },
         onload: (response) => {
           validateResponse(response).then(resolve, reject);
         },
@@ -2356,9 +3203,55 @@ ${failures.join("\n")}`);
       });
     });
   }
+  function imageRefererPolicyForJob(job) {
+    if (job.kind !== "image") return null;
+    let target;
+    try {
+      target = new URL(job.url, location.href);
+    } catch {
+      return null;
+    }
+    const image = [...document.querySelectorAll("img")].find((candidate) => {
+      const values = [
+        candidate.currentSrc,
+        candidate.getAttribute("src"),
+        candidate.getAttribute("data-src"),
+        candidate.getAttribute("data-original")
+      ];
+      return values.some((value) => {
+        if (!value) return false;
+        try {
+          return new URL(value, location.href).href === target.href;
+        } catch {
+          return false;
+        }
+      });
+    });
+    if (!image) return null;
+    const policy = String(
+      image.getAttribute("referrerpolicy") || document.referrerPolicy || "strict-origin-when-cross-origin"
+    ).trim().toLowerCase();
+    const crossOrigin = target.origin !== location.origin;
+    const origin = `${location.origin}/`;
+    const downgrade = location.protocol === "https:" && target.protocol === "http:";
+    if (policy === "no-referrer" || policy === "same-origin" && crossOrigin || downgrade && ["strict-origin", "strict-origin-when-cross-origin", "no-referrer-when-downgrade"].includes(policy)) {
+      return { matched: true, referers: [""] };
+    }
+    if (policy === "origin" || policy === "strict-origin") {
+      return { matched: true, referers: [origin, ""] };
+    }
+    if (policy === "strict-origin-when-cross-origin") {
+      return { matched: true, referers: crossOrigin ? [origin, ""] : [location.href, ""] };
+    }
+    if (policy === "unsafe-url" || policy === "no-referrer-when-downgrade") {
+      return { matched: true, referers: [location.href, ""] };
+    }
+    return { matched: true, referers: crossOrigin ? [origin, ""] : [location.href, ""] };
+  }
   async function requestBlobWithGmXhr(job) {
     const sourceReferer = previewRefererForJob(job);
-    const referers = sourceReferer ? [sourceReferer, "", location.href] : [location.href, ""];
+    const imageReferer = imageRefererPolicyForJob({ ...job, url: job.sourceUrl || job.url });
+    const referers = sourceReferer ? [sourceReferer, "", location.href] : imageReferer ? imageReferer.referers : [location.href, ""];
     let lastError = null;
     for (const referer of [...new Set(referers)]) {
       try {
@@ -2377,6 +3270,32 @@ ${failures.join("\n")}`);
     }
     return requestBlobWithGmXhr(job);
   }
+  async function requestImageBlobWithFallbacks(job) {
+    const candidates = [];
+    for (const value of [job.url, ...Array.isArray(job.fallbackUrls) ? job.fallbackUrls : []]) {
+      if (!value) continue;
+      for (const candidate of [value, ...alternateImageUrls(value)]) {
+        if (!candidates.includes(candidate)) candidates.push(candidate);
+      }
+    }
+    let lastError = null;
+    let allNotFound = candidates.length > 0;
+    for (const url of candidates) {
+      try {
+        return await requestBlob({ ...job, sourceUrl: job.url, url });
+      } catch (error) {
+        lastError = error;
+        if (!/HTTP (?:404|410)\b/i.test(String(error?.message || error))) allNotFound = false;
+        console.warn("[x1080x-ex] image source failed; trying fallback", {
+          name: job.name,
+          url: redactDiagnostic(url),
+          error: redactDiagnostic(error?.message || error)
+        });
+      }
+    }
+    if (allNotFound) return null;
+    throw lastError || new Error("\u6CA1\u6709\u53EF\u7528\u7684\u56FE\u7247\u5730\u5740");
+  }
   function isLikelyUnavailablePixhostPreview(job, blob) {
     if (!blob || typeof blob.size !== "number") return false;
     const isPixhostPreview = Boolean(
@@ -2384,24 +3303,10 @@ ${failures.join("\n")}`);
     );
     return isPixhostPreview && blob.size > 0 && blob.size <= PIXHOST_PLACEHOLDER_MAX_BYTES;
   }
-  function saveBlob(blob, name) {
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.hidden = true;
-    anchor.download = name;
-    anchor.href = objectUrl;
-    document.body.append(anchor);
-    try {
-      anchor.click();
-    } finally {
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    }
-  }
   async function download(job, { deferImageSave = false } = {}) {
     if (job.kind === "torrent") {
       const result2 = await requestTorrentBytes(job.url);
-      saveBlob(new Blob([result2.bytes], { type: "application/x-bittorrent" }), job.name);
+      const saved = await saveDownloadBlob(new Blob([result2.bytes], { type: "application/x-bittorrent" }), job.name, document, { browserDownload: true });
       console.info("[x1080x-ex] integrated torrent download", {
         name: job.name,
         hash: result2.hash,
@@ -2409,7 +3314,7 @@ ${failures.join("\n")}`);
         source: new URL(result2.sourceUrl).hostname,
         size: result2.bytes.byteLength
       });
-      return { skipped: false };
+      return { skipped: false, ...saved };
     }
     let downloadJob = job;
     if (job.kind === "image" && job.pixhostShowUrl) {
@@ -2434,7 +3339,14 @@ ${failures.join("\n")}`);
       });
       return { skipped: true, reason: "Pixhost \u7F29\u7565\u56FE\u672A\u627E\u5230\u53EF\u9A8C\u8BC1\u7684\u5927\u56FE\u5730\u5740" };
     }
-    const result = await requestBlob(downloadJob);
+    const result = job.kind === "image" ? await requestImageBlobWithFallbacks(downloadJob) : await requestBlob(downloadJob);
+    if (!result && job.kind === "image") {
+      console.info("[x1080x-ex] skipped image after all source paths returned 404/410", {
+        name: job.name,
+        url: redactDiagnostic(downloadJob.url)
+      });
+      return { skipped: true, reason: "\u56FE\u7247\u6E90\u5DF2\u5931\u6548\uFF08HTTP 404/410\uFF09" };
+    }
     console.info("[x1080x-ex] response", {
       kind: job.kind,
       name: job.name,
@@ -2454,15 +3366,42 @@ ${failures.join("\n")}`);
     if (job.kind === "image" && deferImageSave) {
       return { skipped: false, blob: result.blob, name: job.name };
     }
-    saveBlob(result.blob, job.name);
-    return { skipped: false };
+    return { skipped: false, ...await saveDownloadBlob(result.blob, job.name) };
   }
-  async function downloadAll(button) {
-    const jobs = buildDownloadJobs(document);
-    if (!jobs.length) {
-      window.alert("\u4E3B\u697C\u4E2D\u6CA1\u6709\u627E\u5230\u9644\u4EF6\u6216\u53EF\u4E0B\u8F7D\u56FE\u7247\u3002");
+  var activeDownloadState = null;
+  function setDownloadStatus(button, text, label = text) {
+    if (activeDownloadState?.button === button) {
+      Object.assign(activeDownloadState, { text, label });
+      if (activeDownloadState.pathname !== location.pathname) return;
+      button = document.getElementById(BUTTON_ID) || button;
+    }
+    button.title = text;
+    button.setAttribute("aria-label", text);
+    if (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) {
+      if (button.textContent !== text) button.textContent = text;
       return;
     }
+    const count = text.match(/(?:处理中|已处理) (\d+\/\d+)/)?.[1] || "";
+    renderModernDownloadButton(button, label.startsWith("\u4E0B\u8F7D\u4E2D") ? "progress" : label.startsWith("\u26A0") ? "error" : "done", count);
+    button.setAttribute("aria-label", `${label}\uFF1A${text}`);
+    const status = ensureModernDownloadStatus(document);
+    if (status) {
+      if (status.textContent !== text) status.textContent = text;
+      status.title = text;
+    }
+  }
+  var downloadResetTimers = /* @__PURE__ */ new WeakMap();
+  async function downloadAll(button) {
+    if (button.disabled || activeDownloadState) return;
+    const jobs = buildDownloadJobs(document);
+    const nativeFiles = collectModernNativeAttachments(document);
+    const totalTasks = jobs.length + nativeFiles.length;
+    if (!totalTasks) {
+      window.alert("\u4E3B\u697C\u4E2D\u6CA1\u6709\u627E\u5230\u9644\u4EF6\u3001\u78C1\u529B\u94FE\u6216\u53EF\u4E0B\u8F7D\u56FE\u7247\u3002");
+      return;
+    }
+    window.clearTimeout(downloadResetTimers.get(button));
+    activeDownloadState = { button, pathname: location.pathname, text: "", label: "" };
     const endDownloadGuard = beginDownloadGuard(document, {
       enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY)
     });
@@ -2470,35 +3409,80 @@ ${failures.join("\n")}`);
     const failures = [];
     const pendingImages = [];
     let skipped = 0;
+    let processed = 0;
+    let saved = 0;
+    let started = 0;
+    const recordSave = (result) => {
+      if (result?.confirmed) saved += 1;
+      else started += 1;
+    };
+    const progress = () => setDownloadStatus(button, `\u5904\u7406\u4E2D ${processed}/${totalTasks} \xB7 \u5DF2\u4FDD\u5B58 ${saved}${started ? ` \xB7 \u5DF2\u53D1\u8D77 ${started}` : ""}`, `\u4E0B\u8F7D\u4E2D ${processed}/${totalTasks}`);
     try {
+      const nativeResult = { total: 0 };
+      progress();
+      for (const file of nativeFiles) {
+        try {
+          const attachment = await prepareModernAttachmentDownload(document, file);
+          if (attachment.delegated) nativeResult.total += 1;
+          else {
+            const result = await requestBlobWithPageFetch(attachment);
+            if (/(?:application\/json|text\/html)/i.test(result.contentType)) throw new Error("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u9519\u8BEF\u4FE1\u606F\uFF0C\u672A\u4FDD\u5B58\u4E3A\u9644\u4EF6");
+            if (/\.zip$/i.test(attachment.name) && !/^PK(?:\x03\x04|\x05\x06|\x07\x08)/.test(await blobPrefix(result.blob))) throw new Error("\u7F51\u7AD9\u54CD\u5E94\u4E0D\u662F\u6709\u6548 ZIP\uFF0C\u672A\u4FDD\u5B58\u9519\u8BEF\u9875");
+            recordSave(await saveDownloadBlob(result.blob, attachment.name, document, { browserDownload: true }));
+            attachment.complete();
+          }
+        } catch (error) {
+          failures.push(`${file.name}\uFF1A${redactDiagnostic(error?.message || "\u7AD9\u5185\u9644\u4EF6\u4E0B\u8F7D\u5931\u8D25")}`);
+        }
+        processed += 1;
+        progress();
+      }
       console.info("[x1080x-ex] environment", {
         downloadMode: typeof GM_info === "object" ? GM_info.downloadMode : void 0,
         scriptHandler: typeof GM_info === "object" ? GM_info.scriptHandler : void 0,
         version: typeof GM_info === "object" ? GM_info.version : void 0
       });
-      for (const [index, job] of jobs.entries()) {
-        button.textContent = `\u4E0B\u8F7D\u4E2D ${index + 1}/${jobs.length}`;
+      for (const job of jobs) {
         try {
           const result = await download(job, { deferImageSave: job.kind === "image" });
           if (result?.skipped) {
             skipped += 1;
-            button.textContent = `\u5DF2\u8DF3\u8FC7\u5931\u6548\u56FE ${skipped}`;
           } else if (job.kind === "image" && result?.blob) {
             pendingImages.push(result);
+            continue;
+          } else {
+            recordSave(result);
           }
         } catch (error) {
           failures.push(`${job.name}\uFF1A${redactDiagnostic(error?.message || error?.error || "\u672A\u77E5\u9519\u8BEF")}`);
         }
+        processed += 1;
+        progress();
       }
-      pendingImages.forEach(({ blob, name }) => {
+      for (const { blob, name } of pendingImages) {
         const finalName = pendingImages.length === 1 ? name.replace(/ A(?=\.[^.]+$)/i, "") : name;
-        saveBlob(blob, finalName);
-      });
-      button.disabled = false;
-      button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}${skipped ? `\uFF0C\u8DF3\u8FC7 ${skipped}` : ""}\uFF09` : skipped ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
-      window.setTimeout(() => {
-        button.textContent = "\u2B07";
-      }, 2500);
+        try {
+          recordSave(await saveDownloadBlob(blob, finalName));
+        } catch (error) {
+          failures.push(`${finalName}\uFF1A${redactDiagnostic(error?.message || "\u4FDD\u5B58\u5931\u8D25")}`);
+        }
+        processed += 1;
+        progress();
+      }
+      const summary = [`\u5DF2\u5904\u7406 ${processed}/${totalTasks}`, `\u5DF2\u4FDD\u5B58 ${saved}`];
+      if (started) summary.push(`\u5DF2\u53D1\u8D77 ${started}\uFF08\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\uFF09`);
+      if (skipped) summary.push(`\u8DF3\u8FC7 ${skipped}`);
+      if (failures.length) summary.push(`\u5931\u8D25 ${failures.length}`);
+      if (nativeResult.total) summary.push(`\u7AD9\u5185\u9644\u4EF6\u5DF2\u8BF7\u6C42 ${nativeResult.total}\uFF08\u7ED3\u679C\u8BF7\u67E5\u770B\u7F51\u7AD9\u63D0\u793A\uFF09`);
+      const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
+      const completedLabel = failures.length ? `\u26A0 \u5931\u8D25 ${failures.length}` : started || nativeResult.total || skipped ? `\u2713 \u5DF2\u5904\u7406 ${processed}/${totalTasks}` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
+      setDownloadStatus(button, !modern && skipped && !failures.length ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : summary.join(" \xB7 "), completedLabel);
+      const visibleButton = activeDownloadState.pathname === location.pathname ? document.getElementById(BUTTON_ID) || button : button;
+      downloadResetTimers.set(visibleButton, window.setTimeout(() => {
+        if (modern) renderModernDownloadButton(visibleButton);
+        else visibleButton.textContent = "\u2B07";
+        visibleButton.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
+      }, 2500));
       if (failures.length) {
         window.alert(`\u4EE5\u4E0B\u6587\u4EF6\u4E0B\u8F7D\u5931\u8D25\uFF1A
 
@@ -2507,24 +3491,51 @@ ${failures.join("\n")}
 \u53EF\u68C0\u67E5\u767B\u5F55\u72B6\u6001\u6216\u6D4F\u89C8\u5668\u4E0B\u8F7D\u6743\u9650\u540E\u91CD\u8BD5\u3002`);
       }
     } finally {
+      button.disabled = false;
+      if (activeDownloadState.pathname === location.pathname) {
+        const visibleButton = document.getElementById(BUTTON_ID);
+        if (visibleButton) visibleButton.disabled = false;
+      }
+      activeDownloadState = null;
       endDownloadGuard();
     }
   }
   function addDownloadButton() {
-    if (document.getElementById(BUTTON_ID)) return;
-    const title = document.querySelector("#thread_subject");
-    const host = title?.closest(".vwthd, .ts") || title?.parentElement;
+    if (isAgaghhhHost(location) && typeof GM_getValue === "function" && GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) === false) return;
+    const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
+    const title = document.querySelector(modern ? ".thread-header h1" : "#thread_subject");
+    const actionGroup = modern ? ensureModernResourceActionGroup(document) : null;
+    if (modern) ensureModernDownloadStatus(document);
+    const host = modern ? actionGroup || title?.closest(".thread-header") : title?.closest(".vwthd, .ts") || title?.parentElement;
     if (!title || !host) return;
-    const button = document.createElement("button");
+    let button = document.getElementById(BUTTON_ID);
+    if (button) {
+      if (activeDownloadState?.pathname === location.pathname) {
+        button.disabled = true;
+        setDownloadStatus(activeDownloadState.button, activeDownloadState.text, activeDownloadState.label);
+      }
+      if (modern) {
+        if (placeModernResourceActionButton(document, button)) return;
+        if (title.nextElementSibling !== button) title.after(button);
+      }
+      return;
+    }
+    button = document.createElement("button");
     button.id = BUTTON_ID;
     button.type = "button";
     button.textContent = "\u2B07";
-    button.title = "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\u3001\u6B63\u6587\u5927\u56FE\u548C\u78C1\u529B\u94FE\u79CD\u5B50\uFF1B\u666E\u901A\u5E16\u5B50\u53D6\u6700\u5927\u56FE\uFF0CFC2 \u5E16\u5B50\u53D6\u5168\u90E8\u5927\u56FE";
+    if (modern) renderModernDownloadButton(button);
+    button.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
+    button.title = modern ? "\u4E0B\u8F7D\u4E3B\u697C\u56FE\u7247\u3001\u9884\u89C8\u548C\u79CD\u5B50\uFF1B\u514D\u8D39/\u989D\u5EA6\u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D\uFF0C\u4ED8\u8D39\u9644\u4EF6\u7531\u7F51\u7AD9\u786E\u8BA4" : "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\u3001\u6B63\u6587\u5927\u56FE\u548C\u78C1\u529B\u94FE\u79CD\u5B50\uFF1B\u666E\u901A\u5E16\u5B50\u53D6\u6700\u5927\u56FE\uFF0CFC2 \u5E16\u5B50\u53D6\u5168\u90E8\u5927\u56FE";
     Object.assign(button.style, {
-      float: "right",
+      float: modern ? "none" : "right",
+      display: modern ? "inline-flex" : "",
+      alignItems: modern ? "center" : "",
+      justifyContent: modern ? "center" : "",
+      width: modern ? "max-content" : "",
       position: "relative",
       zIndex: "20",
-      margin: "0 8px 6px 6px",
+      margin: modern ? "0" : "0 8px 6px 6px",
       padding: "7px 13px",
       border: "1px solid #2878c8",
       borderRadius: "5px",
@@ -2532,16 +3543,19 @@ ${failures.join("\n")}
       background: "#398bd4",
       cursor: "pointer",
       fontSize: "14px",
-      lineHeight: "20px"
+      lineHeight: "20px",
+      ...modern ? { height: "36px", padding: "0", flexDirection: "column", gap: "0", borderRadius: "7px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } : {}
     });
     button.addEventListener("mouseenter", () => {
-      button.style.background = "#246eaf";
+      if (!modern || button.dataset.downloadState === "idle") button.style.background = "#246eaf";
     });
     button.addEventListener("mouseleave", () => {
-      button.style.background = "#398bd4";
+      if (!modern || button.dataset.downloadState === "idle") button.style.background = "#398bd4";
     });
     button.addEventListener("click", () => void downloadAll(button));
-    host.prepend(button);
+    if (modern && placeModernResourceActionButton(document, button)) return;
+    if (modern) title.after(button);
+    else host.prepend(button);
   }
   function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
     if (!button || batchProgressScanState) return;
@@ -2607,6 +3621,7 @@ ${failures.join("\n")}
         loadPage: requestBatchListPageHtml,
         collectThreads: collectForumThreadLinks,
         getId: batchOpenHistoryId,
+        getIds: batchThreadHistoryKeys,
         getScope: batchProgressScopeKey,
         maxPages: 120,
         onProgress: ({ checked, opened, unopened }) => {
@@ -2620,10 +3635,8 @@ ${failures.join("\n")}
         rememberBatchProgressTarget(result.url);
         if (result.url !== location.href) window.location.assign(result.url);
         else {
-          const firstUnopened = collectForumThreadLinks(document).find((thread) => {
-            const id = batchOpenHistoryId(thread.url);
-            return !id || !new Set(historyIds).has(id);
-          });
+          const history = new Set(historyIds);
+          const firstUnopened = collectForumThreadLinks(document).find((thread) => !isBatchThreadVisited(thread, history));
           firstUnopened?.link?.scrollIntoView?.({ behavior: "smooth", block: "center" });
         }
         return;
@@ -2688,6 +3701,25 @@ ${result.pageUrl}`);
     const threads = collectForumThreadLinks(document);
     let prependButton = false;
     let host = document.querySelector("#pgt") || document.querySelector("#threadlist .th") || document.querySelector("#threadlist");
+    if (!host && isAgaghhhHost(location) && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) {
+      const pagination = document.querySelector(".thread-list .pgt");
+      if (pagination) {
+        host = document.getElementById(BATCH_TOOLBAR_ID);
+        if (!host) {
+          host = document.createElement("div");
+          host.id = BATCH_TOOLBAR_ID;
+          Object.assign(host.style, {
+            display: "flex",
+            justifyContent: "flex-end",
+            flexWrap: "wrap",
+            gap: "8px",
+            padding: "8px 0",
+            minHeight: "42px"
+          });
+          pagination.before(host);
+        }
+      }
+    }
     if (!host) {
       host = document.querySelector("main#genesis-content .archive-description");
       if (host) {
@@ -2739,6 +3771,70 @@ ${result.pageUrl}`);
     }
     addBatchProgressLocatorButton(host, prependButton);
   }
+  function observeModernBoard() {
+    if (!isAgaghhhHost(location) || currentHost() === LEGACY_AGAGHHH_DOMAIN) return;
+    if (!document.body || typeof window.MutationObserver !== "function") return;
+    let timer = null;
+    let previousUrl = location.href;
+    let previousHistoryTitle = "";
+    const rememberCurrentThread = () => {
+      if (!isThreadPage() || !isBatchOpenHistoryEnabled()) return;
+      const title = getThreadHeadingText(document);
+      const key = `${location.href}
+${title}`;
+      if (key === previousHistoryTitle) return;
+      if (rememberBatchOpenedThread(location.href, title)) previousHistoryTitle = key;
+    };
+    const detectRouteChange = () => {
+      if (location.href === previousUrl) return false;
+      previousUrl = location.href;
+      rememberCurrentThread();
+      if (isThreadPage() && (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
+      window.dispatchEvent(new window.Event("x1080x-ex:routechange"));
+      return true;
+    };
+    const refresh = () => {
+      timer = null;
+      if (isThreadPage()) {
+        rememberCurrentThread();
+        if (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
+        return;
+      }
+      if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
+      startAutomaticLegacyHistoryMigration();
+      applyBatchOpenHistory(document);
+      if (isBatchOpenEnabledForCurrentHost()) {
+        addBatchOpenButton();
+        const button = document.getElementById(BATCH_BUTTON_ID);
+        if (button && !batchOpenState) {
+          setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+        }
+      }
+    };
+    const schedule = () => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(refresh, 120);
+    };
+    const observer = new window.MutationObserver((mutations) => {
+      if (detectRouteChange()) {
+        schedule();
+        return;
+      }
+      if (isThreadPage()) {
+        rememberCurrentThread();
+        if (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
+        return;
+      }
+      if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
+      if (!mutations.some((mutation) => mutation.target?.matches?.(".thread-list, .thread-row, .thread-line, .pgt") || [...mutation.addedNodes].some((node) => node.nodeType === 1 && (node.matches?.(".thread-list, .thread-row, .resource-title, .pgt") || node.querySelector?.(".thread-list, .thread-row, .resource-title, .pgt"))))) return;
+      schedule();
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    window.addEventListener("popstate", () => {
+      detectRouteChange();
+      schedule();
+    });
+  }
   registerSettingsMenu();
   if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     const expandHdblogPreview = typeof GM_getValue !== "function" || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
@@ -2753,6 +3849,8 @@ ${result.pageUrl}`);
       applyBatchOpenHistory(document);
       if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
     }
+    startAutomaticLegacyHistoryMigration();
+    observeModernBoard();
   }
 
   // src/clipboard.js
@@ -3236,7 +4334,8 @@ ${result.pageUrl}`);
   function buildJavfreeAgaghhhSearchUrl(code) {
     const normalized = String(code || "").trim().toUpperCase();
     if (!normalized) return "";
-    return getAgaghhhOrigin() + "/search.php?mod=forum&searchsubmit=yes&srchtxt=" + encodeURIComponent(normalized) + "&orderby=lastpost&ascdesc=desc";
+    const fc2 = normalized.match(/^FC2[-_ ]*(?:PPV[-_ ]*)?(\d{5,9})$/i);
+    return `${getAgaghhhOrigin()}/search?q=${encodeURIComponent(fc2 ? fc2[1] : normalized)}`;
   }
   function openJavfreeAgaghhhSearch(document2, code) {
     const url = buildJavfreeAgaghhhSearchUrl(code);
@@ -3411,7 +4510,7 @@ ${result.pageUrl}`);
       return "jpg";
     }
   }
-  function saveBlob2(document2, blob, filename) {
+  function saveBlob(document2, blob, filename) {
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document2.createElement("a");
     anchor.hidden = true;
@@ -3433,7 +4532,7 @@ ${result.pageUrl}`);
     button.textContent = "\u4E0B\u8F7D\u4E2D\u2026";
     try {
       const blob = await requestImageBlob(previewUrl, locationObject?.href || document2.baseURI, request);
-      saveBlob2(document2, blob, code + "." + extensionFromBlob(blob, previewUrl));
+      saveBlob(document2, blob, code + "." + extensionFromBlob(blob, previewUrl));
       button.textContent = "\u2713";
     } catch (error) {
       button.textContent = "\u5931\u8D25";
@@ -4128,7 +5227,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function buildAgaghhhSearchUrl(code) {
     const keyword = hdblogAgaghhhSearchKeyword(code);
     if (!keyword) return "";
-    return `${getAgaghhhOrigin()}/search.php?mod=forum&searchsubmit=yes&srchtxt=${encodeURIComponent(keyword)}&orderby=lastpost&ascdesc=desc`;
+    return `${getAgaghhhOrigin()}/search?q=${encodeURIComponent(keyword)}`;
   }
   function openSearchTab(document2, url) {
     if (!url) return;
@@ -4388,7 +5487,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       });
     });
   }
-  function saveBlob3(document2, blob, name) {
+  function saveBlob2(document2, blob, name) {
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document2.createElement("a");
     anchor.hidden = true;
@@ -4498,7 +5597,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
               gmRequest2
             );
             const extension = extensionFromBlob2(blob, url);
-            saveBlob3(
+            saveBlob2(
               document2,
               blob,
               hdblogImageFilename(code, downloaded + phaseDownloaded, resolved.length, extension)
@@ -4538,7 +5637,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
               gmRequest2
             );
             const extension = extensionFromBlob2(blob, javfreeUrl);
-            saveBlob3(document2, blob, hdblogImageFilename(code, 0, 1, extension));
+            saveBlob2(document2, blob, hdblogImageFilename(code, 0, 1, extension));
             downloaded = 1;
             failures.length = 0;
             skipped = 0;
@@ -6411,17 +7510,16 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return { code: normalizedCode, articleUrl, imageUrls, ...selection };
   }
   function threadCode(document2) {
-    const rawTitle = document2.querySelector("#thread_subject")?.textContent || document2.querySelector("h1.ts, .vwthd h1, h1")?.textContent || document2.title;
-    return parseThreadTitle(rawTitle).code;
+    return parseThreadTitle(getThreadHeadingText(document2)).code;
   }
   function firstPostContent(document2) {
-    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
-    return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
+    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist") || document2.querySelector("#first-post");
+    return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text') || firstPost || null;
   }
   function isThreadPage2(locationObject) {
     try {
       const url = new URL(locationObject?.href || "");
-      return url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid");
+      return /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname) || url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid");
     } catch {
       return false;
     }
@@ -6530,7 +7628,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
   var DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS = 1800;
   var DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MAX_MS = 3500;
-  var AGAGHHH_DOWNLOAD_ENABLED_KEY = "x1080x-ex:agaghhh-download-enabled";
+  var AGAGHHH_DOWNLOAD_ENABLED_KEY2 = "x1080x-ex:agaghhh-download-enabled";
   var AGAGHHH_CROSS_SEARCH_ENABLED_KEY = "x1080x-ex:agaghhh-cross-search-enabled";
   var AGAGHHH_COPY_CODE_ENABLED_KEY = "x1080x-ex:agaghhh-copy-code-enabled";
   var AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:agaghhh-search-auto-redirect-enabled";
@@ -6540,6 +7638,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var AGAGHHH_REAL_ACTRESS_ENABLED_KEY = "x1080x-ex:agaghhh-real-actress-enabled";
   var AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = "x1080x-ex:agaghhh-hdblog-preview-enabled";
   var LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = "x1080x-ex:agaghhh-enhancement-enabled";
+  var MODERN_RESOURCE_HISTORY_KEY2 = "x1080x-ex:1080xin-resource-history";
   var SETTINGS_PANEL_ID = "x1080x-ex-settings-panel";
   var DOWNLOAD_BUTTON_ID2 = "x1080x-ex-download";
   var SEARCH_BUTTON_ID2 = "x1080x-ex-agaghhh-hdblog-search";
@@ -6618,7 +7717,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : DEFAULT_AGAGHHH_BATCH_OPEN_HISTORY_COLOR;
   }
   function isAgaghhhDownloadEnabled() {
-    return readBooleanSetting(AGAGHHH_DOWNLOAD_ENABLED_KEY);
+    return readBooleanSetting(AGAGHHH_DOWNLOAD_ENABLED_KEY2);
   }
   function isAgaghhhCrossSearchEnabled() {
     return readBooleanSetting(AGAGHHH_CROSS_SEARCH_ENABLED_KEY);
@@ -6762,8 +7861,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return target;
   }
   function firstPostContent2(document2) {
-    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist");
-    return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
+    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist") || document2.querySelector("#first-post");
+    return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text') || firstPost || null;
   }
   function extractThreadPerformerField(document2) {
     const content = firstPostContent2(document2);
@@ -6910,10 +8009,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     return `${cleanTitle} ${cleanActress}`;
   }
   function threadTitleElement(document2) {
-    return document2.querySelector("#thread_subject") || document2.querySelector("h1.ts, .vwthd h1, h1");
+    return document2.querySelector("#thread_subject, .thread-header h1") || document2.querySelector("h1.ts, .vwthd h1, h1");
   }
   function threadCode2(document2) {
-    return parseThreadTitle(threadTitleElement(document2)?.textContent || document2.title).code;
+    return parseThreadTitle(getThreadHeadingText(document2)).code;
   }
   function buildHdblogSearchUrlForThreadCode(code) {
     const keyword = hdblogSearchCodeForThreadCode(code);
@@ -6927,94 +8026,126 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     document2.defaultView?.open(url, "_blank", "noopener");
   }
+  function isModernResourceDetailPage(document2) {
+    const pathname = document2?.defaultView?.location?.pathname || "";
+    return /^\/resources\/[a-z0-9]+\/?$/i.test(pathname) && Boolean(document2.querySelector(".thread-header h1"));
+  }
   function installHdblogSearchButton(document2) {
-    if (document2.getElementById(SEARCH_BUTTON_ID2)) return;
     const code = threadCode2(document2);
     if (!code) return;
+    let button = document2.getElementById(SEARCH_BUTTON_ID2);
+    const created = !button;
+    if (!button) {
+      button = document2.createElement("button");
+      button.id = SEARCH_BUTTON_ID2;
+      button.type = "button";
+      button.textContent = "\u{1F50D}";
+      button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 hdblog \u641C\u7D22";
+      button.setAttribute("aria-label", "\u5728 hdblog \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+      Object.assign(button.style, {
+        float: "right",
+        position: "relative",
+        zIndex: "20",
+        margin: "0 0 6px 6px",
+        padding: "7px 10px",
+        minWidth: "38px",
+        border: "1px solid #2878c8",
+        borderRadius: "5px",
+        color: "#fff",
+        background: "#398bd4",
+        cursor: "pointer",
+        fontSize: "14px",
+        lineHeight: "20px"
+      });
+      button.addEventListener("mouseenter", () => {
+        button.style.background = "#246eaf";
+      });
+      button.addEventListener("mouseleave", () => {
+        button.style.background = "#398bd4";
+      });
+      button.addEventListener("click", () => {
+        const url = buildHdblogSearchUrlForThreadCode(threadCode2(document2));
+        if (!url) {
+          document2.defaultView?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
+          return;
+        }
+        openSearchTab2(document2, url);
+      });
+    }
+    if (isModernResourceDetailPage(document2) && placeModernResourceActionButton(document2, button)) return;
+    if (!created) return;
     const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID2);
     const title = threadTitleElement(document2);
     const host = downloadButton?.parentElement || title?.closest(".vwthd, .ts") || title?.parentElement;
     if (!host) return;
-    const button = document2.createElement("button");
-    button.id = SEARCH_BUTTON_ID2;
-    button.type = "button";
-    button.textContent = "\u{1F50D}";
-    button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 hdblog \u641C\u7D22";
-    button.setAttribute("aria-label", "\u5728 hdblog \u641C\u7D22\u5F53\u524D\u756A\u53F7");
-    Object.assign(button.style, {
-      float: "right",
-      position: "relative",
-      zIndex: "20",
-      margin: "0 0 6px 6px",
-      padding: "7px 10px",
-      minWidth: "38px",
-      border: "1px solid #2878c8",
-      borderRadius: "5px",
-      color: "#fff",
-      background: "#398bd4",
-      cursor: "pointer",
-      fontSize: "14px",
-      lineHeight: "20px"
-    });
-    button.addEventListener("mouseenter", () => {
-      button.style.background = "#246eaf";
-    });
-    button.addEventListener("mouseleave", () => {
-      button.style.background = "#398bd4";
-    });
-    button.addEventListener("click", () => {
-      const url = buildHdblogSearchUrlForThreadCode(threadCode2(document2));
-      if (!url) {
-        document2.defaultView?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
-        return;
-      }
-      openSearchTab2(document2, url);
-    });
     if (downloadButton) downloadButton.insertAdjacentElement("afterend", button);
     else host.prepend(button);
   }
   function installCopyCodeButton2(document2) {
-    if (document2.getElementById(COPY_BUTTON_ID2)) return;
     const code = threadCode2(document2);
     if (!code) return;
+    let button = document2.getElementById(COPY_BUTTON_ID2);
+    const created = !button;
+    if (!button) {
+      button = document2.createElement("button");
+      button.id = COPY_BUTTON_ID2;
+      button.type = "button";
+      button.textContent = "\u{1F4CB}";
+      button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
+      button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
+      Object.assign(button.style, {
+        float: "right",
+        position: "relative",
+        zIndex: "20",
+        margin: "0 0 6px 6px",
+        padding: "7px 10px",
+        minWidth: "38px",
+        border: "1px solid #2878c8",
+        borderRadius: "5px",
+        color: "#fff",
+        background: "#398bd4",
+        cursor: "pointer",
+        fontSize: "14px",
+        lineHeight: "20px"
+      });
+      button.addEventListener("mouseenter", () => {
+        if (!button.disabled) button.style.background = "#246eaf";
+      });
+      button.addEventListener("mouseleave", () => {
+        if (!button.disabled) button.style.background = "#398bd4";
+      });
+      button.addEventListener("click", () => {
+        void copyCodeWithButtonFeedback(button, document2, threadCode2(document2));
+      });
+    }
+    if (isModernResourceDetailPage(document2) && placeModernResourceActionButton(document2, button)) return;
+    if (!created) return;
     const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID2);
     const searchButton = document2.getElementById(SEARCH_BUTTON_ID2);
     const title = threadTitleElement(document2);
     const host = downloadButton?.parentElement || searchButton?.parentElement || title?.closest(".vwthd, .ts") || title?.parentElement;
     if (!host) return;
-    const button = document2.createElement("button");
-    button.id = COPY_BUTTON_ID2;
-    button.type = "button";
-    button.textContent = "\u{1F4CB}";
-    button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
-    button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
-    Object.assign(button.style, {
-      float: "right",
-      position: "relative",
-      zIndex: "20",
-      margin: "0 0 6px 6px",
-      padding: "7px 10px",
-      minWidth: "38px",
-      border: "1px solid #2878c8",
-      borderRadius: "5px",
-      color: "#fff",
-      background: "#398bd4",
-      cursor: "pointer",
-      fontSize: "14px",
-      lineHeight: "20px"
-    });
-    button.addEventListener("mouseenter", () => {
-      if (!button.disabled) button.style.background = "#246eaf";
-    });
-    button.addEventListener("mouseleave", () => {
-      if (!button.disabled) button.style.background = "#398bd4";
-    });
-    button.addEventListener("click", () => {
-      void copyCodeWithButtonFeedback(button, document2, threadCode2(document2));
-    });
     if (downloadButton) downloadButton.insertAdjacentElement("afterend", button);
     else if (searchButton) searchButton.insertAdjacentElement("afterend", button);
     else host.prepend(button);
+  }
+  var modernActionObservers = /* @__PURE__ */ new WeakMap();
+  function refreshModernResourceActionButtons(document2) {
+    if (!isModernResourceDetailPage(document2)) return;
+    const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID2);
+    if (downloadButton) placeModernResourceActionButton(document2, downloadButton);
+    if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document2);
+    else document2.getElementById(SEARCH_BUTTON_ID2)?.remove();
+    if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton2(document2);
+    else document2.getElementById(COPY_BUTTON_ID2)?.remove();
+  }
+  function observeModernResourceActionButtons(document2) {
+    if (!document2?.body || modernActionObservers.has(document2)) return;
+    const Observer = document2.defaultView?.MutationObserver;
+    if (typeof Observer !== "function") return;
+    const observer = new Observer(() => refreshModernResourceActionButtons(document2));
+    observer.observe(document2.body, { childList: true, subtree: true });
+    modernActionObservers.set(document2, observer);
   }
   function bindRealActressDownload(document2, gmRequest2) {
     const button = document2.getElementById(DOWNLOAD_BUTTON_ID2);
@@ -7353,12 +8484,14 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY2, batchHistoryLimit);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY2, batchHistoryColorInput.value);
         if (typeof GM_getValue === "function") {
-          const existingHistory = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY2, []);
+          const modern = document2.location?.hostname !== "agaghhh.cc" && !/^\/(?:forum|search)\.php$/i.test(document2.location?.pathname || "");
+          const historyKey = modern ? MODERN_RESOURCE_HISTORY_KEY2 : AGAGHHH_BATCH_OPEN_HISTORY_KEY2;
+          const existingHistory = GM_getValue(historyKey, []);
           if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
-            GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY2, existingHistory.slice(-batchHistoryLimit));
+            GM_setValue(historyKey, existingHistory.slice(-batchHistoryLimit));
           }
         }
-        GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+        GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY2, downloadInput.checked);
         GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
         GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
         GM_setValue(AGAGHHH_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
@@ -7418,6 +8551,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton2(document2);
     else document2.getElementById(COPY_BUTTON_ID2)?.remove();
     if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
+    refreshModernResourceActionButtons(document2);
+    observeModernResourceActionButtons(document2);
   }
 
   // src/fc2cmadb.js

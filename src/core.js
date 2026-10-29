@@ -57,6 +57,11 @@ export function collectForumThreadLinks(document) {
         kind: 'wordpress',
         link: article.querySelector('.entry-header .entry-title a[href], h2.entry-title a[href]'),
       })),
+    ...[...document.querySelectorAll('article.thread-row:not(.is-sticky)')]
+      .map((article) => ({
+        kind: 'modern',
+        link: article.querySelector('a.resource-title[href*="/resources/"]'),
+      })),
   ];
 
   return candidates
@@ -76,9 +81,25 @@ export function collectForumThreadLinks(document) {
     .filter((thread) => {
       if (thread.kind === 'discuz') return isThreadUrl(thread.url, document.baseURI);
       const url = new URL(thread.url);
+      if (thread.kind === 'modern') {
+        return url.origin === new URL(document.baseURI).origin
+          && /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname);
+      }
       return /^https?:$/.test(url.protocol) && url.origin === new URL(document.baseURI).origin;
     })
     .filter((thread) => !seen.has(thread.url) && seen.add(thread.url));
+}
+
+// Modern /resources page h1 contains a visible category tag before the actual title.
+export function getThreadHeadingText(document) {
+  const heading = document?.querySelector('#thread_subject')
+    || document?.querySelector('.thread-header h1')
+    || document?.querySelector('h1.ts, .vwthd h1, h1');
+  if (!heading) return document?.title || '';
+  if (!heading.matches('.thread-header h1')) return heading.textContent || '';
+  const copy = heading.cloneNode(true);
+  copy.querySelector('.topic-tags')?.remove();
+  return copy.textContent || '';
 }
 
 export function parseThreadTitle(rawTitle) {
@@ -226,6 +247,8 @@ function attachmentSourceName(link) {
 function isContentImage(image) {
   if (image.hasAttribute(HDBLOG_PREVIEW_URL_ATTR)) return false;
   if (image.closest('.attp, .attach, .pattl, .smilie, .avatar')) return false;
+  // Next.js forum lazy images have no intrinsic dimensions before loading.
+  if (image.matches('.post-text img.body-image')) return true;
   const className = image.className || '';
   const src = image.getAttribute('src') || '';
   if (/\b(?:smilie|avatar|qqemoji)\b/i.test(className)) return false;
@@ -385,14 +408,14 @@ function sequencedImageFilename(code, index, total) {
 }
 
 export function extractThreadResources(document) {
-  const rawTitle = document.querySelector('#thread_subject')?.textContent
-    || document.querySelector('h1.ts, .vwthd h1, h1')?.textContent
-    || document.title;
+  const rawTitle = getThreadHeadingText(document);
   const title = parseThreadTitle(rawTitle);
   const firstPost = [...document.querySelectorAll('#postlist [id^="post_"]')]
     .find((element) => /^post_\d+$/i.test(element.id))
-    || document.querySelector('#postlist > div, #postlist');
-  const content = firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost;
+    || document.querySelector('#postlist > div, #postlist')
+    || document.querySelector('#first-post');
+  const content = firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text')
+    || firstPost;
 
   const attachmentLinks = firstPost
     ? [...firstPost.querySelectorAll('a[href*="mod=attachment"], a[href*="attachment.php"]')]
@@ -454,6 +477,8 @@ export function buildDownloadJobs(document) {
     const downloadImages = [
       ...resources.images.map((image) => ({
         url: image.cacheUrl || image.url,
+        ...(image.url && image.url !== (image.cacheUrl || image.url)
+          ? { fallbackUrls: [image.url] } : {}),
         ...(image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {}),
         ...(image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {}),
       })),
@@ -466,7 +491,9 @@ export function buildDownloadJobs(document) {
       jobs.push({
         kind: 'image',
         url: image.url,
-        name: sequencedImageFilename(resources.title.code, index, downloadImages.length),
+        name: /\.webp(?:[?#]|$)/i.test(image.url) && document.querySelector('#first-post')
+          ? sequencedImageFilename(resources.title.code, index, downloadImages.length).replace(/\.jpg$/, '.webp')
+          : sequencedImageFilename(resources.title.code, index, downloadImages.length),
         ...(image.pixhostShowUrl ? { pixhostShowUrl: image.pixhostShowUrl } : {}),
         ...(image.pixhostThumbUrl ? { pixhostThumbUrl: image.pixhostThumbUrl } : {}),
         ...(image.hdblogPreview ? { hdblogPreview: true } : {}),
@@ -479,9 +506,15 @@ export function buildDownloadJobs(document) {
       jobs.push({
         kind: 'image',
         url: preferredUrl,
-        name: resources.hdblogPreviews.length
-          ? `${sanitizeFilename(resources.title.code || 'thread-image')} A.jpg`
-          : resources.imageFilename,
+        ...(resources.imageUrl && resources.imageUrl !== preferredUrl
+          ? { fallbackUrls: [resources.imageUrl] } : {}),
+        name: /\.webp(?:[?#]|$)/i.test(preferredUrl) && document.querySelector('#first-post')
+          ? (resources.hdblogPreviews.length
+            ? `${sanitizeFilename(resources.title.code || 'thread-image')} A.webp`
+            : resources.imageFilename.replace(/\.jpg$/, '.webp'))
+          : (resources.hdblogPreviews.length
+            ? `${sanitizeFilename(resources.title.code || 'thread-image')} A.jpg`
+            : resources.imageFilename),
       });
     }
 

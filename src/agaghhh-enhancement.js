@@ -1,8 +1,9 @@
 import { organizeSettingsPanel } from './settings-layout.js';
-import { parseThreadTitle } from './core.js';
+import { getThreadHeadingText, parseThreadTitle } from './core.js';
 import { isAgaghhhHost } from './site-domains.js';
 export { isAgaghhhHost };
 import { copyCodeWithButtonFeedback } from './clipboard.js';
+import { placeModernResourceActionButton } from './modern-header-actions.js';
 import { hdblogSearchCodeForThreadCode, installAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
 import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
@@ -36,6 +37,7 @@ export const DEFAULT_AGAGHHH_BLOCKED_KEYWORDS = '无码破解\n無碼破解';
 export const AGAGHHH_REAL_ACTRESS_ENABLED_KEY = 'x1080x-ex:agaghhh-real-actress-enabled';
 export const AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = 'x1080x-ex:agaghhh-hdblog-preview-enabled';
 const LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = 'x1080x-ex:agaghhh-enhancement-enabled';
+const MODERN_RESOURCE_HISTORY_KEY = 'x1080x-ex:1080xin-resource-history';
 
 const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-download';
@@ -321,8 +323,10 @@ export function installAgaghhhSearchAutoRedirect(
 function firstPostContent(document) {
   const firstPost = [...document.querySelectorAll('#postlist [id^="post_"]')]
     .find((element) => /^post_\d+$/i.test(element.id))
-    || document.querySelector('#postlist > div, #postlist');
-  return firstPost?.querySelector('[id^="postmessage_"], .t_f') || firstPost || null;
+    || document.querySelector('#postlist > div, #postlist')
+    || document.querySelector('#first-post');
+  return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text')
+    || firstPost || null;
 }
 
 export function extractThreadPerformerField(document) {
@@ -501,12 +505,12 @@ export function appendActressToTitleText(titleText, actress) {
 }
 
 function threadTitleElement(document) {
-  return document.querySelector('#thread_subject')
+  return document.querySelector('#thread_subject, .thread-header h1')
     || document.querySelector('h1.ts, .vwthd h1, h1');
 }
 
 function threadCode(document) {
-  return parseThreadTitle(threadTitleElement(document)?.textContent || document.title).code;
+  return parseThreadTitle(getThreadHeadingText(document)).code;
 }
 
 export function buildHdblogSearchUrlForThreadCode(code) {
@@ -523,47 +527,89 @@ function openSearchTab(document, url) {
   document.defaultView?.open(url, '_blank', 'noopener');
 }
 
+function isModernResourceDetailPage(document) {
+  const pathname = document?.defaultView?.location?.pathname || '';
+  return /^\/resources\/[a-z0-9]+\/?$/i.test(pathname)
+    && Boolean(document.querySelector('.thread-header h1'));
+}
+
 function installHdblogSearchButton(document) {
-  if (document.getElementById(SEARCH_BUTTON_ID)) return;
   const code = threadCode(document);
   if (!code) return;
+  let button = document.getElementById(SEARCH_BUTTON_ID);
+  const created = !button;
+  if (!button) {
+    button = document.createElement('button');
+    button.id = SEARCH_BUTTON_ID;
+    button.type = 'button';
+    button.textContent = '🔍';
+    button.title = '按当前番号在 hdblog 搜索';
+    button.setAttribute('aria-label', '在 hdblog 搜索当前番号');
+    Object.assign(button.style, {
+      float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
+      padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
+      borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
+      fontSize: '14px', lineHeight: '20px',
+    });
+    button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
+    button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
+    button.addEventListener('click', () => {
+      const url = buildHdblogSearchUrlForThreadCode(threadCode(document));
+      if (!url) {
+        document.defaultView?.alert('没有识别到影片番号。');
+        return;
+      }
+      openSearchTab(document, url);
+    });
+  }
+
+  if (isModernResourceDetailPage(document)
+    && placeModernResourceActionButton(document, button)) return;
+  if (!created) return;
+
   const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
   const title = threadTitleElement(document);
   const host = downloadButton?.parentElement
     || title?.closest('.vwthd, .ts')
     || title?.parentElement;
   if (!host) return;
-
-  const button = document.createElement('button');
-  button.id = SEARCH_BUTTON_ID;
-  button.type = 'button';
-  button.textContent = '🔍';
-  button.title = '按当前番号在 hdblog 搜索';
-  button.setAttribute('aria-label', '在 hdblog 搜索当前番号');
-  Object.assign(button.style, {
-    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
-    padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
-    borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
-    fontSize: '14px', lineHeight: '20px',
-  });
-  button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
-  button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
-  button.addEventListener('click', () => {
-    const url = buildHdblogSearchUrlForThreadCode(threadCode(document));
-    if (!url) {
-      document.defaultView?.alert('没有识别到影片番号。');
-      return;
-    }
-    openSearchTab(document, url);
-  });
   if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
   else host.prepend(button);
 }
 
 function installCopyCodeButton(document) {
-  if (document.getElementById(COPY_BUTTON_ID)) return;
   const code = threadCode(document);
   if (!code) return;
+  let button = document.getElementById(COPY_BUTTON_ID);
+  const created = !button;
+  if (!button) {
+    button = document.createElement('button');
+    button.id = COPY_BUTTON_ID;
+    button.type = 'button';
+    button.textContent = '📋';
+    button.title = '复制当前番号到剪切板';
+    button.setAttribute('aria-label', '复制当前番号到剪切板');
+    Object.assign(button.style, {
+      float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
+      padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
+      borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
+      fontSize: '14px', lineHeight: '20px',
+    });
+    button.addEventListener('mouseenter', () => {
+      if (!button.disabled) button.style.background = '#246eaf';
+    });
+    button.addEventListener('mouseleave', () => {
+      if (!button.disabled) button.style.background = '#398bd4';
+    });
+    button.addEventListener('click', () => {
+      void copyCodeWithButtonFeedback(button, document, threadCode(document));
+    });
+  }
+
+  if (isModernResourceDetailPage(document)
+    && placeModernResourceActionButton(document, button)) return;
+  if (!created) return;
+
   const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
   const searchButton = document.getElementById(SEARCH_BUTTON_ID);
   const title = threadTitleElement(document);
@@ -572,32 +618,32 @@ function installCopyCodeButton(document) {
     || title?.closest('.vwthd, .ts')
     || title?.parentElement;
   if (!host) return;
-
-  const button = document.createElement('button');
-  button.id = COPY_BUTTON_ID;
-  button.type = 'button';
-  button.textContent = '📋';
-  button.title = '复制当前番号到剪切板';
-  button.setAttribute('aria-label', '复制当前番号到剪切板');
-  Object.assign(button.style, {
-    float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
-    padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
-    borderRadius: '5px', color: '#fff', background: '#398bd4', cursor: 'pointer',
-    fontSize: '14px', lineHeight: '20px',
-  });
-  button.addEventListener('mouseenter', () => {
-    if (!button.disabled) button.style.background = '#246eaf';
-  });
-  button.addEventListener('mouseleave', () => {
-    if (!button.disabled) button.style.background = '#398bd4';
-  });
-  button.addEventListener('click', () => {
-    void copyCodeWithButtonFeedback(button, document, threadCode(document));
-  });
-
   if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
   else if (searchButton) searchButton.insertAdjacentElement('afterend', button);
   else host.prepend(button);
+}
+
+const modernActionObservers = new WeakMap();
+
+function refreshModernResourceActionButtons(document) {
+  if (!isModernResourceDetailPage(document)) return;
+  const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
+  if (downloadButton) placeModernResourceActionButton(document, downloadButton);
+
+  if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document);
+  else document.getElementById(SEARCH_BUTTON_ID)?.remove();
+
+  if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton(document);
+  else document.getElementById(COPY_BUTTON_ID)?.remove();
+}
+
+function observeModernResourceActionButtons(document) {
+  if (!document?.body || modernActionObservers.has(document)) return;
+  const Observer = document.defaultView?.MutationObserver;
+  if (typeof Observer !== 'function') return;
+  const observer = new Observer(() => refreshModernResourceActionButtons(document));
+  observer.observe(document.body, { childList: true, subtree: true });
+  modernActionObservers.set(document, observer);
 }
 
 function bindRealActressDownload(document, gmRequest) {
@@ -954,10 +1000,14 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
       if (typeof GM_getValue === 'function') {
-        const existingHistory = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+        const modern = document.location?.hostname !== 'agaghhh.cc'
+          && !/^\/(?:forum|search)\.php$/i.test(document.location?.pathname || '');
+        const historyKey = modern ? MODERN_RESOURCE_HISTORY_KEY : AGAGHHH_BATCH_OPEN_HISTORY_KEY;
+        const existingHistory = GM_getValue(historyKey, []);
         if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
-          GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, existingHistory.slice(-batchHistoryLimit));
+          GM_setValue(historyKey, existingHistory.slice(-batchHistoryLimit));
         }
+        // Do not trim old numeric TIDs when editing the redesigned site's settings.
       }
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
@@ -1036,4 +1086,6 @@ export function installAgaghhhEnhancement(
   else document.getElementById(COPY_BUTTON_ID)?.remove();
 
   if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
+  refreshModernResourceActionButtons(document);
+  observeModernResourceActionButtons(document);
 }

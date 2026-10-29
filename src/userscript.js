@@ -1,38 +1,80 @@
 import {
   buildDownloadJobs,
   collectForumThreadLinks,
+  getThreadHeadingText,
   isAllowedHost,
   parseDomainList,
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
 import {
-  AGAGHHH_PRIMARY_DOMAIN_KEY,
   DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
   LEGACY_AGAGHHH_DOMAIN,
   getAgaghhhDomains,
   getAgaghhhPrimaryDomain,
   isAgaghhhHost,
   parseAgaghhhPrimaryDomain,
+  saveAgaghhhPrimaryDomain,
   toAgaghhhPrimaryUrl,
 } from './site-domains.js';
-import { firstBatchListPageUrl, scanBatchProgressPages } from './batch-progress-locator.js';
+import {
+  firstBatchListPageUrl,
+  nextBatchListPageUrl as nextListPageUrl,
+  scanBatchProgressPages,
+} from './batch-progress-locator.js';
 import { requestTorrentBytes } from './torrent.js';
+import {
+  collectModernNativeAttachments,
+  prepareModernAttachmentDownload,
+} from './modern-attachments.js';
 import {
   AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY,
   beginDownloadGuard,
   isDownloadGuardEnabled,
 } from './download-guard.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
+import {
+  extractLegacyHistoryAliases,
+  historyAliasesForTitle,
+  legacyThreadUrl,
+  legacyTidFromHistoryValue,
+  resolvedLegacyHistoryAliases,
+  isUsableHistoryAlias,
+  compatibleHistoryKeys,
+} from './history-migration.js';
+import { planHistoryRecovery } from './history-recovery.js';
+import { showHistoryImportDialog } from './history-import.js';
+import { alternateImageUrls } from './image-fallbacks.js';
+import { saveDownloadBlob } from './blob-download.js';
+import {
+  ensureModernResourceActionGroup,
+  placeModernResourceActionButton,
+  ensureModernDownloadStatus,
+  renderModernDownloadButton,
+} from './modern-header-actions.js';
 
 const STORAGE_KEY = 'x1080x-ex:domains';
 const HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = 'x1080x-ex:hdblog-expand-preview-images';
 const AGAGHHH_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-enabled';
+const AGAGHHH_DOWNLOAD_ENABLED_KEY = 'x1080x-ex:agaghhh-download-enabled';
 const HDBLOG_BATCH_OPEN_ENABLED_KEY = 'x1080x-ex:hdblog-batch-open-enabled';
 const AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:agaghhh-batch-open-interval-min-ms';
 const AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:agaghhh-batch-open-interval-max-ms';
 const AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-open-history-enabled';
 const AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY = 'x1080x-ex:agaghhh-batch-open-history-limit';
 const AGAGHHH_BATCH_OPEN_HISTORY_KEY = 'x1080x-ex:agaghhh-batch-open-history';
+// Separate new /resources IDs from legacy Discuz TIDs so the existing
+// pre-redesign history can never be truncated by new visits.
+const MODERN_RESOURCE_HISTORY_KEY = 'x1080x-ex:1080xin-resource-history';
+const AGAGHHH_HISTORY_ALIASES_KEY = 'x1080x-ex:agaghhh-history-title-aliases';
+const AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY = 'x1080x-ex:agaghhh-legacy-history-migration-v1';
+const AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY = 'x1080x-ex:agaghhh-history-recovery-backup-v1';
+// Older open tabs know only the migration cache; they cannot overwrite this
+// separately persisted recovery source after a user imports browser titles.
+const AGAGHHH_HISTORY_RECOVERED_KEY = 'x1080x-ex:agaghhh-history-recovered-titles-v1';
+const LEGACY_HISTORY_AUTO_MIGRATION_LIMIT = 100;
+const LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT = 5000;
+let legacyHistoryMigrationInProgress = false;
+let legacyHistoryMigrationStartedThisPage = false;
 const AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY = 'x1080x-ex:agaghhh-batch-open-history-color';
 const AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = 'x1080x-ex:agaghhh-batch-open-unopened-only';
 const AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = 'x1080x-ex:agaghhh-batch-progress-locator-enabled';
@@ -110,7 +152,7 @@ function registerSettingsMenu() {
       window.alert('请输入有效的站点域名，例如 1080xin.com');
       return;
     }
-    GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, domain);
+    saveAgaghhhPrimaryDomain(domain);
     window.alert(`x1080x 站点域名已保存：${domain}\n刷新页面后生效。原有浏览记录将继续保留。`);
   });
   GM_registerMenuCommand('⚙️ 设置匹配域名', () => {
@@ -140,8 +182,67 @@ function registerSettingsMenu() {
 
   GM_registerMenuCommand('↩️ 重置默认域名', () => {
     saveDomains(parseDomainList(DEFAULT_DOMAINS));
-    GM_setValue(AGAGHHH_PRIMARY_DOMAIN_KEY, DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
+    saveAgaghhhPrimaryDomain(DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
     window.alert(`已恢复默认域名：${DEFAULT_DOMAINS}`);
+  });
+  GM_registerMenuCommand('↪️ 迁移旧版 x1080x 浏览记录到新版', () => {
+    const legacy = typeof GM_getValue === 'function'
+      ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])
+      : [];
+    const total = compatibleHistoryKeys(legacy).filter(value => value.startsWith('tid:')).length;
+    if (!total) {
+      const aliases = compatibleHistoryKeys(legacy).filter(isUsableHistoryAlias);
+      if (aliases.length) {
+        saveHistoryAliases(aliases);
+        if (isBatchOpenPage()) applyBatchOpenHistory(document);
+        window.alert(`已载入 ${aliases.length} 项旧版标题/资源信息，无需通过数字 TID 查询。`);
+      } else window.alert('没有在当前这份脚本中找到旧版记录。请在原来的油猴脚本中检查或导出存储数据。');
+      return;
+    }
+    if (!window.confirm(`发现约 ${total} 条旧版记录。脚本将逐条读取旧帖标题，按番号/标题匹配新版资源；这可能需要几分钟，不会删除旧记录。是否开始完整迁移？`)) return;
+    void migrateLegacyHistory({ limit: LEGACY_HISTORY_MANUAL_MIGRATION_LIMIT, force: true })
+      .then((result) => {
+        if (isBatchOpenPage()) applyBatchOpenHistory(document);
+        window.alert(`旧版历史检查结束。\n本次检查：${result.checked} 条\n新增匹配：${result.matched} 条\n剩余未解析：${result.unresolved} 条\n旧记录未删除。${result.unresolved ? '\n未解析记录只有旧 TID，需要可访问的旧帖或站点新旧 ID 映射才能恢复。' : ''}`);
+      })
+      .catch((error) => window.alert(`迁移失败：${error?.message || error}`));
+  });
+  GM_registerMenuCommand('🧾 检查旧版浏览记录', () => {
+    const legacy = compatibleHistoryKeys(typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : []);
+    const modern = compatibleHistoryKeys(typeof GM_getValue === 'function' ? GM_getValue(MODERN_RESOURCE_HISTORY_KEY, []) : []);
+    const aliases = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
+    const state = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {}) : {};
+    const recovered = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}) : {};
+    const tids = legacy.filter(value => value.startsWith('tid:'));
+    const matched = tids.filter(value => resolvedLegacyHistoryAliases({ resolved: {
+      cached: state?.resolved?.[value.slice(4)], recovered: recovered?.resolved?.[value.slice(4)],
+    } }).length > 0).length;
+    window.alert(`旧版数字 TID：${tids.length} 条\n已取得对应信息：${matched} 条\n仍缺对应信息：${tids.length - matched} 条\n旧记录中的标题/资源信息：${legacy.filter(isUsableHistoryAlias).length} 项\n共享标题/番号索引：${Array.isArray(aliases) ? aliases.length : 0} 项\n新版资源记录：${modern.filter(value => value.startsWith('resource:')).length} 条\n\n旧 TID 数量大于 0 表示数据已读到；仍缺对应信息的记录无法仅凭编号判断新版帖子是否浏览过。若旧 TID 为 0，请在原来那份油猴脚本中检查或导出存储数据。`);
+  });
+  GM_registerMenuCommand('📥 导入旧论坛历史恢复文件', () => {
+    showHistoryImportDialog(document, async file => {
+      const payload = JSON.parse((await file.text()).replace(/^\uFEFF/, ''));
+      const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+      const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+      const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+      const plan = planHistoryRecovery(payload, legacy, state, recovered);
+      if (!plan.matched) {
+        return '恢复文件中没有匹配当前旧 TID 的有效帖子标题，原记录未修改。';
+      }
+      GM_setValue(AGAGHHH_HISTORY_RECOVERY_BACKUP_KEY, {
+        migration: state, recovered, aliases: GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []), recoveredAt: Date.now(),
+      });
+      GM_setValue(AGAGHHH_HISTORY_RECOVERED_KEY, { resolved: { ...recovered?.resolved, ...plan.recovered } });
+      GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, plan.state);
+      saveHistoryAliases(plan.aliases);
+      if (isBatchOpenPage() && isBatchOpenHistoryEnabled()) {
+        applyBatchOpenHistory(document);
+        const button = document.getElementById(BATCH_BUTTON_ID);
+        if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+        refreshBatchProgressLocatorButton();
+      }
+      return `已匹配 ${plan.matched} 条旧 TID，本次补充 ${plan.changed} 条对应信息。\n忽略不匹配记录：${plan.ignored} 条。\n原始旧 TID 已保留，导入前的映射和索引已另行备份。`;
+    });
   });
 }
 
@@ -164,10 +265,13 @@ function isBatchOpenEnabledForCurrentHost() {
 function batchOpenHistoryConfig() {
   const host = currentHost();
   if (isAgaghhhHost(host)) {
+    const modern = host !== LEGACY_AGAGHHH_DOMAIN
+      && !/^\/(?:forum|search)\.php$/i.test(location.pathname);
     return {
       enabledKey: AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY,
       limitKey: AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY,
-      historyKey: AGAGHHH_BATCH_OPEN_HISTORY_KEY,
+      historyKey: modern ? MODERN_RESOURCE_HISTORY_KEY : AGAGHHH_BATCH_OPEN_HISTORY_KEY,
+      modern,
       colorKey: AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY,
       unopenedOnlyKey: AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY,
       progressLocatorEnabledKey: AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY,
@@ -232,6 +336,8 @@ function batchOpenHistoryId(value) {
   try {
     const url = new URL(value, location.href);
     if (config.kind === 'agaghhh') {
+      const resourceId = url.pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
+      if (resourceId) return `resource:${resourceId}`;
       const queryTid = url.searchParams.get('mod') === 'viewthread'
         ? url.searchParams.get('tid')
         : '';
@@ -247,15 +353,189 @@ function batchOpenHistoryId(value) {
   }
 }
 
+function batchThreadHistoryKeys(thread) {
+  if (!thread) return [];
+  const id = batchOpenHistoryId(thread.url);
+  const title = thread.link?.getAttribute('title') || thread.link?.textContent || '';
+  return [...new Set([id, ...historyAliasesForTitle(title)].filter(Boolean))];
+}
+
+function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory())) {
+  return batchThreadHistoryKeys(thread).some((key) => history.has(key));
+}
+
 function readBatchOpenHistory() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function') return [];
-  const stored = GM_getValue(config.historyKey, []);
-  const values = Array.isArray(stored) ? stored : [];
+  const rawStored = GM_getValue(config.historyKey, []);
+  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
+  // Previous beta releases temporarily saved modern resource IDs in the old key.
+  const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
+  const aliases = config.kind === 'agaghhh'
+    ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, [])
+    : [];
+  const resolvedAliases = config.kind === 'agaghhh'
+    ? [...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {})),
+      ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}))]
+    : [];
+  const values = [
+    ...(Array.isArray(stored) ? stored : []),
+    ...(Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : []),
+    ...(Array.isArray(aliases) ? aliases : []),
+    ...resolvedAliases,
+  ];
   return [...new Set(values.filter((value) => (
     typeof value === 'string'
-    && (/^(?:tid|post):\d+$/.test(value) || /^url:\//.test(value))
+    && (!/^(?:code|title|number):/i.test(value) || isUsableHistoryAlias(value))
+    && (config.modern
+      ? (/^resource:[a-z0-9]+$/i.test(value) || /^(?:code|title|number):/i.test(value))
+      : (/^(?:tid|post):\d+$/.test(value)
+        || /^resource:[a-z0-9]+$/i.test(value)
+        || /^url:\//.test(value)
+        || /^(?:code|title|number):/i.test(value)))
   )))];
+}
+
+function saveHistoryAliases(aliases) {
+  if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function') return 0;
+  const existing = GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []);
+  const merged = [...new Set([
+    ...(Array.isArray(existing) ? existing : []),
+    ...(Array.isArray(aliases) ? aliases : []),
+  ].filter(isUsableHistoryAlias))].slice(-20000);
+  GM_setValue(AGAGHHH_HISTORY_ALIASES_KEY, merged);
+  return merged.length;
+}
+
+async function requestLegacyHistoryAliases(tid) {
+  const urls = [...new Set([
+    legacyThreadUrl(tid, `https://${getAgaghhhPrimaryDomain()}`),
+    legacyThreadUrl(tid),
+  ].filter(Boolean))];
+  for (const url of urls) {
+    const result = await new Promise((resolve) => {
+      if (typeof GM_xmlhttpRequest !== 'function') {
+        resolve([]);
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        timeout: 15000,
+        onload: (response) => {
+          const aliases = response.status >= 200 && response.status < 400
+            ? extractLegacyHistoryAliases(
+              response.responseText || '',
+              document.defaultView?.DOMParser || globalThis.DOMParser
+            )
+            : [];
+          const finalUrl = response.finalUrl || response.responseURL || '';
+          try {
+            const resourceId = new URL(finalUrl, url).pathname.match(/^\/resources\/([a-z0-9]+)\/?$/i)?.[1];
+            if (resourceId && response.status >= 200 && response.status < 400
+              && isAgaghhhHost(new URL(finalUrl, url).hostname)) aliases.unshift(`resource:${resourceId}`);
+          } catch {
+            // The title aliases remain useful even if the final URL is unavailable.
+          }
+          resolve([...new Set(aliases)]);
+        },
+        onerror: () => resolve([]),
+        ontimeout: () => resolve([]),
+      });
+    });
+    if (result.length) return result;
+  }
+  return [];
+}
+
+async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMIT, force = false } = {}) {
+  if (legacyHistoryMigrationInProgress) {
+    return { checked: 0, matched: 0, unresolved: 0, busy: true };
+  }
+  if (typeof GM_getValue !== 'function' || typeof GM_setValue !== 'function'
+    || typeof GM_xmlhttpRequest !== 'function') {
+    return { checked: 0, matched: 0, unresolved: 0, unsupported: true };
+  }
+
+  const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
+  const legacyKeys = compatibleHistoryKeys(legacy);
+  saveHistoryAliases(legacyKeys.filter(isUsableHistoryAlias));
+  const tids = [...new Set(legacyKeys
+    .map(legacyTidFromHistoryValue)
+    .filter(Boolean))];
+  const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+  const attemptedAt = state?.resolverVersion === 2 && state?.attemptedAt && typeof state.attemptedAt === 'object'
+    ? { ...state.attemptedAt } : {};
+  const resolved = state?.resolved && typeof state.resolved === 'object'
+    ? { ...state.resolved } : {};
+  const recovered = GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {});
+  if (recovered?.resolved && typeof recovered.resolved === 'object') {
+    for (const [tid, values] of Object.entries(recovered.resolved)) {
+      if (!Array.isArray(values)) continue;
+      resolved[tid] = [...new Set([...(Array.isArray(resolved[tid]) ? resolved[tid] : []), ...values.filter(isUsableHistoryAlias)])];
+    }
+  }
+  for (const [tid, aliases] of Object.entries(resolved)) {
+    const valid = Array.isArray(aliases) ? aliases.filter(isUsableHistoryAlias) : [];
+    if (valid.length) resolved[tid] = valid;
+    else delete resolved[tid];
+  }
+  const now = Date.now();
+  saveHistoryAliases(resolvedLegacyHistoryAliases(state));
+  const pending = tids.slice().reverse().filter((tid) => (
+    !Array.isArray(resolved[tid])
+    && (force || !attemptedAt[tid] || now - Number(attemptedAt[tid]) > 7 * 24 * 60 * 60 * 1000)
+  )).slice(0, Math.max(0, Number(limit) || 0));
+
+  if (!pending.length) {
+    return {
+      checked: 0,
+      matched: 0,
+      unresolved: tids.filter((tid) => !Array.isArray(resolved[tid])).length,
+    };
+  }
+
+  legacyHistoryMigrationInProgress = true;
+  let matched = 0;
+  try {
+    for (let offset = 0; offset < pending.length; offset += 4) {
+      const batch = pending.slice(offset, offset + 4);
+      const results = await Promise.all(batch.map(async (tid) => ({
+        tid,
+        aliases: await requestLegacyHistoryAliases(tid),
+      })));
+      // A user can import recovered titles while these requests are pending.
+      // Merge the latest storage instead of overwriting the imported mappings.
+      const latestState = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
+      if (latestState?.resolved && typeof latestState.resolved === 'object') {
+        for (const [tid, values] of Object.entries(latestState.resolved)) {
+          if (!Array.isArray(values)) continue;
+          const valid = values.filter(isUsableHistoryAlias);
+          if (valid.length) resolved[tid] = [...new Set([...(resolved[tid] || []), ...valid])];
+        }
+      }
+      if (latestState?.attemptedAt && typeof latestState.attemptedAt === 'object') Object.assign(attemptedAt, latestState.attemptedAt);
+      for (const result of results) {
+        attemptedAt[result.tid] = Date.now();
+        if (result.aliases.length) {
+          resolved[result.tid] = [...new Set([...(resolved[result.tid] || []), ...result.aliases])];
+          saveHistoryAliases(result.aliases);
+          matched += 1;
+        }
+      }
+      GM_setValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, { ...latestState, resolverVersion: 2, attemptedAt, resolved });
+      if (offset + 4 < pending.length) {
+        await new Promise((resolve) => window.setTimeout(resolve, 180));
+      }
+    }
+    return {
+      checked: pending.length,
+      matched,
+      unresolved: tids.filter((tid) => !Array.isArray(resolved[tid])).length,
+    };
+  } finally {
+    legacyHistoryMigrationInProgress = false;
+  }
 }
 
 function batchProgressScopeKey(value = location.href) {
@@ -264,6 +544,12 @@ function batchProgressScopeKey(value = location.href) {
   try {
     const url = new URL(value, location.href);
     url.hash = '';
+    if (config.kind === 'agaghhh' && /^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) {
+      url.searchParams.delete('page');
+      url.searchParams.delete('view');
+      url.searchParams.sort();
+      return `https://${LEGACY_AGAGHHH_DOMAIN}${url.pathname}${url.search}`;
+    }
     if (config.kind === 'agaghhh') {
       const fid = url.searchParams.get('fid')
         || url.pathname.match(/forum[-_](\d+)(?:[-_]\d+)?(?:\.html)?/i)?.[1]
@@ -301,32 +587,27 @@ function batchProgressTarget() {
     : entry.url;
 }
 
+function startAutomaticLegacyHistoryMigration() {
+  if (legacyHistoryMigrationStartedThisPage
+    || !isAgaghhhHost(location)
+    || currentHost() === LEGACY_AGAGHHH_DOMAIN
+    || !/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)
+    || !isBatchOpenHistoryEnabled()) return;
+  legacyHistoryMigrationStartedThisPage = true;
+  void migrateLegacyHistory({ limit: LEGACY_HISTORY_AUTO_MIGRATION_LIMIT })
+    .then((result) => {
+      if (result.matched > 0 && isBatchOpenPage()) {
+        applyBatchOpenHistory(document);
+        const button = document.getElementById(BATCH_BUTTON_ID);
+        if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+        refreshBatchProgressLocatorButton();
+      }
+    })
+    .catch((error) => console.warn('[x1080x-ex] legacy history migration failed', error));
+}
+
 function nextBatchListPageUrl(document) {
-  if (!document) return '';
-  const selectors = [
-    'a.nxt[href]',
-    '.pg a.nxt[href]',
-    'a[rel="next"][href]',
-    '.archive-pagination .pagination-next a[href]',
-    '.archive-pagination a.next[href]',
-    '.pagination a.next[href]',
-  ];
-  let link = null;
-  for (const selector of selectors) {
-    link = document.querySelector(selector);
-    if (link) break;
-  }
-  if (!link) {
-    link = [...document.querySelectorAll('a[href]')].find((anchor) => (
-      /^(?:下一页|next|older posts?|older)$/i.test(normalizedLabel(anchor.textContent))
-    ));
-  }
-  if (!link) return '';
-  try {
-    return new URL(link.getAttribute('href'), document.baseURI).href;
-  } catch {
-    return '';
-  }
+  return nextListPageUrl(document, document?.baseURI);
 }
 
 function rememberBatchProgressTarget(url) {
@@ -353,10 +634,7 @@ function inferBatchProgressFromCurrentPage(document) {
   const threads = collectForumThreadLinks(document);
   if (!threads.length) return false;
   const history = new Set(readBatchOpenHistory());
-  const opened = threads.filter((thread) => {
-    const id = batchOpenHistoryId(thread.url);
-    return id && history.has(id);
-  }).length;
+  const opened = threads.filter((thread) => isBatchThreadVisited(thread, history)).length;
   if (!opened) return false;
   return rememberBatchProgressTarget(
     opened === threads.length ? (nextBatchListPageUrl(document) || location.href) : location.href
@@ -367,20 +645,29 @@ function collectBatchOpenThreads(document) {
   const threads = collectForumThreadLinks(document);
   if (!isBatchOpenUnopenedOnlyEnabled()) return threads;
   const history = new Set(readBatchOpenHistory());
-  return threads.filter((thread) => {
-    const id = batchOpenHistoryId(thread.url);
-    return !id || !history.has(id);
-  });
+  return threads.filter((thread) => !isBatchThreadVisited(thread, history));
 }
 
-function rememberBatchOpenedThread(url) {
+function rememberBatchOpenedThread(url, titleText = '') {
   const config = batchOpenHistoryConfig();
   if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== 'function') return false;
   const id = batchOpenHistoryId(url);
   if (!id) return false;
-  const history = readBatchOpenHistory().filter((item) => item !== id);
+  const rawStored = GM_getValue(config.historyKey, []);
+  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
+  const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
   history.push(id);
   GM_setValue(config.historyKey, history.slice(-batchOpenHistoryLimit()));
+
+  let title = titleText;
+  try {
+    if (!title && new URL(url, location.href).href === location.href) {
+      title = getThreadHeadingText(document);
+    }
+  } catch {
+    // The resource/TID ID is still worth saving without a title alias.
+  }
+  if (config.kind === 'agaghhh') saveHistoryAliases(historyAliasesForTitle(title));
   return true;
 }
 
@@ -394,7 +681,10 @@ function applyBatchOpenHistory(document) {
     style.id = BATCH_OPEN_HISTORY_STYLE_ID;
     (document.head || document.documentElement).append(style);
   }
-  style.textContent = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }`;
+  const css = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }
+.thread-list .resource-title:visited, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"],
+.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
+  if (style.textContent !== css) style.textContent = css;
 
   document.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`)
     .forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
@@ -404,8 +694,7 @@ function applyBatchOpenHistory(document) {
   const history = new Set(readBatchOpenHistory());
   let marked = 0;
   collectForumThreadLinks(document).forEach((thread) => {
-    const id = batchOpenHistoryId(thread.url);
-    if (!id || !history.has(id)) return;
+    if (!isBatchThreadVisited(thread, history)) return;
     thread.link.setAttribute(BATCH_OPEN_HISTORY_ATTR, '1');
     marked += 1;
   });
@@ -414,14 +703,16 @@ function applyBatchOpenHistory(document) {
 
 function isThreadPage() {
   const url = new URL(location.href);
-  return (url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid'))
+  return /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname)
+    || (url.searchParams.get('mod') === 'viewthread' && url.searchParams.has('tid'))
     || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
 }
 
 function isForumDisplayPage() {
   const url = new URL(location.href);
   return url.searchParams.get('mod') === 'forumdisplay'
-    || /forum[-_]\d+/i.test(url.pathname);
+    || /forum[-_]\d+/i.test(url.pathname)
+    || /^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname);
 }
 
 function isBatchOpenPage() {
@@ -627,12 +918,13 @@ function cancelBatchOpen() {
 
 function setBatchButtonIdle(button, count) {
   const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
-  button.textContent = unopenedOnly
-    ? `后台顺序打开未打开主题（${count}）`
-    : `后台顺序打开本页主题（${count}）`;
+  const label = unopenedOnly
+    ? `批量打开未浏览（${count}）`
+    : `批量打开本页（${count}）`;
+  if (button.textContent !== label) button.textContent = label;
   button.title = unopenedOnly
-    ? '按页面顺序仅后台打开未记录为已打开的主题；间隔随机，并定期停顿；再次点击可停止'
-    : '按页面顺序在后台逐个打开普通主题；间隔随机，并定期停顿；再次点击可停止';
+    ? '按列表顺序在后台逐个打开本页未浏览主题（以脚本浏览记录为准）；间隔随机，并定期停顿；再次点击可停止'
+    : '按列表顺序在后台逐个打开本页主题；间隔随机，并定期停顿；再次点击可停止';
   button.style.background = '#398bd4';
 }
 
@@ -678,7 +970,7 @@ async function openCurrentPageThreads(button) {
           insert: false,
           setParent: true,
         });
-        if (rememberBatchOpenedThread(thread.url)) applyBatchOpenHistory(document);
+        if (rememberBatchOpenedThread(thread.url, thread.link?.textContent || '')) applyBatchOpenHistory(document);
         opened += 1;
       } catch (error) {
         failures.push(`${index + 1}. ${redactDiagnostic(error?.message || error || '打开失败')}`);
@@ -729,6 +1021,7 @@ function parseResponseHeaders(value) {
 
 function redactDiagnostic(value) {
   return String(value ?? '')
+    .replace(/(\/api\/downloads\/file\/)[a-z0-9-]+/gi, '$1[已脱敏]')
     .replace(/((?:cookie|authorization|token|auth|sid)=)[^;\s&]+/gi, '$1[已脱敏]')
     .replace(/([?&](?:token|auth|sid|key)=)[^&#\s]+/gi, '$1[已脱敏]');
 }
@@ -877,7 +1170,9 @@ function requestBlobWithGmXhrOnce(job, referer) {
       url: job.url,
       responseType: 'blob',
       timeout: REQUEST_TIMEOUT,
-      ...(referer ? { headers: { Referer: referer } } : {}),
+      // Omitting the header lets the manager supply its default page Referer.
+      // An explicit empty value is needed for images marked no-referrer.
+      headers: { Referer: referer },
       onload: (response) => {
         validateResponse(response).then(resolve, reject);
       },
@@ -893,11 +1188,65 @@ function requestBlobWithGmXhrOnce(job, referer) {
   });
 }
 
+function imageRefererPolicyForJob(job) {
+  if (job.kind !== 'image') return null;
+  let target;
+  try {
+    target = new URL(job.url, location.href);
+  } catch {
+    return null;
+  }
+  const image = [...document.querySelectorAll('img')].find((candidate) => {
+    const values = [
+      candidate.currentSrc,
+      candidate.getAttribute('src'),
+      candidate.getAttribute('data-src'),
+      candidate.getAttribute('data-original'),
+    ];
+    return values.some((value) => {
+      if (!value) return false;
+      try {
+        return new URL(value, location.href).href === target.href;
+      } catch {
+        return false;
+      }
+    });
+  });
+  if (!image) return null;
+
+  const policy = String(
+    image.getAttribute('referrerpolicy')
+      || document.referrerPolicy
+      || 'strict-origin-when-cross-origin'
+  ).trim().toLowerCase();
+  const crossOrigin = target.origin !== location.origin;
+  const origin = `${location.origin}/`;
+  const downgrade = location.protocol === 'https:' && target.protocol === 'http:';
+  if (policy === 'no-referrer'
+    || (policy === 'same-origin' && crossOrigin)
+    || (downgrade && ['strict-origin', 'strict-origin-when-cross-origin', 'no-referrer-when-downgrade'].includes(policy))) {
+    return { matched: true, referers: [''] };
+  }
+  if (policy === 'origin' || policy === 'strict-origin') {
+    return { matched: true, referers: [origin, ''] };
+  }
+  if (policy === 'strict-origin-when-cross-origin') {
+    return { matched: true, referers: crossOrigin ? [origin, ''] : [location.href, ''] };
+  }
+  if (policy === 'unsafe-url' || policy === 'no-referrer-when-downgrade') {
+    return { matched: true, referers: [location.href, ''] };
+  }
+  return { matched: true, referers: crossOrigin ? [origin, ''] : [location.href, ''] };
+}
+
 async function requestBlobWithGmXhr(job) {
   const sourceReferer = previewRefererForJob(job);
+  const imageReferer = imageRefererPolicyForJob({ ...job, url: job.sourceUrl || job.url });
   const referers = sourceReferer
     ? [sourceReferer, '', location.href]
-    : [location.href, ''];
+    : imageReferer
+      ? imageReferer.referers
+      : [location.href, ''];
   let lastError = null;
   for (const referer of [...new Set(referers)]) {
     try {
@@ -918,6 +1267,33 @@ function requestBlob(job) {
   return requestBlobWithGmXhr(job);
 }
 
+async function requestImageBlobWithFallbacks(job) {
+  const candidates = [];
+  for (const value of [job.url, ...(Array.isArray(job.fallbackUrls) ? job.fallbackUrls : [])]) {
+    if (!value) continue;
+    for (const candidate of [value, ...alternateImageUrls(value)]) {
+      if (!candidates.includes(candidate)) candidates.push(candidate);
+    }
+  }
+  let lastError = null;
+  let allNotFound = candidates.length > 0;
+  for (const url of candidates) {
+    try {
+      return await requestBlob({ ...job, sourceUrl: job.url, url });
+    } catch (error) {
+      lastError = error;
+      if (!/HTTP (?:404|410)\b/i.test(String(error?.message || error))) allNotFound = false;
+      console.warn('[x1080x-ex] image source failed; trying fallback', {
+        name: job.name,
+        url: redactDiagnostic(url),
+        error: redactDiagnostic(error?.message || error),
+      });
+    }
+  }
+  if (allNotFound) return null;
+  throw lastError || new Error('没有可用的图片地址');
+}
+
 function isLikelyUnavailablePixhostPreview(job, blob) {
   if (!blob || typeof blob.size !== 'number') return false;
   const isPixhostPreview = Boolean(
@@ -928,25 +1304,12 @@ function isLikelyUnavailablePixhostPreview(job, blob) {
   return isPixhostPreview && blob.size > 0 && blob.size <= PIXHOST_PLACEHOLDER_MAX_BYTES;
 }
 
-function saveBlob(blob, name) {
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.hidden = true;
-  anchor.download = name;
-  anchor.href = objectUrl;
-  document.body.append(anchor);
-  try {
-    anchor.click();
-  } finally {
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-  }
-}
-
 async function download(job, { deferImageSave = false } = {}) {
   if (job.kind === 'torrent') {
     const result = await requestTorrentBytes(job.url);
-    saveBlob(new Blob([result.bytes], { type: 'application/x-bittorrent' }), job.name);
+    // Keep validated torrents on the original browser save path. GM_download
+    // applies its own extension whitelist and commonly rejects .torrent files.
+    const saved = await saveDownloadBlob(new Blob([result.bytes], { type: 'application/x-bittorrent' }), job.name, document, { browserDownload: true });
     console.info('[x1080x-ex] integrated torrent download', {
       name: job.name,
       hash: result.hash,
@@ -954,7 +1317,7 @@ async function download(job, { deferImageSave = false } = {}) {
       source: new URL(result.sourceUrl).hostname,
       size: result.bytes.byteLength,
     });
-    return { skipped: false };
+    return { skipped: false, ...saved };
   }
 
   let downloadJob = job;
@@ -981,7 +1344,16 @@ async function download(job, { deferImageSave = false } = {}) {
     return { skipped: true, reason: 'Pixhost 缩略图未找到可验证的大图地址' };
   }
 
-  const result = await requestBlob(downloadJob);
+  const result = job.kind === 'image'
+    ? await requestImageBlobWithFallbacks(downloadJob)
+    : await requestBlob(downloadJob);
+  if (!result && job.kind === 'image') {
+    console.info('[x1080x-ex] skipped image after all source paths returned 404/410', {
+      name: job.name,
+      url: redactDiagnostic(downloadJob.url),
+    });
+    return { skipped: true, reason: '图片源已失效（HTTP 404/410）' };
+  }
   console.info('[x1080x-ex] response', {
     kind: job.kind,
     name: job.name,
@@ -1001,16 +1373,46 @@ async function download(job, { deferImageSave = false } = {}) {
   if (job.kind === 'image' && deferImageSave) {
     return { skipped: false, blob: result.blob, name: job.name };
   }
-  saveBlob(result.blob, job.name);
-  return { skipped: false };
+  return { skipped: false, ...await saveDownloadBlob(result.blob, job.name) };
 }
 
-async function downloadAll(button) {
-  const jobs = buildDownloadJobs(document);
-  if (!jobs.length) {
-    window.alert('主楼中没有找到附件或可下载图片。');
+let activeDownloadState = null;
+
+function setDownloadStatus(button, text, label = text) {
+  if (activeDownloadState?.button === button) {
+    Object.assign(activeDownloadState, { text, label });
+    if (activeDownloadState.pathname !== location.pathname) return;
+    button = document.getElementById(BUTTON_ID) || button;
+  }
+  button.title = text;
+  button.setAttribute('aria-label', text);
+  if (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) {
+    if (button.textContent !== text) button.textContent = text;
     return;
   }
+  const count = text.match(/(?:处理中|已处理) (\d+\/\d+)/)?.[1] || '';
+  renderModernDownloadButton(button, label.startsWith('下载中') ? 'progress' : label.startsWith('⚠') ? 'error' : 'done', count);
+  button.setAttribute('aria-label', `${label}：${text}`);
+  const status = ensureModernDownloadStatus(document);
+  if (status) {
+    if (status.textContent !== text) status.textContent = text;
+    status.title = text;
+  }
+}
+
+const downloadResetTimers = new WeakMap();
+
+async function downloadAll(button) {
+  if (button.disabled || activeDownloadState) return;
+  const jobs = buildDownloadJobs(document);
+  const nativeFiles = collectModernNativeAttachments(document);
+  const totalTasks = jobs.length + nativeFiles.length;
+  if (!totalTasks) {
+    window.alert('主楼中没有找到附件、磁力链或可下载图片。');
+    return;
+  }
+  window.clearTimeout(downloadResetTimers.get(button));
+  activeDownloadState = { button, pathname: location.pathname, text: '', label: '' };
 
   const endDownloadGuard = beginDownloadGuard(document, {
     enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY),
@@ -1019,69 +1421,146 @@ async function downloadAll(button) {
   const failures = [];
   const pendingImages = [];
   let skipped = 0;
+  let processed = 0;
+  let saved = 0;
+  let started = 0;
+  const recordSave = (result) => { if (result?.confirmed) saved += 1; else started += 1; };
+  const progress = () => setDownloadStatus(button, `处理中 ${processed}/${totalTasks} · 已保存 ${saved}${started ? ` · 已发起 ${started}` : ''}`, `下载中 ${processed}/${totalTasks}`);
 
   try {
+    // Resolve the site's authorized receipt first, then save the file with the
+    // same title-based naming rules used for legacy attachments.
+    const nativeResult = { total: 0 };
+    progress();
+    for (const file of nativeFiles) {
+      try {
+        const attachment = await prepareModernAttachmentDownload(document, file);
+        if (attachment.delegated) nativeResult.total += 1;
+        else {
+          const result = await requestBlobWithPageFetch(attachment);
+          if (/(?:application\/json|text\/html)/i.test(result.contentType)) throw new Error('网站返回了错误信息，未保存为附件');
+          if (/\.zip$/i.test(attachment.name) && !/^PK(?:\x03\x04|\x05\x06|\x07\x08)/.test(await blobPrefix(result.blob))) throw new Error('网站响应不是有效 ZIP，未保存错误页');
+          recordSave(await saveDownloadBlob(result.blob, attachment.name, document, { browserDownload: true }));
+          attachment.complete();
+        }
+      } catch (error) {
+        failures.push(`${file.name}：${redactDiagnostic(error?.message || '站内附件下载失败')}`);
+      }
+      processed += 1;
+      progress();
+    }
     console.info('[x1080x-ex] environment', {
       downloadMode: typeof GM_info === 'object' ? GM_info.downloadMode : undefined,
       scriptHandler: typeof GM_info === 'object' ? GM_info.scriptHandler : undefined,
       version: typeof GM_info === 'object' ? GM_info.version : undefined,
     });
-    for (const [index, job] of jobs.entries()) {
-      button.textContent = `下载中 ${index + 1}/${jobs.length}`;
+    for (const job of jobs) {
       try {
         const result = await download(job, { deferImageSave: job.kind === 'image' });
         if (result?.skipped) {
           skipped += 1;
-          button.textContent = `已跳过失效图 ${skipped}`;
         } else if (job.kind === 'image' && result?.blob) {
           pendingImages.push(result);
+          continue;
+        } else {
+          recordSave(result);
         }
       } catch (error) {
         failures.push(`${job.name}：${redactDiagnostic(error?.message || error?.error || '未知错误')}`);
       }
+      processed += 1;
+      progress();
     }
 
-    pendingImages.forEach(({ blob, name }) => {
+    for (const { blob, name } of pendingImages) {
       const finalName = pendingImages.length === 1
         ? name.replace(/ A(?=\.[^.]+$)/i, '')
         : name;
-      saveBlob(blob, finalName);
-    });
+      try {
+        recordSave(await saveDownloadBlob(blob, finalName));
+      } catch (error) {
+        failures.push(`${finalName}：${redactDiagnostic(error?.message || '保存失败')}`);
+      }
+      processed += 1;
+      progress();
+    }
 
-    button.disabled = false;
-    button.textContent = failures.length
-      ? `完成（失败 ${failures.length}${skipped ? `，跳过 ${skipped}` : ''}）`
-      : skipped
-        ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
-        : '✓ 下载完成';
-    window.setTimeout(() => {
-      button.textContent = '⬇';
-    }, 2500);
+    const summary = [`已处理 ${processed}/${totalTasks}`, `已保存 ${saved}`];
+    if (started) summary.push(`已发起 ${started}（请查看浏览器下载列表）`);
+    if (skipped) summary.push(`跳过 ${skipped}`);
+    if (failures.length) summary.push(`失败 ${failures.length}`);
+    if (nativeResult.total) summary.push(`站内附件已请求 ${nativeResult.total}（结果请查看网站提示）`);
+    const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
+    const completedLabel = failures.length ? `⚠ 失败 ${failures.length}`
+      : started || nativeResult.total || skipped ? `✓ 已处理 ${processed}/${totalTasks}` : '✓ 下载完成';
+    setDownloadStatus(button, !modern && skipped && !failures.length
+      ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
+      : summary.join(' · '), completedLabel);
+    const visibleButton = activeDownloadState.pathname === location.pathname
+      ? document.getElementById(BUTTON_ID) || button : button;
+    downloadResetTimers.set(visibleButton, window.setTimeout(() => {
+      if (modern) renderModernDownloadButton(visibleButton);
+      else visibleButton.textContent = '⬇';
+      visibleButton.setAttribute('aria-label', '下载资源');
+    }, 2500));
 
     if (failures.length) {
       window.alert(`以下文件下载失败：\n\n${failures.join('\n')}\n\n可检查登录状态或浏览器下载权限后重试。`);
     }
   } finally {
+    button.disabled = false;
+    if (activeDownloadState.pathname === location.pathname) {
+      const visibleButton = document.getElementById(BUTTON_ID);
+      if (visibleButton) visibleButton.disabled = false;
+    }
+    activeDownloadState = null;
     endDownloadGuard();
   }
 }
 
 function addDownloadButton() {
-  if (document.getElementById(BUTTON_ID)) return;
-  const title = document.querySelector('#thread_subject');
-  const host = title?.closest('.vwthd, .ts') || title?.parentElement;
+  if (isAgaghhhHost(location) && typeof GM_getValue === 'function'
+    && GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) === false) return;
+  const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
+  const title = document.querySelector(modern ? '.thread-header h1' : '#thread_subject');
+  const actionGroup = modern ? ensureModernResourceActionGroup(document) : null;
+  if (modern) ensureModernDownloadStatus(document);
+  const host = modern
+    ? (actionGroup || title?.closest('.thread-header'))
+    : (title?.closest('.vwthd, .ts') || title?.parentElement);
   if (!title || !host) return;
 
-  const button = document.createElement('button');
+  let button = document.getElementById(BUTTON_ID);
+  if (button) {
+    if (activeDownloadState?.pathname === location.pathname) {
+      button.disabled = true;
+      setDownloadStatus(activeDownloadState.button, activeDownloadState.text, activeDownloadState.label);
+    }
+    if (modern) {
+      if (placeModernResourceActionButton(document, button)) return;
+      if (title.nextElementSibling !== button) title.after(button);
+    }
+    return;
+  }
+
+  button = document.createElement('button');
   button.id = BUTTON_ID;
   button.type = 'button';
   button.textContent = '⬇';
-  button.title = '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
+  if (modern) renderModernDownloadButton(button);
+  button.setAttribute('aria-label', '下载资源');
+  button.title = modern
+    ? '下载主楼图片、预览和种子；免费/额度附件按帖子标题命名，付费附件由网站确认'
+    : '下载主楼附件、正文大图和磁力链种子；普通帖子取最大图，FC2 帖子取全部大图';
   Object.assign(button.style, {
-    float: 'right',
+    float: modern ? 'none' : 'right',
+    display: modern ? 'inline-flex' : '',
+    alignItems: modern ? 'center' : '',
+    justifyContent: modern ? 'center' : '',
+    width: modern ? 'max-content' : '',
     position: 'relative',
     zIndex: '20',
-    margin: '0 8px 6px 6px',
+    margin: modern ? '0' : '0 8px 6px 6px',
     padding: '7px 13px',
     border: '1px solid #2878c8',
     borderRadius: '5px',
@@ -1090,11 +1569,14 @@ function addDownloadButton() {
     cursor: 'pointer',
     fontSize: '14px',
     lineHeight: '20px',
+    ...(modern ? { height: '36px', padding: '0', flexDirection: 'column', gap: '0', borderRadius: '7px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' } : {}),
   });
-  button.addEventListener('mouseenter', () => { button.style.background = '#246eaf'; });
-  button.addEventListener('mouseleave', () => { button.style.background = '#398bd4'; });
+  button.addEventListener('mouseenter', () => { if (!modern || button.dataset.downloadState === 'idle') button.style.background = '#246eaf'; });
+  button.addEventListener('mouseleave', () => { if (!modern || button.dataset.downloadState === 'idle') button.style.background = '#398bd4'; });
   button.addEventListener('click', () => void downloadAll(button));
-  host.prepend(button);
+  if (modern && placeModernResourceActionButton(document, button)) return;
+  if (modern) title.after(button);
+  else host.prepend(button);
 }
 
 function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
@@ -1166,6 +1648,7 @@ async function locateCurrentBatchProgress(button) {
       loadPage: requestBatchListPageHtml,
       collectThreads: collectForumThreadLinks,
       getId: batchOpenHistoryId,
+      getIds: batchThreadHistoryKeys,
       getScope: batchProgressScopeKey,
       maxPages: 120,
       onProgress: ({ checked, opened, unopened }) => {
@@ -1180,10 +1663,10 @@ async function locateCurrentBatchProgress(button) {
       rememberBatchProgressTarget(result.url);
       if (result.url !== location.href) window.location.assign(result.url);
       else {
-        const firstUnopened = collectForumThreadLinks(document).find((thread) => {
-          const id = batchOpenHistoryId(thread.url);
-          return !id || !new Set(historyIds).has(id);
-        });
+        const history = new Set(historyIds);
+        const firstUnopened = collectForumThreadLinks(document).find((thread) => (
+          !isBatchThreadVisited(thread, history)
+        ));
         firstUnopened?.link?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
       }
       return;
@@ -1253,6 +1736,25 @@ function addBatchOpenButton() {
   let host = document.querySelector('#pgt')
     || document.querySelector('#threadlist .th')
     || document.querySelector('#threadlist');
+  if (!host && isAgaghhhHost(location) && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) {
+    const pagination = document.querySelector('.thread-list .pgt');
+    if (pagination) {
+      host = document.getElementById(BATCH_TOOLBAR_ID);
+      if (!host) {
+        host = document.createElement('div');
+        host.id = BATCH_TOOLBAR_ID;
+        Object.assign(host.style, {
+          display: 'flex',
+          justifyContent: 'flex-end',
+          flexWrap: 'wrap',
+          gap: '8px',
+          padding: '8px 0',
+          minHeight: '42px',
+        });
+        pagination.before(host);
+      }
+    }
+  }
   if (!host) {
     host = document.querySelector('main#genesis-content .archive-description');
     if (host) {
@@ -1306,6 +1808,83 @@ function addBatchOpenButton() {
   addBatchProgressLocatorButton(host, prependButton);
 }
 
+// Keep the modern Next.js board list in sync after hydration and dynamic paging.
+function observeModernBoard() {
+  if (!isAgaghhhHost(location) || currentHost() === LEGACY_AGAGHHH_DOMAIN) return;
+  if (!document.body || typeof window.MutationObserver !== 'function') return;
+  let timer = null;
+  let previousUrl = location.href;
+  let previousHistoryTitle = '';
+  const rememberCurrentThread = () => {
+    if (!isThreadPage() || !isBatchOpenHistoryEnabled()) return;
+    const title = getThreadHeadingText(document);
+    const key = `${location.href}\n${title}`;
+    if (key === previousHistoryTitle) return;
+    if (rememberBatchOpenedThread(location.href, title)) previousHistoryTitle = key;
+  };
+  const detectRouteChange = () => {
+    if (location.href === previousUrl) return false;
+    previousUrl = location.href;
+    rememberCurrentThread();
+    if (isThreadPage() && (typeof GM_getValue !== 'function'
+      || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
+    window.dispatchEvent(new window.Event('x1080x-ex:routechange'));
+    return true;
+  };
+  const refresh = () => {
+    timer = null;
+    if (isThreadPage()) {
+      rememberCurrentThread();
+      if (typeof GM_getValue !== 'function'
+        || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
+      return;
+    }
+    if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
+    startAutomaticLegacyHistoryMigration();
+    applyBatchOpenHistory(document);
+    if (isBatchOpenEnabledForCurrentHost()) {
+      addBatchOpenButton();
+      const button = document.getElementById(BATCH_BUTTON_ID);
+      if (button && !batchOpenState) {
+        setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+      }
+    }
+  };
+  const schedule = () => {
+    if (timer !== null) window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 120);
+  };
+  const observer = new window.MutationObserver((mutations) => {
+    if (detectRouteChange()) {
+      schedule();
+      return;
+    }
+    if (isThreadPage()) {
+      rememberCurrentThread();
+      // Re-anchor on every detail-page render; addDownloadButton is idempotent.
+      if (typeof GM_getValue !== 'function'
+        || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
+      return;
+    }
+    if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return;
+    if (!mutations.some((mutation) => (
+      mutation.target?.matches?.('.thread-list, .thread-row, .thread-line, .pgt')
+      || [...mutation.addedNodes].some((node) => (
+        node.nodeType === 1 && (
+          node.matches?.('.thread-list, .thread-row, .resource-title, .pgt')
+          || node.querySelector?.('.thread-list, .thread-row, .resource-title, .pgt')
+        )
+      ))
+    ))) return;
+    schedule();
+  });
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  window.addEventListener('popstate', () => {
+    detectRouteChange();
+    schedule();
+  });
+}
+
 registerSettingsMenu();
 
 if (isAllowedHost(location.hostname, getConfiguredDomains())) {
@@ -1322,4 +1901,6 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
   }
+  startAutomaticLegacyHistoryMigration();
+  observeModernBoard();
 }

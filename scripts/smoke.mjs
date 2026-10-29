@@ -22,6 +22,12 @@ const dom = new JSDOM(`
 const calls = [];
 const saved = [];
 const revoked = [];
+const releaseDelays = [];
+const scheduleTimeout = dom.window.setTimeout.bind(dom.window);
+dom.window.setTimeout = (callback, delay) => {
+  if (delay === 10000) releaseDelays.push(delay);
+  return scheduleTimeout(callback, delay === 10000 ? 0 : delay);
+};
 let objectUrlCount = 0;
 dom.window.GM_getValue = (key, fallback) => (
   key === 'x1080x-ex:agaghhh-hdblog-preview-enabled' ? false : fallback
@@ -90,6 +96,7 @@ for (let attempt = 0; attempt < 100 && (saved.length < 3 || revoked.length < 3);
 }
 assert.equal(saved.length, 3, 'attachment, original cover and Preview should all be saved');
 assert.equal(revoked.length, 3, 'all Object URLs should be revoked');
+assert.deepEqual(releaseDelays, [10000, 10000, 10000], 'fallback Object URLs remain valid while the browser starts downloads');
 
 assert.deepEqual(calls, [
   {

@@ -39,7 +39,20 @@ export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
     )].find((anchor) => /^(?:下一页|下一頁|next|older(?: posts?)?|»|›|→)(?:\s*[»›→])?$/i
       .test(String(anchor.textContent || '').trim()));
   }
-  if (!link) return '';
+  if (!link) {
+    // The redesigned forum uses buttons for paging instead of anchor hrefs.
+    const nextButton = document.querySelector(
+      '.pgt .pg button[aria-label="下一页"], .pg button[aria-label="下一页"], .pg button[aria-label="下一頁"]'
+    );
+    if (!nextButton || nextButton.disabled) return '';
+    const url = new URL(baseUrl);
+    if (!/^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) return '';
+    const active = Number.parseInt(document.querySelector('.pgt .pg strong, .pg strong')?.textContent || '', 10);
+    const current = Number.isInteger(active) && active > 0
+      ? active : (Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+    url.searchParams.set('page', String(current + 1));
+    return url.href;
+  }
   try {
     const url = new URL(link.getAttribute('href'), baseUrl);
     return /^https?:$/.test(url.protocol) ? url.href : '';
@@ -67,6 +80,7 @@ export async function scanBatchProgressPages({
   loadPage,
   collectThreads,
   getId,
+  getIds,
   getScope,
   maxPages = 120,
   onProgress = () => {},
@@ -104,8 +118,10 @@ export async function scanBatchProgressPages({
       return { status: 'unreadable', checked, pageUrl: normalized };
     }
     const opened = threads.filter((thread) => {
-      const id = getId(thread.url);
-      return id && history.has(id);
+      const ids = typeof getIds === 'function'
+        ? getIds(thread)
+        : [getId(thread.url)];
+      return Array.isArray(ids) && ids.some((id) => id && history.has(id));
     }).length;
     const unopened = threads.length - opened;
     visitedFound ||= opened > 0;
