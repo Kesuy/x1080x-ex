@@ -1,3 +1,4 @@
+import { renderDownloadIcon } from './download-icon.js';
 import {
   buildDownloadJobs,
   collectForumThreadLinks,
@@ -1500,7 +1501,7 @@ async function downloadAll(button) {
       ? document.getElementById(BUTTON_ID) || button : button;
     downloadResetTimers.set(visibleButton, window.setTimeout(() => {
       if (modern) renderModernDownloadButton(visibleButton);
-      else visibleButton.textContent = '⬇';
+      else renderDownloadIcon(visibleButton);
       visibleButton.setAttribute('aria-label', '下载资源');
     }, 2500));
 
@@ -1546,7 +1547,7 @@ function addDownloadButton() {
   button = document.createElement('button');
   button.id = BUTTON_ID;
   button.type = 'button';
-  button.textContent = '⬇';
+  renderDownloadIcon(button);
   if (modern) renderModernDownloadButton(button);
   button.setAttribute('aria-label', '下载资源');
   button.title = modern

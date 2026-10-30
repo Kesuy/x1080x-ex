@@ -1,3 +1,4 @@
+import { DOWNLOAD_ICON_PATH } from './download-icon.js';
 const PREFIX = 'x1080x-ex:sehuatang-';
 export const SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + 'attachments-enabled';
 export const SHT_DOWNLOAD_ENABLED_KEY = PREFIX + 'attachment-download-enabled';
@@ -369,7 +370,7 @@ export function installSehuatangToolbar(document) {
             if (getSehuatangSettings().attachments) focusAttachment(link);
           });
         if (settings.download) addIcon('download-attachment', `下载附件：${name}`,
-          'M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5', () => {
+          DOWNLOAD_ICON_PATH, () => {
             status.textContent = downloadSehuatangAttachment(document, link);
             place();
           });

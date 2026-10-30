@@ -1,3 +1,4 @@
+import { preparePreviewForNativeSave } from './preview-native-save.js';
 import { getThreadHeadingText, parseThreadTitle } from './core.js';
 import {
   collectHdblogSearchResults,
@@ -536,6 +537,9 @@ export function renderAgaghhhHdblogPreview(document, result) {
   });
 
   content.append(section);
+  section.querySelectorAll('img').forEach((image) => {
+    void preparePreviewForNativeSave(image);
+  });
   return section;
 }
 

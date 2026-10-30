@@ -1,3 +1,4 @@
+import { renderDownloadIcon } from './download-icon.js';
 import { organizeSettingsPanel } from './settings-layout.js';
 import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
@@ -535,7 +536,7 @@ async function downloadJavfreePreview(button, document, locationObject, request)
   } finally {
     document.defaultView?.setTimeout(() => {
       button.disabled = false;
-      button.textContent = '⬇';
+      renderDownloadIcon(button);
       button.title = '下载 JavFree Preview，并按番号命名';
     }, 2500);
   }
@@ -561,7 +562,7 @@ function installJavfreePreviewDownloadButton(document, locationObject, request) 
   const button = document.createElement('button');
   button.id = JAVFREE_DOWNLOAD_BUTTON_ID;
   button.type = 'button';
-  button.textContent = '⬇';
+  renderDownloadIcon(button);
   button.title = '下载 JavFree Preview，并按番号命名';
   Object.assign(button.style, {
     display: 'inline-flex',

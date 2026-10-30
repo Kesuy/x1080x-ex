@@ -111,9 +111,9 @@ test('hdblog inserts copy-code button between download and search and copies the
     assert.ok(search);
     assert.equal(download.nextElementSibling, copy);
     assert.equal(copy.nextElementSibling, search);
-    assert.equal(download.style.margin, '0px 0px 4px 8px');
-    assert.equal(copy.style.margin, '0px 0px 4px 8px');
-    assert.equal(search.style.margin, '0px 0px 4px 8px');
+    assert.equal(download.style.margin, '0px');
+    assert.equal(copy.style.margin, '0px');
+    assert.equal(search.style.margin, '0px');
 
     copy.click();
     await new Promise((resolve) => setTimeout(resolve, 0));

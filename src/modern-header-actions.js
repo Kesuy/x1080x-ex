@@ -1,3 +1,4 @@
+import { DOWNLOAD_ICON_PATH } from './download-icon.js';
 const MODERN_RESOURCE_ACTIONS_ID = 'x1080x-ex-resource-actions';
 const ACTION_ORDER = [
   'x1080x-ex-download',
@@ -21,7 +22,7 @@ export function renderModernDownloadButton(button, state = 'idle', count = '') {
   const path = button.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute('d', state === 'done' ? 'm5 12 4 4L19 6'
     : state === 'error' ? 'M12 4 2 21h20L12 4m0 6v5m0 3v.1'
-      : 'M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5');
+      : DOWNLOAD_ICON_PATH);
   svg.append(path);
   const children = [svg];
   if (count) {

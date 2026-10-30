@@ -438,7 +438,8 @@ test('附件和图片先请求 Blob，再用指定 download 文件名保存；�
     await import(`../src/userscript.js?success=${Date.now()}`);
     const button = dom.window.document.querySelector('#x1080x-ex-download');
     assert.ok(button);
-    assert.equal(button.textContent, '⬇');
+    assert.ok(button.querySelector('svg path'));
+  assert.equal(button.textContent, '');
     button.click();
     await waitFor(
       () => saved.length === 2 && revoked.length === 2,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.31
+// @version      1.10.32
 // @description  一键下载主楼资源，增强 hdblog 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -21,6 +21,18 @@
 // @noframes
 // ==/UserScript==
 (() => {
+  // src/download-icon.js
+  var DOWNLOAD_ICON_PATH = "M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5";
+  function renderDownloadIcon(button) {
+    const svg = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+    for (const [key, value] of Object.entries({ viewBox: "0 0 24 24", width: "19", height: "19", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(key, value);
+    svg.style.display = "block";
+    const path = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", DOWNLOAD_ICON_PATH);
+    svg.append(path);
+    button.replaceChildren(svg);
+  }
+
   // src/core.js
   var CODE_PATTERN = /^([A-Z0-9]+-\d+[A-Z]?)\b\s*/i;
   var SUBTITLE_TAG_PATTERN = /^\[(?:中文)?(?:外掛|外挂)字幕\]\s*/i;
@@ -2138,7 +2150,7 @@ ${settings.password}`;
     const svg = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
     for (const [name, value] of Object.entries({ viewBox: "0 0 24 24", width: count ? "13" : "19", height: count ? "13" : "19", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", "data-icon": state })) svg.setAttribute(name, value);
     const path = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", state === "done" ? "m5 12 4 4L19 6" : state === "error" ? "M12 4 2 21h20L12 4m0 6v5m0 3v.1" : "M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5");
+    path.setAttribute("d", state === "done" ? "m5 12 4 4L19 6" : state === "error" ? "M12 4 2 21h20L12 4m0 6v5m0 3v.1" : DOWNLOAD_ICON_PATH);
     svg.append(path);
     const children = [svg];
     if (count) {
@@ -3480,7 +3492,7 @@ ${failures.join("\n")}`);
       const visibleButton = activeDownloadState.pathname === location.pathname ? document.getElementById(BUTTON_ID) || button : button;
       downloadResetTimers.set(visibleButton, window.setTimeout(() => {
         if (modern) renderModernDownloadButton(visibleButton);
-        else visibleButton.textContent = "\u2B07";
+        else renderDownloadIcon(visibleButton);
         visibleButton.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
       }, 2500));
       if (failures.length) {
@@ -3523,7 +3535,7 @@ ${failures.join("\n")}
     button = document.createElement("button");
     button.id = BUTTON_ID;
     button.type = "button";
-    button.textContent = "\u2B07";
+    renderDownloadIcon(button);
     if (modern) renderModernDownloadButton(button);
     button.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
     button.title = modern ? "\u4E0B\u8F7D\u4E3B\u697C\u56FE\u7247\u3001\u9884\u89C8\u548C\u79CD\u5B50\uFF1B\u514D\u8D39/\u989D\u5EA6\u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D\uFF0C\u4ED8\u8D39\u9644\u4EF6\u7531\u7F51\u7AD9\u786E\u8BA4" : "\u4E0B\u8F7D\u4E3B\u697C\u9644\u4EF6\u3001\u6B63\u6587\u5927\u56FE\u548C\u78C1\u529B\u94FE\u79CD\u5B50\uFF1B\u666E\u901A\u5E16\u5B50\u53D6\u6700\u5927\u56FE\uFF0CFC2 \u5E16\u5B50\u53D6\u5168\u90E8\u5927\u56FE";
@@ -3906,6 +3918,61 @@ ${title}`;
         button.title = originalTitle;
       }, 1200);
     }
+  }
+
+  // src/preview-native-save.js
+  function preparePreviewForNativeSave(image, request = globalThis.GM_xmlhttpRequest) {
+    const source = image.getAttribute("data-x1080x-hdblog-preview-url");
+    const view = image.ownerDocument.defaultView;
+    const urls = view?.URL;
+    if (!source || typeof request !== "function" || !urls?.createObjectURL) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let finished = false;
+      const finish = (value) => {
+        if (!finished) {
+          finished = true;
+          resolve(value);
+        }
+      };
+      const referer = image.getAttribute("data-x1080x-preview-referer");
+      try {
+        request({
+          method: "GET",
+          url: source,
+          responseType: "blob",
+          timeout: 3e4,
+          headers: { Accept: "image/*", ...referer ? { Referer: referer } : {} },
+          async onload(response) {
+            try {
+              const blob = response.response;
+              if (finished || response.status < 200 || response.status >= 300 || !blob?.size || typeof blob.arrayBuffer !== "function") return finish(false);
+              const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
+              const text = String.fromCharCode(...bytes);
+              const type = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 ? "image/jpeg" : text.startsWith("\x89PNG\r\n\n") ? "image/png" : /^GIF8[79]a/.test(text) ? "image/gif" : text.startsWith("RIFF") && text.slice(8, 12) === "WEBP" ? "image/webp" : text.slice(4, 8) === "ftyp" && /avif|avis/.test(text.slice(8)) ? "image/avif" : "";
+              if (!type || finished || !image.isConnected) return finish(false);
+              const objectUrl = urls.createObjectURL(new view.Blob([blob], { type }));
+              image.src = objectUrl;
+              const anchor = image.closest("a");
+              if (anchor) anchor.href = objectUrl;
+              view.addEventListener("pagehide", (event) => {
+                if (event.persisted) return;
+                if (image.src === objectUrl) image.src = source;
+                if (anchor?.href === objectUrl) anchor.href = source;
+                urls.revokeObjectURL(objectUrl);
+              });
+              finish(true);
+            } catch {
+              finish(false);
+            }
+          },
+          onerror: () => finish(false),
+          ontimeout: () => finish(false),
+          onabort: () => finish(false)
+        });
+      } catch {
+        finish(false);
+      }
+    });
   }
 
   // src/hdblog-search.js
@@ -4540,7 +4607,7 @@ ${title}`;
     } finally {
       document2.defaultView?.setTimeout(() => {
         button.disabled = false;
-        button.textContent = "\u2B07";
+        renderDownloadIcon(button);
         button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
       }, 2500);
     }
@@ -4563,7 +4630,7 @@ ${title}`;
     const button = document2.createElement("button");
     button.id = JAVFREE_DOWNLOAD_BUTTON_ID;
     button.type = "button";
-    button.textContent = "\u2B07";
+    renderDownloadIcon(button);
     button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
     Object.assign(button.style, {
       display: "inline-flex",
@@ -5516,7 +5583,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const view = document2.defaultView;
     const resetButton = (delay = 3e3) => {
       view?.setTimeout(() => {
-        button.textContent = "\u2B07";
+        renderDownloadIcon(button);
         button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
       }, delay);
     };
@@ -5668,6 +5735,26 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       endDownloadGuard();
     }
   }
+  function articleActions(document2) {
+    let actions = document2.getElementById("x1080x-ex-hdblog-actions");
+    if (actions) return actions;
+    const title = articleTitleElement(document2);
+    const header = title?.closest(".entry-header, header") || title?.parentElement;
+    if (!header) return null;
+    const meta = header.querySelector(".entry-meta");
+    const row = document2.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;width:100%";
+    if (meta) {
+      meta.before(row);
+      meta.style.margin = "0";
+      row.append(meta);
+    } else header.append(row);
+    actions = document2.createElement("span");
+    actions.id = "x1080x-ex-hdblog-actions";
+    actions.style.cssText = "display:inline-flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end";
+    row.append(actions);
+    return actions;
+  }
   function installDownloadButton(document2, locationObject, gmRequest2) {
     if (document2.getElementById(DOWNLOAD_BUTTON_ID)) return;
     const title = articleTitleElement(document2);
@@ -5676,7 +5763,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const button = document2.createElement("button");
     button.id = DOWNLOAD_BUTTON_ID;
     button.type = "button";
-    button.textContent = "\u2B07";
+    renderDownloadIcon(button);
     button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
     button.setAttribute("aria-label", "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE");
     Object.assign(button.style, {
@@ -5709,7 +5796,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       gmRequest2,
       initialCandidates
     ));
-    title.append(" ", button);
+    button.style.margin = "0";
+    articleActions(document2)?.append(button);
   }
   function installAgaghhhSearchButton(document2) {
     if (document2.getElementById(SEARCH_BUTTON_ID)) return;
@@ -5752,7 +5840,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       }
       openSearchTab(document2, url);
     });
-    title.append(searchButton);
+    searchButton.style.margin = "0";
+    articleActions(document2)?.append(searchButton);
   }
   function installCopyCodeButton(document2) {
     if (document2.getElementById(COPY_BUTTON_ID)) return;
@@ -5794,9 +5883,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     button.addEventListener("click", () => {
       void copyCodeWithButtonFeedback(button, document2, extractHdblogArticleCode(document2));
     });
+    button.style.margin = "0";
     if (downloadButton) downloadButton.insertAdjacentElement("afterend", button);
     else if (searchButton) searchButton.insertAdjacentElement("beforebegin", button);
-    else title.append(button);
+    else articleActions(document2)?.append(button);
   }
   function rawStoredWidth() {
     if (typeof GM_getValue !== "function") return "";
@@ -5965,7 +6055,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="show-image-download" type="checkbox">
-        \u663E\u793A\u6807\u9898\u65C1\u7684\u56FE\u7247\u4E0B\u8F7D\u6309\u94AE\uFF08\u2B07\uFF09
+        \u663E\u793A\u6587\u7AE0\u4FE1\u606F\u680F\u53F3\u4FA7\u7684\u56FE\u7247\u4E0B\u8F7D\u6309\u94AE
       </label>
       <label data-download-guard-row style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
         <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
@@ -7574,6 +7664,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       section.append(anchor);
     });
     content.append(section);
+    section.querySelectorAll("img").forEach((image) => {
+      void preparePreviewForNativeSave(image);
+    });
     return section;
   }
   async function installAgaghhhHdblogPreview(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
@@ -9113,7 +9206,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
           if (settings.download) addIcon(
             "download-attachment",
             `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${name}`,
-            "M12 3v12m0 0-4-4m4 4 4-4M5 16v5h14v-5",
+            DOWNLOAD_ICON_PATH,
             () => {
               status.textContent = downloadSehuatangAttachment(document2, link);
               place();

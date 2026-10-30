@@ -407,7 +407,8 @@ test('article download button uses an icon-only idle label', () => {
   installHdblogArticleEnhancement(dom.window.document, dom.window.location, () => {});
   const button = dom.window.document.querySelector('#x1080x-ex-hdblog-image-download');
   assert.ok(button);
-  assert.equal(button.textContent, '⬇');
+  assert.ok(button.querySelector('svg path'));
+  assert.equal(button.textContent, '');
   assert.equal(button.getAttribute('aria-label'), '下载 Pixhost Preview 大图');
 });
 
@@ -452,4 +453,20 @@ test('download-area toggle also works when provider links and Preview share one 
   assert.equal(document.querySelector('#link').style.display, 'none');
   assert.equal(document.querySelector('#preview').style.display, '');
   assert.equal(document.querySelector('#preview-link').style.display, '');
+});
+
+test('article actions follow Leave a Comment in a right-aligned group and install only once', () => {
+  const dom = articleDom({ content: '<p>Preview:</p>' });
+  const document = dom.window.document;
+  const meta = document.querySelector('.entry-meta');
+  meta.innerHTML = 'November 14, 2025 by admin <a href="#respond">Leave a Comment</a>';
+  installHdblogArticleEnhancement(document, dom.window.location, () => {});
+  installHdblogArticleEnhancement(document, dom.window.location, () => {});
+  const group = document.getElementById('x1080x-ex-hdblog-actions');
+  assert.equal(meta.nextElementSibling, group);
+  assert.equal(group.style.marginLeft, 'auto');
+  assert.equal(group.children.length, 3);
+  assert.equal(document.querySelector('.entry-title button'), null);
+  assert.equal(document.querySelectorAll('#x1080x-ex-hdblog-actions').length, 1);
+  dom.window.close();
 });

@@ -1,3 +1,4 @@
+import { renderDownloadIcon } from './download-icon.js';
 import { organizeSettingsPanel } from './settings-layout.js';
 import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
@@ -714,7 +715,7 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
   const view = document.defaultView;
   const resetButton = (delay = 3000) => {
     view?.setTimeout(() => {
-      button.textContent = '⬇';
+      renderDownloadIcon(button);
       button.title = '下载 Pixhost Preview 大图，并自动按影片番号重命名';
     }, delay);
   };
@@ -891,6 +892,27 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
   }
 }
 
+function articleActions(document) {
+  let actions = document.getElementById('x1080x-ex-hdblog-actions');
+  if (actions) return actions;
+  const title = articleTitleElement(document);
+  const header = title?.closest('.entry-header, header') || title?.parentElement;
+  if (!header) return null;
+  const meta = header.querySelector('.entry-meta');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:8px;width:100%';
+  if (meta) {
+    meta.before(row);
+    meta.style.margin = '0';
+    row.append(meta);
+  } else header.append(row);
+  actions = document.createElement('span');
+  actions.id = 'x1080x-ex-hdblog-actions';
+  actions.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end';
+  row.append(actions);
+  return actions;
+}
+
 function installDownloadButton(document, locationObject, gmRequest) {
   if (document.getElementById(DOWNLOAD_BUTTON_ID)) return;
   const title = articleTitleElement(document);
@@ -902,7 +924,7 @@ function installDownloadButton(document, locationObject, gmRequest) {
   const button = document.createElement('button');
   button.id = DOWNLOAD_BUTTON_ID;
   button.type = 'button';
-  button.textContent = '⬇';
+  renderDownloadIcon(button);
   button.title = '下载 Pixhost Preview 大图，并自动按影片番号重命名';
   button.setAttribute('aria-label', '下载 Pixhost Preview 大图');
   Object.assign(button.style, {
@@ -932,7 +954,8 @@ function installDownloadButton(document, locationObject, gmRequest) {
     initialCandidates
   ));
 
-  title.append(' ', button);
+  button.style.margin = '0';
+  articleActions(document)?.append(button);
 }
 
 function installAgaghhhSearchButton(document) {
@@ -962,7 +985,8 @@ function installAgaghhhSearchButton(document) {
     }
     openSearchTab(document, url);
   });
-  title.append(searchButton);
+  searchButton.style.margin = '0';
+  articleActions(document)?.append(searchButton);
 }
 
 function installCopyCodeButton(document) {
@@ -997,9 +1021,10 @@ function installCopyCodeButton(document) {
     void copyCodeWithButtonFeedback(button, document, extractHdblogArticleCode(document));
   });
 
+  button.style.margin = '0';
   if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
   else if (searchButton) searchButton.insertAdjacentElement('beforebegin', button);
-  else title.append(button);
+  else articleActions(document)?.append(button);
 }
 
 function rawStoredWidth() {
@@ -1193,7 +1218,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="show-image-download" type="checkbox">
-        显示标题旁的图片下载按钮（⬇）
+        显示文章信息栏右侧的图片下载按钮
       </label>
       <label data-download-guard-row style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
         <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
