@@ -523,7 +523,7 @@ function threadCode(document) {
 
 export function buildHdblogSearchUrlForThreadCode(code) {
   const keyword = hdblogSearchCodeForThreadCode(code);
-  return keyword ? `http://hdblog.me/?s=${encodeURIComponent(keyword)}` : '';
+  return keyword ? `https://javclub.me/?s=${encodeURIComponent(keyword)}` : '';
 }
 
 function openSearchTab(document, url) {
@@ -551,8 +551,8 @@ function installHdblogSearchButton(document) {
     button.id = SEARCH_BUTTON_ID;
     button.type = 'button';
     button.textContent = '🔍';
-    button.title = '按当前番号在 hdblog 搜索';
-    button.setAttribute('aria-label', '在 hdblog 搜索当前番号');
+    button.title = '按当前番号在 JavClub 搜索';
+    button.setAttribute('aria-label', '在 JavClub 搜索当前番号');
     Object.assign(button.style, {
       float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
       padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
@@ -1032,7 +1032,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     if (!Number.isInteger(previewTimeoutSeconds) || previewTimeoutSeconds < 3
       || previewTimeoutSeconds > 120
       || !Number.isInteger(previewRetries) || previewRetries < 0 || previewRetries > 5) {
-      document.defaultView?.alert('HDBLOG Preview 超时时间必须为 3–120 秒整数，失败重试次数必须为 0–5 的整数。');
+      document.defaultView?.alert('JavClub Preview 超时时间必须为 3–120 秒整数，失败重试次数必须为 0–5 的整数。');
       previewTimeoutInput.focus();
       return;
     }
