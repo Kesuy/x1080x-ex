@@ -108,3 +108,59 @@ test('98堂 settings can be saved from unrelated domain with no toolbar injectio
   });
   dom.window.close();
 });
+
+
+test('98堂 uses the same sidebar, grouped controls and styled footer as other sites', () => {
+  const dom = new JSDOM('<body></body>', { url: 'https://example.org/' });
+  const values = new Map();
+  withStore(values, () => {
+    const host = openUnifiedSettingsCenter(dom.window.document, { initialSite: 'sehuatang' });
+    const form = formIn(host, 'sehuatang');
+    const sections = [...form.querySelectorAll('[data-settings-section]')];
+    assert.deepEqual(sections.map(section => section.dataset.settingsSection), [
+      'attachments', 'reply', 'position',
+    ]);
+    assert.equal(form.querySelectorAll('[data-settings-tab]').length, 3);
+    assert.ok(form.querySelector('.sx-workspace'));
+    assert.ok(form.querySelector('.sx-footer button[data-action="cancel"]'));
+    assert.ok(form.querySelector('.sx-footer button[type="submit"]'));
+    assert.ok(form.querySelector('[data-setting="attachments"]'));
+    assert.ok(form.querySelector('[data-setting="download"]'));
+    assert.ok(form.querySelector('[data-setting="hidden-notice"]'));
+    assert.ok(form.querySelector('[data-setting="reply"]'));
+    assert.ok(form.querySelector('[data-setting="phrase"]'));
+    const reset = form.querySelector('[data-action="reset-position"]');
+    assert.ok(reset, 'existing reset-position control must not be lost when moving nodes');
+    assert.ok(form.querySelector('style').textContent.includes('.sx-group-body button[type="button"]'));
+    assert.equal(reset.closest('[data-settings-section]').dataset.settingsSection, 'position');
+    form.querySelector('[data-settings-tab="position"]').click();
+    reset.click();
+    assert.match(reset.textContent, /保存后恢复默认位置/);
+    assert.equal(host.shadowRoot.querySelector('[data-site-tab="sehuatang"]').getAttribute('data-dirty'), 'true');
+    submit(dom.window.document, form);
+    assert.equal(values.get('x1080x-ex:sehuatang-toolbar-position'), null);
+    assert.equal(host.shadowRoot.querySelector('[data-site-tab="sehuatang"]').hasAttribute('data-dirty'), false);
+  });
+  dom.window.close();
+});
+
+test('unified center styles qBittorrent action button and all existing site footers', () => {
+  const dom = new JSDOM('<body></body>', { url: 'https://example.org/' });
+  withStore(new Map(), () => {
+    const host = openUnifiedSettingsCenter(dom.window.document, { initialSite: 'x1080x' });
+    for (const site of ['x1080x', 'javclub', 'javfree', 'sehuatang']) {
+      const form = switchSite(host, site);
+      assert.ok(form.querySelector('.sx-workspace'), site + ' must have shared settings layout');
+      assert.ok(form.querySelector('.sx-nav'), site + ' must have a consistent sidebar');
+      assert.ok(form.querySelector('.sx-footer button[type="submit"]'), site + ' must have shared Save styling');
+      assert.ok(form.querySelector('style').textContent.includes('.sx-footer button'), site);
+    }
+    const qb = formIn(host, 'x1080x').querySelector('[data-action="qb-test"]');
+    assert.ok(qb);
+    assert.ok(qb.closest('.sx-group-body'));
+    const fc2 = switchSite(host, 'fc2cmadb');
+    assert.ok(fc2.classList.contains('simple'));
+    assert.ok(fc2.querySelector('button[type="submit"]'));
+  });
+  dom.window.close();
+});
