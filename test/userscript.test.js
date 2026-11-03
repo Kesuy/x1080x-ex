@@ -201,8 +201,8 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     const batchSplit = dom.window.document.querySelector('#x1080x-ex-batch-split');
     assert.equal(button.parentElement, batchSplit);
     assert.equal(batchSplit.parentElement, archiveDescription);
-    assert.equal(archiveDescription.firstElementChild, progressButton);
-    assert.equal(progressButton.nextElementSibling, batchSplit);
+    assert.equal(archiveDescription.firstElementChild, batchSplit);
+    assert.equal(batchSplit.nextElementSibling, progressButton);
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
     assert.equal(dom.window.document.querySelector('#x1080x-ex-open-page-toolbar'), null);
     assert.equal(button.textContent, '批量打开本页（2）');
@@ -1702,8 +1702,12 @@ test('bulk download waits for HDblog Preview in flight, then saves cover and Pre
   }
 });
 
-test('JavClub 列表：定位按钮靠左，批量打开靠右；运行时主按钮与下拉保持同色', async () => {
-  const dom = new JSDOM(`<!doctype html><html><body><main id="genesis-content">
+test('JavClub 列表：按钮在顶栏右侧，先批量打开后定位；运行时按钮颜色一致', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <nav class="nav-primary"><div class="wrap"><ul class="genesis-nav-menu">
+      <li><a href="/">Home</a></li><li><a href="/category/jav-censored/">JAV Censored</a></li>
+    </ul></div></nav>
+    <main id="genesis-content">
     <div class="archive-description">最新文章</div>
     <article class="entry"><header class="entry-header"><h2 class="entry-title">
       <a href="/1013749.html">START-662 新主题</a></h2></header></article>
@@ -1730,7 +1734,13 @@ test('JavClub 列表：定位按钮靠左，批量打开靠右；运行时主按
     const main = doc.getElementById('x1080x-ex-open-page');
     const dropdown = doc.getElementById('x1080x-ex-batch-mode-trigger');
     assert.ok(locator && split && main && dropdown);
-    assert.equal(locator.nextElementSibling, split, '定位应排在批量打开左侧');
+    const toolbar = doc.querySelector('.nav-primary .wrap > #x1080x-ex-open-page-toolbar');
+    assert.ok(toolbar, 'JavClub 工具栏应出现在顶栏右侧');
+    assert.equal(split.parentElement, toolbar);
+    assert.equal(locator.parentElement, toolbar);
+    assert.equal(split.nextElementSibling, locator, '批量打开应在左、定位应在右');
+    assert.equal(toolbar.style.right, '14px');
+    assert.equal(doc.querySelector('.archive-description').contains(split), false);
     assert.equal(main.style.background, dropdown.style.background);
     assert.equal(main.getAttribute('data-x1080x-count'), '1');
     assert.match(main.querySelector('svg[data-x1080x-icon="batch"]').innerHTML, /<rect/);
