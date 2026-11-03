@@ -1,4 +1,6 @@
 import { renderDownloadIcon } from './download-icon.js';
+import { registerSettingsTool } from './settings-actions.js';
+export { runSiteSettingsTool } from './settings-actions.js';
 import {
   buildDownloadJobs,
   collectForumThreadLinks,
@@ -153,23 +155,6 @@ function getConfiguredDomains() {
 
 function saveDomains(domains) {
   GM_setValue(STORAGE_KEY, domains.join('\n'));
-}
-
-const siteSettingsTools = new Map();
-
-function registerSettingsTool(id, label, action) {
-  siteSettingsTools.set(id, action);
-  if ((id === 'match-domains' || id === 'add-current-domain')
-    && typeof GM_registerMenuCommand === 'function') {
-    GM_registerMenuCommand(label, action);
-  }
-}
-
-export function runSiteSettingsTool(id) {
-  const action = siteSettingsTools.get(id);
-  if (!action) return false;
-  action();
-  return true;
 }
 
 function registerSettingsMenu() {
