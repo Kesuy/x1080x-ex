@@ -3,7 +3,7 @@
   "version": "1.10.33-beta.5",
   "private": true,
   "type": "module",
-  "description": "x1080x / hdblog / 98堂 下载与页面增强油猴脚本",
+  "description": "x1080x / JavClub / 98堂 下载与页面增强油猴脚本",
   "scripts": {
     "test": "node --test",
     "build": "node scripts/build.mjs",
