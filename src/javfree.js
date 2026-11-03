@@ -708,7 +708,6 @@ export function installJavfreeEnhancement(
   request = globalThis.GM_xmlhttpRequest
 ) {
   if (!document || !isJavfreeHost(locationObject)) return null;
-  registerJavfreeSettingsMenu(document, locationObject);
 
   if (isJavfreeSearchAutoRedirectEnabled()) {
     const target = javfreeUniqueSearchTarget(document, locationObject);
