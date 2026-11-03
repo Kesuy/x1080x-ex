@@ -1,8 +1,7 @@
 import './userscript.js';
-import {
-  installAgaghhhEnhancement,
-  installX1080xSettingsMenu,
-} from './agaghhh-enhancement.js';
+// Unified site settings are initialized after the legacy runtime.
+import { installAgaghhhEnhancement } from './agaghhh-enhancement.js';
+import { installUnifiedSettingsMenu } from './settings-center.js';
 import { installFc2cmadbEnhancement } from './fc2cmadb.js';
 import { installHdblogArticleEnhancement } from './hdblog-article.js';
 import { installHdblogImageHostSettings } from './hdblog-image-hosts.js';
@@ -13,8 +12,8 @@ import { installQbittorrentSettings } from './qbittorrent-settings.js';
 import { installHdblogJavfreeFallback, installJavfreeEnhancement } from './javfree.js';
 import { installSehuatangEnhancement } from './sehuatang.js';
 
+installUnifiedSettingsMenu();
 installFc2cmadbEnhancement();
-installX1080xSettingsMenu();
 installAgaghhhEnhancement();
 installQbittorrentSettings();
 installHdblogImageHostSettings();

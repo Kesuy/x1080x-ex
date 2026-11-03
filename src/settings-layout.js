@@ -17,6 +17,13 @@ const STYLE = `
 .sx-group-body input[type="number"], .sx-group-body input[type="text"], .sx-group-body input[type="url"], .sx-group-body input[type="password"], .sx-group-body textarea { max-width:100%; }
 .sx-group-body input:disabled, .sx-group-body textarea:disabled { opacity:.55; cursor:not-allowed; }
 .sx-group-body small { line-height:1.55; }
+.sx-group-body input[type="checkbox"] { flex:none; width:16px; height:16px; accent-color:#2563eb; cursor:pointer; }
+.sx-group-body input[type="number"], .sx-group-body input[type="text"], .sx-group-body input[type="url"], .sx-group-body input[type="password"], .sx-group-body textarea { font:inherit; border-color:#cbd5e1; border-radius:7px; }
+.sx-group-body button[type="button"] { appearance:none; padding:8px 13px; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#334155; cursor:pointer; font:600 13px/1.4 system-ui,sans-serif; }
+.sx-group-body button[type="button"]:hover:not(:disabled) { background:#f1f5f9; }
+.sx-group-body button[type="button"]:disabled { opacity:.5; cursor:not-allowed; }
+.sx-group-body button[type="button"]:focus-visible, .sx-footer button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
+.sx-footer button { appearance:none; min-height:36px; padding:8px 18px !important; font:600 13px/1.4 system-ui,sans-serif; }
 .sx-group-body > [data-batch-open-interval-row], .sx-group-body > [data-batch-open-history-row], .sx-group-body > [data-keywords-row], .sx-group-body > [data-search-filter-keywords-row] { margin-left:0 !important; padding:13px 14px; border-radius:8px; border:1px solid #e6eaf0; background:#f8fafc; }
 .sx-group-body > [data-download-guard-row] { margin-left:0 !important; }
 .sx-footer { padding:13px 24px; border-top:1px solid #e5e7eb; background:#fff; margin:0 !important; flex:none; }
@@ -183,9 +190,13 @@ export function organizeSettingsPanel(form, sections) {
 export function addSettingsExtraSection(form, spec, element) {
   if (!form?.querySelector('[data-settings-workspace]')) return false;
   const existing = form.querySelector('[data-settings-section="' + spec.key + '"]');
+  const activeKey = form.querySelector('[data-settings-tab][aria-selected="true"]')?.dataset.settingsTab;
   const group = existing
     ? { body: existing.querySelector('.sx-group-body') }
     : appendSection(form, spec);
   group.body.append(element);
+  // A dynamically added section starts visible by default. Preserve the
+  // selected tab so extra settings never leak into the active category.
+  if (!existing) activateSettingsSection(form, activeKey || spec.key);
   return true;
 }

@@ -55,9 +55,9 @@ function isHdblogHost(locationObject) {
   return ['javclub.me', 'hdblog.me'].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
-function enhanceHdblogSettingsPanel(document) {
+export function enhanceHdblogSettingsPanel(document, providedForm = null) {
   const overlay = document?.getElementById(HDBLOG_SETTINGS_PANEL_ID);
-  const panel = overlay?.querySelector('form');
+  const panel = providedForm || overlay?.querySelector('form');
   if (!panel || panel.querySelector(`[${IMAGE_HOSTS_FIELD_ATTR}]`)) return false;
 
   const label = document.createElement('label');

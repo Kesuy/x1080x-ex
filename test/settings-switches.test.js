@@ -310,7 +310,7 @@ test('hdblog batch-open history settings support limit, custom color and reset',
   });
 });
 
-test('hdblog settings menu callback opens the panel without throwing', () => {
+test('JavClub installer does not add a separate Tampermonkey menu; form remains reusable', () => {
   const dom = hdblogArticleDom();
   const values = new Map();
   const oldRegister = globalThis.GM_registerMenuCommand;
@@ -318,13 +318,13 @@ test('hdblog settings menu callback opens the panel without throwing', () => {
   globalThis.GM_registerMenuCommand = (label, callback) => callbacks.set(label, callback);
   try {
     withGm(values, () => installHdblogArticleEnhancement(dom.window.document, dom.window.location, () => {}));
-    const callback = callbacks.get('⚙️ JavClub 设置');
-    assert.equal(typeof callback, 'function');
-    assert.doesNotThrow(() => callback());
+    assert.equal(callbacks.size, 0);
+    assert.doesNotThrow(() => openHdblogSettingsPanel(dom.window.document));
     assert.ok(dom.window.document.getElementById('x1080x-ex-hdblog-settings-panel'));
   } finally {
     if (oldRegister === undefined) delete globalThis.GM_registerMenuCommand;
     else globalThis.GM_registerMenuCommand = oldRegister;
+    dom.window.close();
   }
 });
 

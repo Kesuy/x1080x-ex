@@ -229,19 +229,19 @@ test('all three switches independently control DOM, and disabling all starts no 
         assert.equal(root, undefined);
         assert.equal(listeners, 0);
       }
-      assert.ok(menus.has('⚙️ 98堂设置'));
+      assert.equal(menus.size, 0);
       assert.equal(dom.window.document.getElementById('fastpostmessage').value, '');
       dom.window.close();
     });
   }
 });
 
-test('no toolbar on list/other sites, while 98堂 menu remains available on list pages', () => {
+test('no toolbar on list or other sites, and no site-specific menu', () => {
   for (const [url, hasMenu] of [['https://sehuatang.org/forum.php?mod=forumdisplay&fid=141', true], ['https://hdblog.me/', false]]) {
     withSettings(new Map(), menus => {
       const dom = fixture(url);
       assert.equal(toolbar(dom), undefined);
-      assert.equal(menus.has('⚙️ 98堂设置'), hasMenu);
+      assert.equal(menus.size, 0);
       dom.window.close();
     });
   }
@@ -311,7 +311,7 @@ test('settings save switches and phrase immediately, reset position, and stop di
     const dom = fixture();
     const document = dom.window.document;
     toolbar(dom);
-    menus.get('⚙️ 98堂设置')();
+    openSehuatangSettings(document);
     const panel = document.getElementById('x1080x-ex-sehuatang-settings');
     panel.querySelector('[data-setting="attachments"]').checked = false;
     panel.querySelector('[data-setting="phrase"]').value = '自定义回复';

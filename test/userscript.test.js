@@ -894,7 +894,7 @@ test('1080xin inherits old batch-open history and records manually visited threa
       dom.window.document.querySelector('a[href*="tid=302"]')?.getAttribute('data-x1080x-batch-opened'), '1'
     );
     assert.match(dom.window.document.querySelector('#x1080x-ex-open-page')?.textContent || '', /未浏览（1）/);
-    assert.ok([...menus.keys()].some((name) => name.includes('设置 x1080x 站点域名')));
+    assert.deepEqual([...menus.keys()], ['⚙️ 设置匹配域名', '➕ 添加当前域名']);
     assert.deepEqual(values.get('x1080x-ex:agaghhh-batch-open-history'), ['tid:302']);
   } finally {
     restore();
@@ -1380,8 +1380,8 @@ test('history diagnosis distinguishes loaded old TIDs from records with a usable
   globalThis.GM_registerMenuCommand = (name, callback) => menus.set(name, callback);
   dom.window.alert = message => alerts.push(message);
   try {
-    await import(`../src/userscript.js?history-diagnosis=${Date.now()}`);
-    menus.get('🧾 检查旧版浏览记录')();
+    const { runSiteSettingsTool } = await import(`../src/userscript.js?history-diagnosis=${Date.now()}`);
+    assert.equal(runSiteSettingsTool('inspect-history'), true);
     assert.match(alerts[0], /旧版数字 TID：3 条/);
     assert.match(alerts[0], /已取得对应信息：1 条/);
     assert.match(alerts[0], /仍缺对应信息：2 条/);
@@ -1416,7 +1416,7 @@ test('local recovery import restores modern marks and unopened counts without ch
     await import(`../src/userscript.js?history-recovery-import=${Date.now()}`);
     assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（2）');
     await waitFor(() => pendingLegacyRequests.length === 2, 'automatic migration should be pending while a file is imported');
-    menus.get('📥 导入旧论坛历史恢复文件')();
+    assert.equal((await import('../src/settings-actions.js')).runSiteSettingsTool('import-history'), true);
     const root = dom.window.document.getElementById('x1080x-ex-history-import').shadowRoot;
     const input = root.querySelector('input[type="file"]');
     Object.defineProperty(input, 'files', { value: [{ size: 200, text: async () => JSON.stringify({
@@ -1479,7 +1479,7 @@ test('recorded resource IDs and hydrated title aliases survive a custom domain c
     await waitFor(() => values.get('x1080x-ex:agaghhh-history-title-aliases')?.includes('code:FNS-267'),
       'the actual asynchronously rendered title must be saved');
     assert.deepEqual(values.get('x1080x-ex:1080xin-resource-history'), ['resource:earlier', 'resource:recordedID']);
-    menus.get('🌐 设置 x1080x 站点域名')();
+    assert.equal((await import('../src/settings-actions.js')).runSiteSettingsTool('primary-domain'), true);
     assert.equal(values.get('x1080x-ex:agaghhh-primary-domain'), 'second.example.net');
     assert.ok(values.get('x1080x-ex:agaghhh-domain-aliases').includes('first.example.net'));
   } finally { visited.window.close(); await Promise.resolve(); restoreVisit(); }

@@ -1,4 +1,5 @@
 import { DOWNLOAD_ICON_PATH } from './download-icon.js';
+import { organizeSettingsPanel } from './settings-layout.js';
 const PREFIX = 'x1080x-ex:sehuatang-';
 export const SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + 'attachments-enabled';
 export const SHT_DOWNLOAD_ENABLED_KEY = PREFIX + 'attachment-download-enabled';
@@ -159,7 +160,7 @@ export function submitSehuatangQuickReply(document, phrase) {
   return { submitted: true, message: '已交给网站发表，请查看原生回复结果；如需验证码请手动完成。' };
 }
 
-export function openSehuatangSettings(document = globalThis.document) {
+export function openSehuatangSettings(document = globalThis.document, { embedded = false, onSaved } = {}) {
   if (!document?.body) return null;
   document.getElementById(PANEL_ID)?.remove();
   const settings = getSehuatangSettings();
@@ -171,19 +172,54 @@ export function openSehuatangSettings(document = globalThis.document) {
   Object.assign(form.style, { width: 'min(440px, 100%)', maxHeight: '85vh', overflow: 'auto',
     padding: '24px', boxSizing: 'border-box', background: '#fff', color: '#222',
     borderRadius: '12px', font: '14px/1.7 system-ui, sans-serif' });
-  form.innerHTML = `<h2 style="margin:0 0 16px">98堂设置</h2>
-    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="attachments"> 附件列表显示定位图标</label>
-    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="download"> 附件列表显示下载图标</label>
-    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="reply"> 显示「快捷回复」按钮</label>
-    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="hidden-notice"> 提示楼主回复后可见的隐藏内容</label>
-    <label style="display:block">回复短语<textarea data-setting="phrase" rows="3" style="display:block;width:100%;box-sizing:border-box;margin-top:6px"></textarea></label>
-    <p>点击快捷回复会立即使用该短语发表，已有草稿时保留草稿。验证码、权限和限流仍由网站处理。</p>
-    <p>浮动栏直接列出楼主附件，每个文件右侧提供定位和下载图标；悬浮图标可查看用途。下载沿用网站原生链接、权限及付费确认。</p>
-    <p>拖动浮动栏顶部可移动并记住位置，按钮随页面滚动保持可见。</p>
-    <button type="button" data-action="reset-position">重置按钮位置</button>
+  form.innerHTML = `
+    <h2 style="margin:0 0 18px;font-size:20px">98堂设置</h2>
+    <div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="attachments" style="margin-top:3px">
+        <span><strong>附件定位图标</strong><small style="display:block;color:#64748b;margin-top:3px">在楼主附件旁显示定位按钮，点击跳到对应附件。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="download" style="margin-top:3px">
+        <span><strong>附件下载图标</strong><small style="display:block;color:#64748b;margin-top:3px">沿用网站原生下载链接，仍需遵守原有权限和付费规则。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
+        <span><strong>回复后可见内容提示</strong><small style="display:block;color:#64748b;margin-top:3px">提示楼主回复后可见的内容，不会自动绕过限制。</small></span>
+      </label>
+    </div>
+    <div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="reply" style="margin-top:3px">
+        <span><strong>快捷回复按钮</strong><small style="display:block;color:#64748b;margin-top:3px">点击后交由网站发表，已有草稿不会被覆盖；验证码和权限仍由网站处理。</small></span>
+      </label>
+      <label style="display:block;margin-bottom:12px">
+        <span style="display:block;font-weight:600;margin-bottom:7px">快捷回复短语</span>
+        <textarea data-setting="phrase" rows="3" placeholder="输入快捷回复内容"
+          style="display:block;width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #cbd5e1;border-radius:7px;resize:vertical;font:inherit"></textarea>
+        <small style="display:block;color:#64748b;margin-top:5px">保存后，下次点击快捷回复会使用此短语。</small>
+      </label>
+    </div>
+    <div>
+      <div data-setting="floating-position">
+        <p style="color:#64748b;margin:0 0 12px">浮动栏显示楼主附件，支持定位、下载和快捷回复。拖动顶部可以移动并记住位置，滚动页面时仍可见。</p>
+        <button type="button" data-action="reset-position">重置浮动栏位置</button>
+        <small style="display:block;color:#64748b;margin-top:8px">点击后需保存设置才会恢复默认位置。</small>
+      </div>
+    </div>
     <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:20px">
-      <button type="button" data-action="cancel">取消</button><button type="submit">保存</button>
+      <button type="button" data-action="cancel" style="padding:7px 14px">取消</button>
+      <button type="submit" style="padding:7px 16px;font-weight:600">保存</button>
     </div>`;
+  organizeSettingsPanel(form, [
+    { key: 'attachments', title: '附件功能', description: '附件定位、下载和内容提示',
+      settings: ['attachments', 'download', 'hidden-notice'] },
+    { key: 'reply', title: '快捷回复', description: '启用快捷回复并设置回复短语',
+      settings: ['reply', 'phrase'] },
+    { key: 'position', title: '浮动栏位置', description: '浮动按钮的位置管理',
+      settings: ['floating-position'] },
+  ]);
+
   const field = (name) => form.querySelector(`[data-setting="${name}"]`);
   field('attachments').checked = settings.attachments;
   field('download').checked = settings.download;
@@ -212,12 +248,13 @@ export function openSehuatangSettings(document = globalThis.document) {
     save(SHT_REPLY_PHRASE_KEY, field('phrase').value.trim());
     if (resetPosition) save(SHT_POSITION_KEY, null);
     overlay.remove();
-    installSehuatangToolbar(document);
+    if (typeof onSaved === 'function') onSaved();
+    if (isSehuatangHost(document.defaultView?.location)) installSehuatangToolbar(document);
   });
   field('phrase').addEventListener('input', () => field('phrase').setCustomValidity(''));
   field('reply').addEventListener('change', () => field('phrase').setCustomValidity(''));
   overlay.append(form);
-  document.body.append(overlay);
+  if (!embedded) document.body.append(overlay);
   return overlay;
 }
 
@@ -431,8 +468,5 @@ export function installSehuatangEnhancement(document = globalThis.document, loca
   if (!document?.body || !isSehuatangHost(location)) return null;
   const view = document.defaultView;
   if (view && view.top !== view) return null;
-  if (typeof GM_registerMenuCommand === 'function') {
-    GM_registerMenuCommand('⚙️ 98堂设置', () => openSehuatangSettings(document));
-  }
   return installSehuatangToolbar(document);
 }

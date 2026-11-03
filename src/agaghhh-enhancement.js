@@ -715,7 +715,7 @@ function closeX1080xSettingsPanel(document) {
   document?.getElementById(SETTINGS_PANEL_ID)?.remove();
 }
 
-export function openX1080xSettingsPanel(document = globalThis.document) {
+export function openX1080xSettingsPanel(document = globalThis.document, { embedded = false, onSaved } = {}) {
   if (!document?.body) return null;
   closeX1080xSettingsPanel(document);
 
@@ -1085,12 +1085,13 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     }
     closeX1080xSettingsPanel(document);
     const view = document.defaultView;
-    if (view?.location?.reload) view.location.reload();
+    if (typeof onSaved === 'function') onSaved();
+    else if (view?.location?.reload) view.location.reload();
   });
 
   overlay.append(panel);
   root.append(overlay);
-  document.body.append(host);
+  if (!embedded) document.body.append(host);
   return overlay;
 }
 

@@ -68,18 +68,6 @@ export function installFc2cmadbEnhancement(windowObject = globalThis.window) {
   if (!windowObject || !isFc2cmadbUrl(windowObject.location?.href)) return null;
   const documentObject = windowObject.document;
 
-  if (typeof GM_registerMenuCommand === 'function') {
-    const enabled = isFc2cmadbHdblogSearchEnabled();
-    GM_registerMenuCommand(
-      '⚙️ FC2CMADB：番号搜索 JavClub（' + (enabled ? '已开启，点击关闭' : '已关闭，点击开启') + '）',
-      () => {
-        if (typeof GM_setValue !== 'function') return;
-        GM_setValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, !enabled);
-        windowObject.alert?.('FC2CMADB 番号搜索设置已保存，刷新页面后生效。');
-      }
-    );
-  }
-
   if (!documentObject?.body || !isFc2cmadbHdblogSearchEnabled()) return null;
   const apply = () => enhanceFc2cmadbArticleCodes(documentObject);
   apply();
