@@ -7,6 +7,8 @@ import {
   parseDomainList,
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
+import { pendingAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
+import { isHdblogArticleUrl } from './hdblog-search.js';
 import {
   DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
   LEGACY_AGAGHHH_DOMAIN,
@@ -46,6 +48,12 @@ import { planHistoryRecovery } from './history-recovery.js';
 import { showHistoryImportDialog } from './history-import.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
+import {
+  BATCH_CF_SESSION_KEY,
+  BATCH_CF_EVENT_KEY,
+  isCloudflareChallengePage,
+  watchBatchCloudflareChallenge,
+} from './batch-cf-detection.js';
 import {
   ensureModernResourceActionGroup,
   placeModernResourceActionButton,
@@ -93,9 +101,14 @@ const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
 const BATCH_OPEN_HISTORY_STYLE_ID = 'x1080x-ex-batch-open-history-style';
 const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
 const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
-const DEFAULT_DOMAINS = '1080xin.com\nagaghhh.cc\nhdblog.me\nfc2cmadb.com';
+const DEFAULT_DOMAINS = '1080xin.com\nagaghhh.cc\njavclub.me\nhdblog.me\nfc2cmadb.com';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
+const BATCH_SPLIT_ID = 'x1080x-ex-batch-split';
+const BATCH_MODE_TRIGGER_ID = 'x1080x-ex-batch-mode-trigger';
+const BATCH_MODE_MENU_ID = 'x1080x-ex-batch-mode-menu';
+const BATCH_COMPACT_STYLE_ID = 'x1080x-ex-batch-compact-controls';
+const batchMenuDismissInstalled = new WeakSet();
 const BATCH_PROGRESS_BUTTON_ID = 'x1080x-ex-batch-progress-locator';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
 const REQUEST_TIMEOUT = 60000;
@@ -133,6 +146,8 @@ function getConfiguredDomains() {
   return [...new Set([
     ...(isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains),
     ...getAgaghhhDomains(),
+    'javclub.me', // Always enable the new site even with legacy custom domain settings.
+    'hdblog.me', // Keep the historical host and saved post IDs compatible.
   ])];
 }
 
@@ -257,7 +272,7 @@ function isBatchOpenEnabledForCurrentHost() {
   if (isAgaghhhHost(host)) {
     return GM_getValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, true) !== false;
   }
-  if (host === 'hdblog.me' || host.endsWith('.hdblog.me')) {
+  if (['javclub.me', 'hdblog.me'].some((domain) => host === domain || host.endsWith(`.${domain}`))) {
     return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
   }
   return true;
@@ -280,7 +295,7 @@ function batchOpenHistoryConfig() {
       kind: 'agaghhh',
     };
   }
-  if (host === 'hdblog.me' || host.endsWith('.hdblog.me')) {
+  if (['javclub.me', 'hdblog.me'].some((domain) => host === domain || host.endsWith(`.${domain}`))) {
     return {
       enabledKey: HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY,
       limitKey: HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
@@ -346,7 +361,7 @@ function batchOpenHistoryId(value) {
       const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
       return pathMatch ? `tid:${pathMatch[1]}` : '';
     }
-    const postMatch = url.pathname.match(/^\/(\d+)(?:\/|$)/);
+    const postMatch = url.pathname.match(/^\/(\d+)(?:\/|\.html$)/i);
     if (postMatch) return `post:${postMatch[1]}`;
     return `url:${url.pathname}${url.search}`;
   } catch {
@@ -642,9 +657,9 @@ function inferBatchProgressFromCurrentPage(document) {
   );
 }
 
-function collectBatchOpenThreads(document) {
+function collectBatchOpenThreads(document, unopenedOnly = isBatchOpenUnopenedOnlyEnabled()) {
   const threads = collectForumThreadLinks(document);
-  if (!isBatchOpenUnopenedOnlyEnabled()) return threads;
+  if (!unopenedOnly) return threads;
   const history = new Set(readBatchOpenHistory());
   return threads.filter((thread) => !isBatchThreadVisited(thread, history));
 }
@@ -817,7 +832,7 @@ function styleHdblogPreviewImage(image, fullUrl) {
 }
 
 function expandHdblogPreviewImages() {
-  if (!isAllowedHost(location.hostname, ['hdblog.me'])) return 0;
+  if (!isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me'])) return 0;
   const content = document.querySelector(
     'main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content'
   );
@@ -828,9 +843,13 @@ function expandHdblogPreviewImages() {
   if (!marker) return 0;
 
   const boundary = markers.find((element) => isFollowing(marker, element) && isHdblogPreviewBoundary(element));
+  const related = [...content.querySelectorAll('.yarpp, .yarpp-related, .related-posts, [class*="related-posts"]')]
+    .find((element) => isFollowing(marker, element));
   const isInPreviewRange = (element) => (
     isFollowing(marker, element)
     && (!boundary || !isFollowing(boundary, element))
+    && (!related || !isFollowing(related, element))
+    && !element.closest('.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, [class*="related-posts"]')
   );
 
   let expanded = 0;
@@ -881,7 +900,7 @@ function readBatchOpenIntervalMs(key, fallback) {
 }
 
 function batchOpenTiming() {
-  const isHdblog = isAllowedHost(location.hostname, ['hdblog.me']);
+  const isHdblog = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
   const timing = isHdblog ? HDBLOG_OPEN_TIMING : DEFAULT_OPEN_TIMING;
   const minKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY;
   const maxKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY;
@@ -917,16 +936,133 @@ function cancelBatchOpen() {
   batchOpenState.finishDelay = null;
 }
 
+
+// Keep the complete state description in an accessible, visually hidden label.
+// The icon and numeric counter are rendered separately, so existing button
+// semantics and browser-native title tooltips stay intact.
+function ensureBatchCompactStyles(document) {
+  if (document.getElementById(BATCH_COMPACT_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = BATCH_COMPACT_STYLE_ID;
+  style.textContent = `
+    #${BATCH_BUTTON_ID}[data-x1080x-compact],
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] {
+      display:inline-flex;align-items:center;justify-content:center;
+      vertical-align:middle;gap:0;
+    }
+    #${BATCH_BUTTON_ID}[data-x1080x-compact] svg,
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] svg {
+      display:block;width:18px;height:18px;flex:none;
+      fill:none;stroke:currentColor;stroke-width:2;
+      stroke-linecap:round;stroke-linejoin:round;
+    }
+    #${BATCH_BUTTON_ID}[data-x1080x-compact]::after {
+      content:attr(data-x1080x-count);font-size:13px;line-height:20px;
+      font-weight:600;font-variant-numeric:tabular-nums;
+      padding-left:5px;white-space:nowrap;
+    }
+    #${BATCH_BUTTON_ID}[data-x1080x-count=""]::after { content:none; }
+    #${BATCH_BUTTON_ID}[data-x1080x-compact] .x1080x-visually-hidden,
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] .x1080x-visually-hidden {
+      position:absolute !important;width:1px !important;height:1px !important;
+      padding:0 !important;margin:-1px !important;overflow:hidden !important;
+      clip:rect(0,0,0,0) !important;white-space:nowrap !important;
+      border:0 !important;
+    }
+  `;
+  (document.head || document.documentElement).append(style);
+}
+
+function renderCompactBatchControl(button, kind, label, count = '', tooltip = label) {
+  const doc = button.ownerDocument;
+  ensureBatchCompactStyles(doc);
+  if (button.dataset.x1080xCompact !== kind || !button.querySelector('svg[data-x1080x-icon]')) {
+    const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('data-x1080x-icon', kind);
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.innerHTML = kind === 'batch'
+      ? '<rect x="8" y="4" width="12" height="12" rx="2"/><rect x="4" y="8" width="12" height="12" rx="2"/>'
+      : '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>';
+    const hidden = doc.createElement('span');
+    hidden.className = 'x1080x-visually-hidden';
+    hidden.setAttribute('data-x1080x-label', '');
+    button.replaceChildren(svg, hidden);
+    button.dataset.x1080xCompact = kind;
+  }
+  const hidden = button.querySelector('[data-x1080x-label]');
+  if (hidden.textContent !== label) hidden.textContent = label;
+  if (button.getAttribute('data-x1080x-count') !== String(count)) {
+    button.setAttribute('data-x1080x-count', String(count));
+  }
+  if (button.title !== tooltip) button.title = tooltip;
+  if (button.getAttribute('aria-label') !== tooltip) button.setAttribute('aria-label', tooltip);
+}
+
+function updateBatchModeMenu(document) {
+  const menu = document.getElementById(BATCH_MODE_MENU_ID);
+  if (!menu) return;
+  const threads = collectForumThreadLinks(document);
+  const history = new Set(readBatchOpenHistory());
+  const unreadCount = threads.filter((thread) => !isBatchThreadVisited(thread, history)).length;
+  const canSkipRead = isBatchOpenHistoryEnabled();
+  const selected = isBatchOpenUnopenedOnlyEnabled();
+  for (const entry of menu.querySelectorAll('button[data-batch-mode]')) {
+    const unreadOnly = entry.dataset.batchMode === 'unread';
+    const disabled = unreadOnly && !canSkipRead;
+    entry.disabled = disabled || Boolean(batchOpenState);
+    entry.textContent = `${selected === unreadOnly ? '✓ ' : ''}${unreadOnly ? '仅打开未浏览' : '打开本页全部'}（${unreadOnly ? unreadCount : threads.length}）`;
+    entry.title = disabled ? '请先在设置中开启「保存批量打开记录」' : '选择此模式并立即开始批量打开';
+    entry.setAttribute('aria-checked', String(selected === unreadOnly));
+    entry.style.opacity = disabled ? '0.5' : '1';
+    entry.style.cursor = disabled ? 'not-allowed' : 'pointer';
+  }
+}
+
+function closeBatchModeMenu(document) {
+  const menu = document.getElementById(BATCH_MODE_MENU_ID);
+  const trigger = document.getElementById(BATCH_MODE_TRIGGER_ID);
+  if (menu) menu.hidden = true;
+  trigger?.setAttribute('aria-expanded', 'false');
+}
+
+function setBatchOpenMode(unreadOnly) {
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_setValue !== 'function') return false;
+  if (unreadOnly && !isBatchOpenHistoryEnabled()) return false;
+  GM_setValue(config.unopenedOnlyKey, unreadOnly);
+  return true;
+}
+
+function installBatchModeMenuDismiss(document) {
+  if (batchMenuDismissInstalled.has(document)) return;
+  batchMenuDismissInstalled.add(document);
+  document.addEventListener('click', (event) => {
+    const wrapper = document.getElementById(BATCH_SPLIT_ID);
+    if (wrapper && !wrapper.contains(event.target)) closeBatchModeMenu(document);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeBatchModeMenu(document);
+  });
+}
+
 function setBatchButtonIdle(button, count) {
   const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
   const label = unopenedOnly
     ? `批量打开未浏览（${count}）`
     : `批量打开本页（${count}）`;
-  if (button.textContent !== label) button.textContent = label;
-  button.title = unopenedOnly
-    ? '按列表顺序在后台逐个打开本页未浏览主题（以脚本浏览记录为准）；间隔随机，并定期停顿；再次点击可停止'
-    : '按列表顺序在后台逐个打开本页主题；间隔随机，并定期停顿；再次点击可停止';
+  const tooltip = unopenedOnly
+    ? `${label}\n当前模式：仅打开未浏览。按列表顺序后台打开，按脚本浏览记录跳过已访问主题。\n随机间隔、定期停顿；再次点击可停止。旁边的 ▾ 可切换为打开全部。`
+    : `${label}\n当前模式：打开本页全部，包括已有浏览记录的主题。\n按列表顺序后台打开，随机间隔、定期停顿；再次点击可停止。旁边的 ▾ 可切换仅未浏览。`;
+  renderCompactBatchControl(button, 'batch', label, count, tooltip);
   button.style.background = '#398bd4';
+  const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
+  if (dropdown) {
+    dropdown.disabled = false;
+    dropdown.style.background = '#398bd4';
+  }
+  updateBatchModeMenu(document);
 }
 
 async function openCurrentPageThreads(button) {
@@ -947,8 +1083,16 @@ async function openCurrentPageThreads(button) {
     cancelled: false,
     finishDelay: null,
     timeoutId: null,
+    sessionId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    openedUrls: [],
+    previousHistory: new Set(readBatchOpenHistory()),
+    cfChallenge: null,
   };
   batchOpenState = state;
+  closeBatchModeMenu(document);
+  const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
+  if (dropdown) dropdown.disabled = true;
+  updateBatchModeMenu(document);
   rememberBatchProgressForCurrentPage(document, false);
   const failures = [];
   let opened = 0;
@@ -958,14 +1102,59 @@ async function openCurrentPageThreads(button) {
     label: '↗ 批量打开中',
   });
   button.style.background = '#b84b4b';
+  if (dropdown) dropdown.style.background = '#b84b4b';
+
+  const onCloudflare = (event) => {
+    if (!event || event.sessionId !== state.sessionId || state.cfChallenge) return;
+    state.cfChallenge = event;
+    // Do not retain an unverified challenge page as an already browsed item.
+    const historyId = batchOpenHistoryId(event.url);
+    if (historyId && !state.previousHistory.has(historyId)) {
+      const config = batchOpenHistoryConfig();
+      if (config && typeof GM_getValue === 'function' && typeof GM_setValue === 'function') {
+        const raw = GM_getValue(config.historyKey, []);
+        if (Array.isArray(raw)) {
+          GM_setValue(config.historyKey, raw.filter((entry) => entry !== historyId));
+          applyBatchOpenHistory(document);
+        }
+      }
+    }
+    cancelBatchOpen();
+    renderCompactBatchControl(button, 'batch', '检测到 Cloudflare 验证，已停止',
+      `${opened}/${threads.length}`,
+      `检测到 Cloudflare 人机验证，已停止继续打开。\n已打开 ${opened}/${threads.length} 个主题，请先手动完成验证。`);
+    button.style.background = '#b36b22';
+    if (dropdown) dropdown.style.background = '#b36b22';
+  };
+  const checkCloudflare = () => {
+    if (typeof GM_getValue === 'function') {
+      onCloudflare(GM_getValue(BATCH_CF_EVENT_KEY, null));
+    }
+  };
+  const listenerId = typeof GM_addValueChangeListener === 'function'
+    ? GM_addValueChangeListener(BATCH_CF_EVENT_KEY, (_key, _old, value) => onCloudflare(value))
+    : null;
 
   try {
     await waitForBatchDelay(randomDelay(timing.initialMin, timing.initialMax), state);
     for (const [index, thread] of threads.entries()) {
+      checkCloudflare();
       if (state.cancelled) break;
 
-      button.textContent = `停止后台打开（${opened}/${threads.length}）`;
+      renderCompactBatchControl(button, 'batch',
+        `停止后台打开（${opened}/${threads.length}）`,
+        `${opened}/${threads.length}`,
+        `正在批量打开：${opened}/${threads.length}。\n当前模式：${isBatchOpenUnopenedOnlyEnabled() ? '仅打开未浏览' : '打开本页全部'}。\n点击主按钮可停止后续主题打开。`);
       try {
+        state.openedUrls.push(thread.url);
+        if (typeof GM_setValue === 'function') {
+          GM_setValue(BATCH_CF_SESSION_KEY, {
+            id: state.sessionId,
+            host: currentHost(),
+            updatedAt: Date.now(),
+            urls: state.openedUrls.slice(-30),
+          });
+        }
         GM_openInTab(thread.url, {
           active: false,
           insert: false,
@@ -977,27 +1166,46 @@ async function openCurrentPageThreads(button) {
         failures.push(`${index + 1}. ${redactDiagnostic(error?.message || error || '打开失败')}`);
       }
 
+      checkCloudflare();
       if (index === threads.length - 1 || state.cancelled) break;
       const completedCount = index + 1;
       const isLongPause = completedCount % timing.pauseEvery === 0;
       const delay = isLongPause
         ? randomDelay(timing.pauseMin, timing.pauseMax)
         : randomDelay(timing.delayMin, timing.delayMax);
-      button.textContent = `${isLongPause ? '停顿' : '等待'} ${Math.ceil(delay / 1000)} 秒（${opened}/${threads.length}）`;
+      renderCompactBatchControl(button, 'batch',
+        `${isLongPause ? '停顿' : '等待'} ${Math.ceil(delay / 1000)} 秒（${opened}/${threads.length}）`,
+        `${opened}/${threads.length}`,
+        `批量打开已完成 ${opened}/${threads.length}。\n${isLongPause ? '定期长停顿' : '等待下一主题'}：约 ${Math.ceil(delay / 1000)} 秒。\n点击主按钮可停止。`);
       await waitForBatchDelay(delay, state);
+      checkCloudflare();
     }
   } finally {
+    if (listenerId !== null && typeof GM_removeValueChangeListener === 'function') {
+      GM_removeValueChangeListener(listenerId);
+    }
+    if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function'
+      && GM_getValue(BATCH_CF_SESSION_KEY, null)?.id === state.sessionId) {
+      GM_setValue(BATCH_CF_SESSION_KEY, null);
+    }
     endBatchOpenGuard();
     const wasCancelled = state.cancelled;
     const completedPage = !wasCancelled && failures.length === 0 && opened === threads.length;
     rememberBatchProgressForCurrentPage(document, completedPage);
     batchOpenState = null;
-    button.textContent = wasCancelled
+    if (dropdown) dropdown.disabled = false;
+    updateBatchModeMenu(document);
+    const finalLabel = state.cfChallenge
+      ? `CF 验证，已停止（${opened}/${threads.length}）`
+      : wasCancelled
       ? `已停止（已打开 ${opened}/${threads.length}）`
       : failures.length
         ? `完成（打开 ${opened}，失败 ${failures.length}）`
         : `✓ 已按顺序打开 ${opened} 个主题`;
-    button.style.background = failures.length ? '#b36b22' : '#398bd4';
+    renderCompactBatchControl(button, 'batch', finalLabel,
+      `${opened}/${threads.length}`,
+      `${finalLabel}\n${state.cfChallenge ? '请手动完成 Cloudflare 验证。' : failures.length ? '请查看失败提示。' : '可以继续使用批量打开模式菜单。'}`);
+    button.style.background = (failures.length || state.cfChallenge) ? '#b36b22' : '#398bd4';
     window.setTimeout(() => {
       if (!batchOpenState) {
         setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
@@ -1005,6 +1213,14 @@ async function openCurrentPageThreads(button) {
     }, 3000);
   }
 
+  if (state.cfChallenge) {
+    window.alert(
+      `批量打开已自动停止：检测到 Cloudflare 人机验证。\n\n`
+      + `验证页：${state.cfChallenge.url}\n`
+      + `已打开 ${opened}/${threads.length} 个主题。\n\n`
+      + '请切换到验证标签页，手动完成验证后，再回列表重新点击批量打开。'
+    );
+  }
   if (failures.length) {
     window.alert(`以下主题打开失败：\n\n${failures.join('\n')}`);
   }
@@ -1405,6 +1621,37 @@ const downloadResetTimers = new WeakMap();
 
 async function downloadAll(button) {
   if (button.disabled || activeDownloadState) return;
+
+  // The modern forum's Preview is appended asynchronously. If HDblog (or a
+  // configured fallback) is still loading, snapshotting the DOM now silently
+  // drops Preview from the job count and the downloaded files.
+  const pendingPreview = isAgaghhhHost(location)
+    ? pendingAgaghhhHdblogPreview(document)
+    : null;
+  if (pendingPreview) {
+    const downloadPath = location.pathname;
+    activeDownloadState = { button, pathname: downloadPath, text: '', label: '' };
+    button.disabled = true;
+    const endPreparationGuard = beginDownloadGuard(document, {
+      enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY),
+    });
+    try {
+      setDownloadStatus(button, '正在等待 Preview 加载完成，再统计下载文件…', '下载中 · Preview');
+      await pendingPreview;
+    } catch (error) {
+      console.warn('[x1080x-ex] Preview lookup failed before download snapshot', {
+        error: redactDiagnostic(error?.message || error),
+      });
+    } finally {
+      endPreparationGuard();
+      activeDownloadState = null;
+      button.disabled = false;
+      const visible = document.getElementById(BUTTON_ID);
+      if (visible && location.pathname === downloadPath) visible.disabled = false;
+    }
+    if (location.pathname !== downloadPath) return;
+  }
+
   const jobs = buildDownloadJobs(document);
   const nativeFiles = collectModernNativeAttachments(document);
   const totalTasks = jobs.length + nativeFiles.length;
@@ -1583,10 +1830,10 @@ function addDownloadButton() {
 function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
   if (!button || batchProgressScanState) return;
   const historyCount = readBatchOpenHistory().length;
-  button.textContent = '定位浏览进度';
-  button.title = historyCount
-    ? `跨页查找已打开与未打开主题相邻的分页（现有 ${historyCount} 条脚本记录）`
-    : '还没有保存的批量打开记录，浏览器自己的 :visited 记录不能自动读取';
+  const tooltip = historyCount
+    ? `定位浏览进度\n跨页寻找已浏览与未浏览主题的相邻位置，找到后跳转或滚动定位。\n现有 ${historyCount} 条脚本记录，查找过程中再次点击可停止。`
+    : '定位浏览进度\n目前没有脚本浏览记录，请先在设置中开启“保存批量打开记录”。\n浏览器自己的 :visited 记录不能自动读取。';
+  renderCompactBatchControl(button, 'locator', '定位浏览进度', '', tooltip);
   button.style.background = '#6d7d87';
 }
 
@@ -1625,7 +1872,8 @@ async function requestBatchListPageHtml(url) {
 async function locateCurrentBatchProgress(button) {
   if (batchProgressScanState) {
     batchProgressScanState.cancelled = true;
-    button.textContent = '正在停止查找…';
+    renderCompactBatchControl(button, 'locator', '正在停止查找…', '',
+      '定位浏览进度：正在停止跨页查找…');
     return;
   }
   if (!isBatchProgressLocatorEnabled()) return;
@@ -1638,7 +1886,8 @@ async function locateCurrentBatchProgress(button) {
   const scan = { cancelled: false };
   batchProgressScanState = scan;
   button.style.background = '#b36b22';
-  button.textContent = '正在查找分页（再次点击停止）';
+  renderCompactBatchControl(button, 'locator', '正在查找分页（再次点击停止）', '',
+    `定位浏览进度：正在跨页查找（共有 ${historyIds.length} 条历史记录）。\n再次点击可停止。`);
   try {
     const config = batchOpenHistoryConfig();
     const result = await scanBatchProgressPages({
@@ -1653,14 +1902,17 @@ async function locateCurrentBatchProgress(button) {
       getScope: batchProgressScopeKey,
       maxPages: 120,
       onProgress: ({ checked, opened, unopened }) => {
-        button.textContent = `停止查找 · 第 ${checked} 页（已开 ${opened} / 未开 ${unopened}）`;
+        renderCompactBatchControl(button, 'locator',
+          `停止查找 · 第 ${checked} 页（已开 ${opened} / 未开 ${unopened}）`, '',
+          `定位浏览进度：正在检查第 ${checked} 页。\n该页已浏览 ${opened} 条，未浏览 ${unopened} 条。\n再次点击可停止。`);
       },
       cancelled: () => scan.cancelled,
     });
 
     if (scan.cancelled || result.status === 'cancelled') return;
     if (result.status === 'found') {
-      button.textContent = `已定位到第 ${result.checked} 页`;
+      renderCompactBatchControl(button, 'locator', `已定位到第 ${result.checked} 页`, '',
+        `已找到浏览进度：第 ${result.checked} 页。\n正在跳转或滚动到未浏览主题。`);
       rememberBatchProgressTarget(result.url);
       if (result.url !== location.href) window.location.assign(result.url);
       else {
@@ -1704,7 +1956,7 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
     position: 'relative',
     zIndex: '20',
     margin: '0 8px 6px 0',
-    padding: '7px 13px',
+    padding: '7px 10px',
     border: '1px solid #5f6f7a',
     borderRadius: '5px',
     color: '#fff',
@@ -1721,9 +1973,14 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
   });
   button.addEventListener('click', () => void locateCurrentBatchProgress(button));
   refreshBatchProgressLocatorButton(button);
-  if (prependButton) {
-    const batchButton = document.getElementById(BATCH_BUTTON_ID);
-    if (batchButton?.parentElement === host) batchButton.after(button);
+  const batchWrapper = document.getElementById(BATCH_SPLIT_ID);
+  const isJavclubToolbar = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
+  if (isJavclubToolbar && batchWrapper?.parentElement === host) {
+    button.style.float = 'none';
+    button.style.margin = '0';
+    batchWrapper.after(button); // JavClub: batch open first, progress locator on the right.
+  } else if (prependButton) {
+    if (batchWrapper?.parentElement === host) batchWrapper.after(button);
     else host.prepend(button);
   } else {
     host.append(button);
@@ -1733,10 +1990,36 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
 function addBatchOpenButton() {
   if (document.getElementById(BATCH_BUTTON_ID)) return;
   const threads = collectForumThreadLinks(document);
+  const isJavclubToolbar = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
   let prependButton = false;
   let host = document.querySelector('#pgt')
     || document.querySelector('#threadlist .th')
     || document.querySelector('#threadlist');
+  // Position the listing actions in the unused right section of the Genesis
+  // navigation bar. Do not prepend controls into .archive-description.
+  if (isJavclubToolbar && document.querySelector('.nav-primary .wrap .genesis-nav-menu')) {
+    const navWrap = document.querySelector('.nav-primary .wrap');
+    host = document.getElementById(BATCH_TOOLBAR_ID);
+    if (!host) {
+      host = document.createElement('div');
+      host.id = BATCH_TOOLBAR_ID;
+      navWrap.append(host);
+    }
+    if (!navWrap.style.position) navWrap.style.position = 'relative';
+    Object.assign(host.style, {
+      position: 'absolute',
+      right: '14px',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      zIndex: '50',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: '8px',
+      whiteSpace: 'nowrap',
+    });
+    ensureBatchCompactStyles(document);
+  }
   if (!host && isAgaghhhHost(location) && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) {
     const pagination = document.querySelector('.thread-list .pgt');
     if (pagination) {
@@ -1768,31 +2051,120 @@ function addBatchOpenButton() {
         Object.assign(host.style, {
           minHeight: '42px',
           margin: '0 0 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: '8px',
         });
         firstArticle.before(host);
       }
     }
   }
   if (!threads.length || !host) return;
+  if (isJavclubToolbar) {
+    Object.assign(host.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' });
+  }
+
+  const split = document.createElement('div');
+  split.id = BATCH_SPLIT_ID;
+  Object.assign(split.style, {
+    display: 'inline-flex',
+    alignItems: 'stretch',
+    position: 'relative',
+    zIndex: '20',
+    float: isJavclubToolbar ? 'none' : 'right',
+    margin: isJavclubToolbar ? '0' : (prependButton ? '0 0 0 12px' : '0 8px 6px 12px'),
+    whiteSpace: 'nowrap',
+  });
 
   const button = document.createElement('button');
   button.id = BATCH_BUTTON_ID;
   button.type = 'button';
   Object.assign(button.style, {
-    float: 'right',
-    position: 'relative',
-    zIndex: '20',
-    margin: '0 8px 6px 12px',
-    padding: '7px 13px',
+    margin: '0',
+    padding: '7px 10px',
     border: '1px solid #2878c8',
-    borderRadius: '5px',
+    borderRadius: '5px 0 0 5px',
     color: '#fff',
     background: '#398bd4',
     cursor: 'pointer',
     fontSize: '14px',
     lineHeight: '20px',
   });
-  setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+
+  const trigger = document.createElement('button');
+  trigger.id = BATCH_MODE_TRIGGER_ID;
+  trigger.type = 'button';
+  trigger.setAttribute('aria-haspopup', 'menu');
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.setAttribute('aria-controls', BATCH_MODE_MENU_ID);
+  trigger.setAttribute('aria-label', '选择批量打开模式');
+  trigger.title = '选择批量打开模式\n仅打开未浏览：跳过脚本记录中已访问的主题。\n打开本页全部：忽略浏览历史，逐个打开本页全部主题。\n选择后立即开始并记住模式。';
+  trigger.textContent = '▾';
+  Object.assign(trigger.style, {
+    padding: '7px 9px',
+    border: '1px solid #2878c8',
+    borderLeft: '0',
+    borderRadius: '0 5px 5px 0',
+    color: '#fff',
+    background: '#398bd4',
+    cursor: 'pointer',
+    fontSize: '15px',
+    lineHeight: '20px',
+  });
+
+  const menu = document.createElement('div');
+  menu.id = BATCH_MODE_MENU_ID;
+  menu.setAttribute('role', 'menu');
+  menu.hidden = true;
+  Object.assign(menu.style, {
+    position: 'absolute',
+    top: 'calc(100% + 5px)',
+    right: '0',
+    minWidth: '228px',
+    padding: '6px',
+    background: '#171d27',
+    border: '1px solid #3b4656',
+    borderRadius: '7px',
+    boxShadow: '0 8px 24px rgba(0,0,0,.35)',
+    zIndex: '9999',
+  });
+  for (const [key, unreadOnly] of [['unread', true], ['all', false]]) {
+    const entry = document.createElement('button');
+    entry.type = 'button';
+    entry.dataset.batchMode = key;
+    entry.setAttribute('role', 'menuitemradio');
+    Object.assign(entry.style, {
+      display: 'block',
+      width: '100%',
+      padding: '9px 11px',
+      border: '0',
+      borderRadius: '4px',
+      color: '#fff',
+      background: 'transparent',
+      fontSize: '13px',
+      textAlign: 'left',
+      whiteSpace: 'nowrap',
+    });
+    entry.addEventListener('mouseenter', () => {
+      if (!entry.disabled) entry.style.background = '#324253';
+    });
+    entry.addEventListener('mouseleave', () => { entry.style.background = 'transparent'; });
+    entry.addEventListener('click', () => {
+      closeBatchModeMenu(document);
+      if (batchOpenState || !setBatchOpenMode(unreadOnly)) return;
+      setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+      void openCurrentPageThreads(button);
+    });
+    menu.append(entry);
+  }
+
+  trigger.addEventListener('click', () => {
+    if (batchOpenState) return;
+    updateBatchModeMenu(document);
+    menu.hidden = !menu.hidden;
+    trigger.setAttribute('aria-expanded', String(!menu.hidden));
+  });
   button.addEventListener('mouseenter', () => {
     if (!batchOpenState) button.style.background = '#246eaf';
   });
@@ -1800,12 +2172,12 @@ function addBatchOpenButton() {
     if (!batchOpenState) button.style.background = '#398bd4';
   });
   button.addEventListener('click', () => void openCurrentPageThreads(button));
-  if (prependButton) {
-    button.style.margin = '0 0 0 12px';
-    host.prepend(button);
-  } else {
-    host.append(button);
-  }
+
+  split.append(button, trigger, menu);
+  if (prependButton) host.prepend(split);
+  else host.append(split);
+  installBatchModeMenuDismiss(document);
+  setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
   addBatchProgressLocatorButton(host, prependButton);
 }
 
@@ -1889,6 +2261,9 @@ function observeModernBoard() {
 registerSettingsMenu();
 
 if (isAllowedHost(location.hostname, getConfiguredDomains())) {
+  watchBatchCloudflareChallenge(document, location.href);
+  // A Cloudflare interstitial is not a successfully visited thread.
+  if (!isCloudflareChallengePage(document)) {
   const expandHdblogPreview = typeof GM_getValue !== 'function'
     || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
   if (expandHdblogPreview) expandHdblogPreviewImages();
@@ -1898,10 +2273,14 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     }
     addDownloadButton();
   }
+  if (isHdblogArticleUrl(location.href) && isBatchOpenHistoryEnabled()) {
+    rememberBatchOpenedThread(location.href);
+  }
   if (isBatchOpenPage()) {
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
   }
   startAutomaticLegacyHistoryMigration();
   observeModernBoard();
+  }
 }

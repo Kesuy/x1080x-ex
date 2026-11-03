@@ -1,4 +1,11 @@
 import { renderDownloadIcon } from './download-icon.js';
+import {
+  JAVCLUB_PREVIEW_TIMEOUT_KEY,
+  JAVCLUB_PREVIEW_RETRIES_KEY,
+  DEFAULT_JAVCLUB_PREVIEW_TIMEOUT_MS,
+  DEFAULT_JAVCLUB_PREVIEW_RETRIES,
+  getJavclubPreviewLoadingSettings,
+} from './javclub-preview-loading.js';
 import { organizeSettingsPanel } from './settings-layout.js';
 import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
@@ -66,7 +73,7 @@ function normalizeText(value) {
 
 function isHdblogHost(locationObject) {
   const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 export function normalizeHdblogArticleWidth(value, fallback = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
@@ -112,6 +119,7 @@ export function isHdblogArticlePage(document, locationObject = document?.locatio
   if (title.matches('a[href]') || title.querySelector('a[href]')) return false;
   const bodyClass = document.body?.className || '';
   return /\bsingle(?:-post)?\b/i.test(bodyClass)
+    || /^\/\d+\.html$/i.test(url.pathname)
     || /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)
     || Boolean(document.querySelector('article.entry .entry-meta, article.post .entry-meta'));
 }
@@ -573,6 +581,13 @@ function previewRange(content) {
 
 function inPreviewRange(range, node) {
   if (!range || !isAfter(range.marker, node)) return false;
+  // Related works are also nested inside JavClub's article content.
+  // Never collect their thumbnail links as downloadable Preview images.
+  const element = node.nodeType === 1 ? node : node.parentElement;
+  if (element?.closest?.('.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, [class*="related-posts"]')) return false;
+  const content = element?.closest?.('.entry-content');
+  const related = content?.querySelector?.('.yarpp, .yarpp-related, .related-posts, [class*="related-posts"]');
+  if (related && isAfter(range.marker, related) && isAfter(related, node)) return false;
   return !range.boundary || !isAfter(range.boundary, node);
 }
 
@@ -870,7 +885,7 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
         showStatus('已跳过失效 Preview', 'Pixhost Preview 已失效，未下载占位图。');
         return;
       }
-      showStatus('无可下载 Preview', 'HDblog 与 JavFree 都没有可下载的 Preview。');
+      showStatus('无可下载 Preview', 'JavClub 与 JavFree 都没有可下载的 Preview。');
       return;
     }
   } catch (error) {
@@ -1195,7 +1210,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
   panel.innerHTML = `
-    <h2 style="margin:0 0 18px;font-size:20px">HDBLOG 设置</h2>
+    <h2 style="margin:0 0 18px;font-size:20px">JavClub 设置</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">文章布局</div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
@@ -1236,13 +1251,29 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <input data-setting="expand-preview" type="checkbox">
         自动展开 Preview 大图（含 Pixhost / refer 解析）
       </label>
+      <div data-preview-loading-row style="margin:0 0 12px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">Preview 读取失败设置</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:5px">超时时间（秒）
+            <input data-setting="javclub-preview-timeout" type="number" min="3" max="120" step="1" aria-label="JavClub Preview 超时时间（秒）"
+              style="width:76px;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          </label>
+          <label style="display:flex;align-items:center;gap:5px">超时重试次数
+            <input data-setting="javclub-preview-retries" type="number" min="0" max="5" step="1" aria-label="JavClub Preview 重试次数"
+              style="width:64px;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          </label>
+          <button type="button" data-action="reset-javclub-preview-settings"
+            style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">恢复默认</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">默认 30 秒、重试 2 次。适用于当前 JavClub 文章的 Pixhost / refer Preview 解析；超时或临时网络失败时重试，不重复请求明确失效的图片。与 x1080x 的 Preview 设置相互独立。</small>
+      </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
         <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
         <span>JavFree Preview 后备源<small style="display:block;margin-top:2px;color:#666">当前文章没有可用 Preview 或 Pixhost 已失效时，按番号从 javfree.me 补充第 2 张 Preview。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px">
         <input data-setting="deleted-javfree-search" type="checkbox" style="margin-top:3px">
-        <span>已删除文章自动搜索 JavFree<small style="display:block;margin-top:2px;color:#666">访问 HDblog 已删除的历史文章时，自动新开标签搜索同番号的 javfree.me。</small></span>
+        <span>已删除文章自动搜索 JavFree<small style="display:block;margin-top:2px;color:#666">访问 JavClub 或旧 HDblog 已删除的历史文章时，自动新开标签搜索同番号的 javfree.me。</small></span>
       </label>
     </div>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
@@ -1293,7 +1324,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
         <input data-setting="search-filter" type="checkbox" style="margin-top:3px">
-        <span><strong>搜索结果屏蔽与单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">仅作用于 hdblog 搜索结果页。</small></span>
+        <span><strong>搜索结果屏蔽与单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">仅作用于 JavClub 搜索结果页。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
         <input data-setting="browse-filter" type="checkbox" style="margin-top:3px">
@@ -1303,7 +1334,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <span style="display:block;font-weight:600;margin-bottom:6px">屏蔽关键词（搜索 / 正常浏览共用）</span>
         <textarea data-setting="keywords" rows="5" placeholder="留空 = 不屏蔽"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 x1080x 的 hdblog Preview 搜索复用。</small>
+        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 x1080x 的 JavClub Preview 搜索复用。</small>
       </label>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
@@ -1339,6 +1370,8 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     "description": "图片展开与失效文章的后备搜索",
     "settings": [
       "expand-preview",
+      "javclub-preview-timeout",
+      "javclub-preview-retries",
       "javfree-preview-fallback",
       "deleted-javfree-search"
     ]
@@ -1381,6 +1414,9 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
   const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
   const previewInput = panel.querySelector('[data-setting="expand-preview"]');
+  const previewTimeoutInput = panel.querySelector('[data-setting="javclub-preview-timeout"]');
+  const previewRetriesInput = panel.querySelector('[data-setting="javclub-preview-retries"]');
+  const previewResetButton = panel.querySelector('[data-action="reset-javclub-preview-settings"]');
   const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
   const deletedJavfreeSearchInput = panel.querySelector('[data-setting="deleted-javfree-search"]');
   const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
@@ -1405,6 +1441,9 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   crossSearchInput.checked = isHdblogCrossSearchEnabled();
   copyCodeInput.checked = isHdblogCopyCodeEnabled();
   previewInput.checked = isHdblogPreviewExpansionEnabled();
+  const previewLoadingSettings = getJavclubPreviewLoadingSettings();
+  previewTimeoutInput.value = String(previewLoadingSettings.timeoutMs / 1000);
+  previewRetriesInput.value = String(previewLoadingSettings.retryCount);
   javfreePreviewInput.checked = isHdblogJavfreePreviewFallbackEnabled();
   deletedJavfreeSearchInput.checked = isHdblogDeletedJavfreeSearchEnabled();
   batchOpenInput.checked = isHdblogBatchOpenEnabled();
@@ -1425,6 +1464,9 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     downloadGuardInput.disabled = !imageDownloadInput.checked;
     keywordsInput.disabled = !searchFilterInput.checked && !browseFilterInput.checked;
     javfreePreviewInput.disabled = !previewInput.checked;
+    previewTimeoutInput.disabled = !previewInput.checked;
+    previewRetriesInput.disabled = !previewInput.checked;
+    previewResetButton.disabled = !previewInput.checked;
     const batchIntervalDisabled = !batchOpenInput.checked;
     batchIntervalMinInput.disabled = batchIntervalDisabled;
     batchIntervalMaxInput.disabled = batchIntervalDisabled;
@@ -1442,6 +1484,11 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
   previewInput.addEventListener('change', syncDependentFields);
   batchOpenInput.addEventListener('change', syncDependentFields);
   batchHistoryInput.addEventListener('change', syncDependentFields);
+  previewResetButton.addEventListener('click', () => {
+    previewTimeoutInput.value = String(DEFAULT_JAVCLUB_PREVIEW_TIMEOUT_MS / 1000);
+    previewRetriesInput.value = String(DEFAULT_JAVCLUB_PREVIEW_RETRIES);
+    previewResetButton.blur();
+  });
   batchIntervalResetButton.addEventListener('click', () => {
     batchIntervalMinInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS / 1000);
     batchIntervalMaxInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS / 1000);
@@ -1467,6 +1514,16 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         widthInput.focus();
         return;
       }
+    }
+
+    const previewTimeoutSeconds = Number(previewTimeoutInput.value);
+    const previewRetries = Number(previewRetriesInput.value);
+    if (!Number.isInteger(previewTimeoutSeconds) || previewTimeoutSeconds < 3 || previewTimeoutSeconds > 120
+      || !Number.isInteger(previewRetries) || previewRetries < 0 || previewRetries > 5
+      || !previewTimeoutInput.value.trim() || !previewRetriesInput.value.trim()) {
+      document.defaultView?.alert('JavClub Preview 超时时间必须为 3–120 秒整数，超时重试次数必须为 0–5 的整数。');
+      previewTimeoutInput.focus();
+      return;
     }
 
     const batchIntervalMinSeconds = Number(batchIntervalMinInput.value);
@@ -1500,6 +1557,8 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
       GM_setValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, copyCodeInput.checked);
       GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, previewInput.checked);
+      GM_setValue(JAVCLUB_PREVIEW_TIMEOUT_KEY, previewTimeoutSeconds * 1000);
+      GM_setValue(JAVCLUB_PREVIEW_RETRIES_KEY, previewRetries);
       GM_setValue(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
       GM_setValue(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, deletedJavfreeSearchInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
@@ -1535,7 +1594,7 @@ function registerHdblogSettingsMenu(document, locationObject) {
   if (!isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== 'function') return;
   const view = document?.defaultView;
   if (view && view.top !== view) return;
-  GM_registerMenuCommand('⚙️ hdblog 设置', () => openHdblogSettingsPanel(document));
+  GM_registerMenuCommand('⚙️ JavClub 设置', () => openHdblogSettingsPanel(document));
 }
 
 export function installHdblogArticleEnhancement(

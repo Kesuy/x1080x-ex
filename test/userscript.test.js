@@ -86,6 +86,17 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     assert.ok(progressButton);
     assert.equal(progressButton.textContent, '定位浏览进度');
     assert.equal(button.textContent, '批量打开本页（3）');
+    assert.equal(button.dataset.x1080xCompact, 'batch');
+    assert.equal(button.getAttribute('data-x1080x-count'), '3');
+    assert.ok(button.querySelector('svg[data-x1080x-icon="batch"]'));
+    assert.equal(progressButton.dataset.x1080xCompact, 'locator');
+    assert.equal(progressButton.getAttribute('data-x1080x-count'), '');
+    assert.ok(progressButton.querySelector('svg[data-x1080x-icon="locator"]'));
+    assert.match(button.title, /当前模式：打开本页全部/);
+    assert.match(progressButton.title, /跨页寻找已浏览与未浏览主题/);
+    const compactCss = dom.window.document.getElementById('x1080x-ex-batch-compact-controls');
+    assert.match(compactCss.textContent, /content:attr\(data-x1080x-count\)/);
+    assert.match(compactCss.textContent, /visually-hidden/);
     assert.equal(
       dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
       '1'
@@ -187,8 +198,11 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     assert.ok(button);
     assert.ok(progressButton);
     assert.equal(progressButton.textContent, '定位浏览进度');
-    assert.equal(button.parentElement, archiveDescription);
-    assert.equal(archiveDescription.firstElementChild, button);
+    const batchSplit = dom.window.document.querySelector('#x1080x-ex-batch-split');
+    assert.equal(button.parentElement, batchSplit);
+    assert.equal(batchSplit.parentElement, archiveDescription);
+    assert.equal(archiveDescription.firstElementChild, batchSplit);
+    assert.equal(batchSplit.nextElementSibling, progressButton);
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
     assert.equal(dom.window.document.querySelector('#x1080x-ex-open-page-toolbar'), null);
     assert.equal(button.textContent, '批量打开本页（2）');
@@ -943,6 +957,10 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     assert.ok(toolbar, 'modern board must render toolbar before pagination');
     assert.equal(toolbar.nextElementSibling?.className, 'pgt');
     assert.equal(button.textContent, '批量打开未浏览（1）');
+    assert.equal(button.getAttribute('data-x1080x-count'), '1');
+    assert.match(button.title, /当前模式：仅打开未浏览/);
+    assert.ok(button.querySelector('svg[data-x1080x-icon="batch"]'));
+    assert.ok(progress.querySelector('svg[data-x1080x-icon="locator"]'));
     assert.equal(dom.window.document.querySelector(`a[href*="${visited}"]`)?.getAttribute('data-x1080x-batch-opened'), '1');
     assert.match(dom.window.document.getElementById('x1080x-ex-batch-open-history-style').textContent, /resource-title.*#bd10e0/s);
 
@@ -978,6 +996,19 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
       'modern history marks should recover after client-side pagination');
     await waitFor(() => button.textContent === '批量打开未浏览（0）',
       'modern bulk open count should follow new list contents');
+    assert.equal(button.getAttribute('data-x1080x-count'), '0', 'compact counter follows SPA pagination');
+    assert.match(button.title, /批量打开未浏览（0）/);
+
+    // A zero-unread board still offers an all-posts action without opening settings.
+    const modeTrigger = dom.window.document.getElementById('x1080x-ex-batch-mode-trigger');
+    modeTrigger.click();
+    const allMode = dom.window.document.querySelector('[data-batch-mode="all"]');
+    assert.match(allMode.textContent, /打开本页全部（1）/);
+    allMode.click();
+    await waitFor(() => opened.length === 2, 'modern all-mode should open visited-only page');
+    assert.match(opened.at(-1).url, /5Sf2HTs5zogM0TuHJz1LD5/);
+    await waitFor(() => button.textContent === '批量打开本页（1）',
+      'modern all-mode should remain selected for the next page');
   } finally {
     dom.window.setTimeout = oldTimeout;
     dom.window.clearTimeout = oldClearTimeout;
@@ -1490,5 +1521,263 @@ test('disabled or unset history setting never saves a hydrated resource title', 
       await new Promise(resolve => dom.window.setTimeout(resolve, 0));
       assert.deepEqual(writes, []);
     } finally { dom.window.close(); await Promise.resolve(); restore(); }
+  }
+});
+
+test('split batch button switches between unopened-only and all without visiting settings', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>论坛列表</title></head><body>
+    <div id="pgt"></div>
+    <div id="threadlist"><table>
+      <tbody id="normalthread_401"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=401">已浏览</a></th></tr></tbody>
+      <tbody id="normalthread_402"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=402">未浏览</a></th></tr></tbody>
+    </table></div>
+  </body></html>`, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
+  const restore = installDomGlobals(dom.window);
+  const oldTimeout = dom.window.setTimeout;
+  const oldClearTimeout = dom.window.clearTimeout;
+  dom.window.setTimeout = (callback) => { queueMicrotask(callback); return 1; };
+  dom.window.clearTimeout = () => {};
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+    ['x1080x-ex:agaghhh-batch-open-history', ['tid:401']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  const opened = [];
+  globalThis.GM_openInTab = (url) => opened.push(new URL(url).searchParams.get('tid'));
+  try {
+    await import(`../src/userscript.js?split-open=${Date.now()}`);
+    const doc = dom.window.document;
+    const button = doc.getElementById('x1080x-ex-open-page');
+    const trigger = doc.getElementById('x1080x-ex-batch-mode-trigger');
+    const menu = doc.getElementById('x1080x-ex-batch-mode-menu');
+    assert.equal(button.textContent, '批量打开未浏览（1）');
+    trigger.click();
+    assert.equal(menu.hidden, false);
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+    const all = menu.querySelector('[data-batch-mode="all"]');
+    const unread = menu.querySelector('[data-batch-mode="unread"]');
+    assert.match(all.textContent, /打开本页全部（2）/);
+    assert.match(unread.textContent, /仅打开未浏览（1）/);
+
+    all.click();
+    assert.equal(menu.hidden, true);
+    assert.equal(values.get('x1080x-ex:agaghhh-batch-open-unopened-only'), false);
+    assert.ok(button.querySelector('svg[data-x1080x-icon="batch"]'), 'mode switching preserves icon');
+    await waitFor(() => opened.length === 2, 'all mode must open both posts');
+    await waitFor(() => button.textContent === '批量打开本页（2）', 'all mode must become default');
+    assert.deepEqual(opened, ['401', '402']);
+
+    // Simulate another unvisited item appearing after the all-mode run.
+    values.set('x1080x-ex:agaghhh-batch-open-history', ['tid:401']);
+    trigger.click();
+    assert.match(unread.textContent, /仅打开未浏览（1）/);
+    unread.click();
+    assert.equal(values.get('x1080x-ex:agaghhh-batch-open-unopened-only'), true);
+    await waitFor(() => opened.length === 3, 'unread mode must skip visited 401');
+    assert.deepEqual(opened, ['401', '402', '402']);
+  } finally {
+    dom.window.setTimeout = oldTimeout;
+    dom.window.clearTimeout = oldClearTimeout;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('split batch button disables unread-only when record saving is off', async () => {
+  const dom = new JSDOM(`<!doctype html><body><div id="pgt"></div>
+    <div id="threadlist"><table>
+      <tbody id="normalthread_401"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=401">帖子</a></th></tr></tbody>
+    </table></div>`, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
+  const restore = installDomGlobals(dom.window);
+  globalThis.GM_getValue = (key, fallback) => (
+    key === 'x1080x-ex:agaghhh-batch-open-history-enabled' ? false : fallback
+  );
+  try {
+    await import(`../src/userscript.js?split-disabled=${Date.now()}`);
+    const trigger = dom.window.document.getElementById('x1080x-ex-batch-mode-trigger');
+    assert.ok(trigger);
+    trigger.click();
+    const unread = dom.window.document.querySelector('[data-batch-mode="unread"]');
+    assert.equal(unread.disabled, true);
+    assert.match(unread.title, /保存批量打开记录/);
+    assert.ok(!dom.window.document.querySelector('[data-batch-mode="all"]').disabled);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+test('bulk download waits for HDblog Preview in flight, then saves cover and Preview', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>FNS-267</title></head><body>
+    <div class="panel detail-panel"><header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button secondary dock-side small">收藏</button>
+      </div></span></div>
+      <h1>FNS-267 [BT] Sample</h1>
+    </header></div>
+    <article id="first-post" class="post"><div class="post-content">
+      <div class="post-text"><div class="protected-text discuz-body">
+        <img class="body-image" src="https://images.example.com/fns-267-cover.jpg">
+      </div></div>
+    </div></article>
+  </body></html>`, { url: 'https://1080xin.com/resources/modernfns267?page=1' });
+  const restore = installDomGlobals(dom.window);
+  const requests = [];
+  const saved = [];
+  let articleReply = null;
+  const searchUrl = 'https://javclub.me/?s=FNS-267';
+  const articleUrl = 'https://javclub.me/8765.html';
+  const previewUrl = 'https://images.example.com/fns-267-preview.jpg';
+  const originalGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => {
+    if (key === 'x1080x-ex:agaghhh-javfree-preview-fallback-enabled') return false;
+    if (key === 'x1080x-ex:agaghhh-official-preview-fallback-enabled') return false;
+    return fallback;
+  };
+  dom.window.URL.createObjectURL = () => 'blob:preview-download-test';
+  dom.window.URL.revokeObjectURL = () => {};
+  globalThis.GM_download = (opts) => {
+    saved.push(opts.name);
+    queueMicrotask(() => opts.onload());
+  };
+  globalThis.GM_xmlhttpRequest = (opts) => {
+    requests.push({ url: opts.url, type: opts.responseType });
+    if (opts.responseType === 'text' && opts.url === searchUrl) {
+      queueMicrotask(() => opts.onload({
+        status: 200, finalUrl: searchUrl,
+        responseText: `<main id="genesis-content"><article class="entry">
+          <h2 class="entry-title"><a href="${articleUrl}">FNS-267</a></h2>
+        </article></main>`,
+      }));
+      return;
+    }
+    if (opts.responseType === 'text' && opts.url === articleUrl) {
+      articleReply = () => opts.onload({
+        status: 200, finalUrl: articleUrl,
+        responseText: `<main id="genesis-content"><article class="entry"><div class="entry-content">
+          <p>Preview:</p><p><a href="${previewUrl}"><img src="${previewUrl}"></a></p><p>BTFile:</p>
+        </div></article></main>`,
+      });
+      return;
+    }
+    if (opts.responseType === 'blob') {
+      queueMicrotask(() => opts.onload({
+        status: 200, finalUrl: opts.url,
+        responseHeaders: 'Content-Type: image/jpeg',
+        response: new dom.window.Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' }),
+      }));
+      return;
+    }
+    assert.fail(`unexpected Preview test request ${opts.url}`);
+  };
+
+  try {
+    await import(`../src/userscript.js?modern-preview-wait=${Date.now()}`);
+    const { installAgaghhhHdblogPreview } = await import('../src/agaghhh-hdblog-preview.js');
+    const previewTask = installAgaghhhHdblogPreview(
+      dom.window.document, dom.window.location, globalThis.GM_xmlhttpRequest
+    );
+    await waitFor(() => typeof articleReply === 'function', 'HDblog matching article lookup should be pending');
+
+    const button = dom.window.document.getElementById('x1080x-ex-download');
+    assert.ok(button);
+    button.click();
+    assert.equal(button.disabled, true);
+    assert.equal(saved.length, 0, 'must not snapshot/download the cover before Preview lookup finishes');
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent,
+      /等待 Preview 加载完成/);
+    articleReply();
+    await previewTask;
+    await waitFor(() => saved.length === 2 && !button.disabled, 'both images should be saved');
+    assert.deepEqual(saved, ['FNS-267 A.jpg', 'FNS-267 B.jpg']);
+    assert.ok(requests.some((request) => request.url === previewUrl && request.type === 'blob'));
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent,
+      /已处理 2\/2 · 已保存 2/);
+  } finally {
+    globalThis.GM_getValue = originalGet;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('JavClub 列表：按钮在顶栏右侧，先批量打开后定位；运行时按钮颜色一致', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <nav class="nav-primary"><div class="wrap"><ul class="genesis-nav-menu">
+      <li><a href="/">Home</a></li><li><a href="/category/jav-censored/">JAV Censored</a></li>
+    </ul></div></nav>
+    <main id="genesis-content">
+    <div class="archive-description">最新文章</div>
+    <article class="entry"><header class="entry-header"><h2 class="entry-title">
+      <a href="/1013749.html">START-662 新主题</a></h2></header></article>
+    <article class="entry"><header class="entry-header"><h2 class="entry-title">
+      <a href="/1013622.html">FC2-PPV 4999948 已访问</a></h2></header></article>
+  </main></body></html>`, { url: 'https://javclub.me/category/jav-censored/' });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1013622']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  const opened = [];
+  globalThis.GM_openInTab = (url) => opened.push(url);
+  const originalTimeout = dom.window.setTimeout;
+  dom.window.setTimeout = (callback) => { queueMicrotask(callback); return 1; };
+  try {
+    await import(`../src/userscript.js?javclub-toolbar-${Date.now()}`);
+    const doc = dom.window.document;
+    const locator = doc.getElementById('x1080x-ex-batch-progress-locator');
+    const split = doc.getElementById('x1080x-ex-batch-split');
+    const main = doc.getElementById('x1080x-ex-open-page');
+    const dropdown = doc.getElementById('x1080x-ex-batch-mode-trigger');
+    assert.ok(locator && split && main && dropdown);
+    const toolbar = doc.querySelector('.nav-primary .wrap > #x1080x-ex-open-page-toolbar');
+    assert.ok(toolbar, 'JavClub 工具栏应出现在顶栏右侧');
+    assert.equal(split.parentElement, toolbar);
+    assert.equal(locator.parentElement, toolbar);
+    assert.equal(split.nextElementSibling, locator, '批量打开应在左、定位应在右');
+    assert.equal(toolbar.style.right, '14px');
+    assert.equal(doc.querySelector('.archive-description').contains(split), false);
+    assert.equal(main.style.background, dropdown.style.background);
+    assert.equal(main.getAttribute('data-x1080x-count'), '1');
+    assert.match(main.querySelector('svg[data-x1080x-icon="batch"]').innerHTML, /<rect/);
+    main.click();
+    assert.equal(main.style.background, dropdown.style.background, '打开时主按钮和下拉同时变红');
+    await waitFor(() => opened.length === 1, 'should open only the unread JavClub article');
+    assert.deepEqual(opened, ['https://javclub.me/1013749.html']);
+    await waitFor(() => main.getAttribute('data-x1080x-count') === '0',
+      'unopened count should update after completion');
+    assert.equal(main.style.background, dropdown.style.background, '完成后主按钮和下拉同时恢复蓝色');
+    assert.ok(store.get('x1080x-ex:hdblog-batch-open-history').includes('post:1013749'));
+  } finally {
+    dom.window.setTimeout = originalTimeout;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('JavClub .html 正文浏览记入沿用的 HDblog 历史，不会丢失旧记录', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body class="single-post">
+    <main id="genesis-content"><article class="entry">
+      <header class="entry-header"><h1 class="entry-title">START-662 Sample</h1></header>
+      <div class="entry-content"><p>Preview:</p></div>
+    </article></main></body></html>`, { url: 'https://javclub.me/1013749.html' });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1013622']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  try {
+    await import(`../src/userscript.js?javclub-article-${Date.now()}`);
+    const values = store.get('x1080x-ex:hdblog-batch-open-history');
+    assert.deepEqual(values, ['post:1013622', 'post:1013749']);
+  } finally {
+    restore();
+    dom.window.close();
   }
 });

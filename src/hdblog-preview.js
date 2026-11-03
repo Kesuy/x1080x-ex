@@ -1,10 +1,14 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { isHdblogPreviewExpansionEnabled } from './hdblog-article.js';
+import { getJavclubPreviewLoadingSettings } from './javclub-preview-loading.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
 
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
 const PREVIEW_BOUNDARY_PATTERN = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
 const PREVIEW_VIEWPORT_WIDTH = 'min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))';
+// JavClub includes YARPP recommendations in the same .entry-content after Preview.
+// These are thumbnail cards, never part of the Preview gallery.
+const RELATED_CONTENT_SELECTOR = '.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, .related-posts-container, [class*="related-posts"]';
 
 function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -12,7 +16,7 @@ function normalizeText(value) {
 
 function isHdblogHost(locationObject) {
   const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 function absoluteHttpUrl(document, value) {
@@ -154,14 +158,25 @@ function isAfter(reference, node) {
 }
 
 function findBoundary(root, marker) {
-  return textNodesUnder(root).find((node) => {
+  const textBoundary = textNodesUnder(root).find((node) => {
     if (!isAfter(marker, node)) return false;
     const text = normalizeText(node.nodeValue);
-    return text && PREVIEW_BOUNDARY_PATTERN.test(text);
+    return text && (
+      PREVIEW_BOUNDARY_PATTERN.test(text)
+      || /^(?:関連作品|関連記事|関連動画|Related(?:\s+(?:Posts|Articles|Videos|Works))?)\s*[:：]?$/i.test(text)
+    );
   }) || null;
+  const relatedBoundary = [...root.querySelectorAll(RELATED_CONTENT_SELECTOR)]
+    .find((element) => isAfter(marker, element)) || null;
+  if (relatedBoundary && (!textBoundary || isAfter(relatedBoundary, textBoundary))) {
+    return relatedBoundary;
+  }
+  return textBoundary;
 }
 
 function inPreviewRange(marker, boundary, node) {
+  const element = node.nodeType === 1 ? node : node.parentElement;
+  if (element?.closest?.(RELATED_CONTENT_SELECTOR)) return false;
   if (!isAfter(marker, node)) return false;
   return !boundary || !isAfter(boundary, node);
 }
@@ -316,10 +331,13 @@ export async function expandHdblogPixhostPreviewImages(
     .map((anchor) => ({ anchor, showUrl: pixhostShowHref(document, anchor) }))
     .filter(({ showUrl }) => showUrl);
 
+  const { timeoutMs, retryCount } = getJavclubPreviewLoadingSettings();
   const results = await Promise.all(anchors.map(async ({ anchor, showUrl }) => {
     let image = anchor.querySelector('img');
     const thumbnailUrl = previewThumbnailUrl(document, image);
-    const fullUrl = await resolvePixhostShowUrl(document, showUrl, thumbnailUrl, gmRequest);
+    const fullUrl = await resolvePixhostShowUrl(
+      document, showUrl, thumbnailUrl, gmRequest, timeoutMs, retryCount
+    );
     if (!fullUrl) return false;
     if (!image) {
       image = document.createElement('img');

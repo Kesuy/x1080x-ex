@@ -72,11 +72,11 @@ test('hdblog article shows a search icon beside download and opens agaghhh searc
 });
 
 test('agaghhh builds hdblog URLs with normal and uncensored thread codes', () => {
-  assert.equal(buildHdblogSearchUrlForThreadCode('SVMGM-050'), 'http://hdblog.me/?s=SVMGM-050');
-  assert.equal(buildHdblogSearchUrlForThreadCode('1PON-121125_001'), 'http://hdblog.me/?s=121125_001');
-  assert.equal(buildHdblogSearchUrlForThreadCode('CARIB-092425-001'), 'http://hdblog.me/?s=092425-001');
-  assert.equal(buildHdblogSearchUrlForThreadCode('FC2-4906444'), 'http://hdblog.me/?s=4906444');
-  assert.equal(buildHdblogSearchUrlForThreadCode('FC2-PPV-4906444'), 'http://hdblog.me/?s=4906444');
+  assert.equal(buildHdblogSearchUrlForThreadCode('SVMGM-050'), 'https://javclub.me/?s=SVMGM-050');
+  assert.equal(buildHdblogSearchUrlForThreadCode('1PON-121125_001'), 'https://javclub.me/?s=121125_001');
+  assert.equal(buildHdblogSearchUrlForThreadCode('CARIB-092425-001'), 'https://javclub.me/?s=092425-001');
+  assert.equal(buildHdblogSearchUrlForThreadCode('FC2-4906444'), 'https://javclub.me/?s=4906444');
+  assert.equal(buildHdblogSearchUrlForThreadCode('FC2-PPV-4906444'), 'https://javclub.me/?s=4906444');
 });
 
 test('agaghhh thread shows a search icon beside download and opens hdblog search', () => {
@@ -96,8 +96,8 @@ test('agaghhh thread shows a search icon beside download and opens hdblog search
     const search = dom.window.document.querySelector('#x1080x-ex-agaghhh-hdblog-search');
     assert.ok(search);
     assert.equal(search.textContent, '🔍');
-    assert.equal(search.getAttribute('aria-label'), '在 hdblog 搜索当前番号');
+    assert.equal(search.getAttribute('aria-label'), '在 JavClub 搜索当前番号');
     search.click();
-    assert.equal(opened[0]?.url, 'http://hdblog.me/?s=121125_001');
+    assert.equal(opened[0]?.url, 'https://javclub.me/?s=121125_001');
   });
 });

@@ -52,7 +52,7 @@ export function isHdblogImagePageHost(hostname) {
 
 function isHdblogHost(locationObject) {
   const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 function enhanceHdblogSettingsPanel(document) {
@@ -90,7 +90,7 @@ function enhanceHdblogSettingsPanel(document) {
 
   if (panel.getAttribute(IMAGE_HOSTS_BOUND_ATTR) !== '1') {
     panel.setAttribute(IMAGE_HOSTS_BOUND_ATTR, '1');
-    // 使用捕获阶段，确保先于 hdblog 设置面板原本的保存/刷新逻辑执行。
+    // 使用捕获阶段，确保先于 JavClub 设置面板原本的保存/刷新逻辑执行。
     panel.addEventListener('submit', () => {
       const input = panel.querySelector('[data-setting="image-hosts"]');
       if (!input || typeof GM_setValue !== 'function') return;
@@ -107,8 +107,8 @@ export function installHdblogImageHostSettings(
 ) {
   if (!document?.body || !isHdblogHost(locationObject)) return;
 
-  // 图床配置属于 hdblog 高级设置，不再单独占用 Tampermonkey 菜单项。
-  // 当现有“hdblog 设置”面板打开时，把图床字段注入同一面板。
+  // 图床配置属于 JavClub 高级设置，不再单独占用 Tampermonkey 菜单项。
+  // 当现有“JavClub 设置”面板打开时，把图床字段注入同一面板。
   enhanceHdblogSettingsPanel(document);
 
   const MutationObserverCtor = document.defaultView?.MutationObserver || globalThis.MutationObserver;

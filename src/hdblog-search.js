@@ -39,7 +39,7 @@ export function isHdblogUrl(value) {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase().replace(/\.$/, '');
-    return host === 'hdblog.me' || host.endsWith('.hdblog.me');
+    return ['javclub.me', 'hdblog.me'].some((domain) => host === domain || host.endsWith(`.${domain}`));
   } catch {
     return false;
   }
@@ -59,7 +59,7 @@ export function isHdblogSearchUrl(value) {
 export function isHdblogArticleUrl(value) {
   try {
     const url = new URL(value);
-    return isHdblogUrl(url.href) && /^\/\d+\/[^/]+\/?$/.test(url.pathname);
+    return isHdblogUrl(url.href) && (/^\/\d+\.html$/i.test(url.pathname) || /^\/\d+\/[^/]+\/?$/.test(url.pathname));
   } catch {
     return false;
   }

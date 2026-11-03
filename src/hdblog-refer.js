@@ -3,6 +3,7 @@ import {
   expandHdblogPixhostPreviewImages,
 } from './hdblog-preview.js';
 import { isHdblogPreviewExpansionEnabled } from './hdblog-article.js';
+import { getJavclubPreviewLoadingSettings, retryJavclubPreviewRequest } from './javclub-preview-loading.js';
 
 const REQUEST_TIMEOUT = 30000;
 const PREVIEW_BOUNDARY_PATTERN = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
@@ -14,7 +15,7 @@ function normalizeText(value) {
 
 function isHdblogHostname(hostname) {
   const host = String(hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return host === 'hdblog.me' || host.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
 function absoluteHttpUrl(value, baseUrl) {
@@ -27,7 +28,7 @@ function absoluteHttpUrl(value, baseUrl) {
   }
 }
 
-export function isHdblogReferUrl(value, baseUrl = 'https://hdblog.me/') {
+export function isHdblogReferUrl(value, baseUrl = 'https://javclub.me/') {
   const href = absoluteHttpUrl(value, baseUrl);
   if (!href) return false;
   try {
@@ -88,7 +89,7 @@ function targetFromResponse(document, response, referUrl) {
   return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : '';
 }
 
-function requestReferTarget(document, referUrl, gmRequest, referer) {
+function requestReferTarget(document, referUrl, gmRequest, referer, timeoutMs = REQUEST_TIMEOUT) {
   return new Promise((resolve, reject) => {
     if (typeof gmRequest !== 'function') {
       reject(new Error('当前 userscript 管理器不支持 GM_xmlhttpRequest'));
@@ -99,25 +100,28 @@ function requestReferTarget(document, referUrl, gmRequest, referer) {
       method: 'GET',
       url: referUrl,
       responseType: 'text',
-      timeout: REQUEST_TIMEOUT,
+      timeout: timeoutMs,
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
         ...(referer ? { Referer: referer } : {}),
       },
       onload(response) {
         if (response.status >= 400 || response.status === 0) {
-          reject(new Error(`hdblog refer 请求失败（HTTP ${response.status || 0}）`));
+          reject(Object.assign(
+            new Error(`JavClub refer 请求失败（HTTP ${response.status || 0}）`),
+            { status: response.status || 0, retryable: response.status === 0 }
+          ));
           return;
         }
         const target = targetFromResponse(document, response, referUrl);
         if (!target) {
-          reject(new Error('hdblog refer 没有返回可识别的跳转地址'));
+          reject(new Error('JavClub refer 没有返回可识别的跳转地址'));
           return;
         }
         resolve(target);
       },
-      onerror: () => reject(new Error('hdblog refer 请求发生网络错误')),
-      ontimeout: () => reject(new Error('hdblog refer 请求超时')),
+      onerror: () => reject(Object.assign(new Error('JavClub refer 请求发生网络错误'), { retryable: true })),
+      ontimeout: () => reject(Object.assign(new Error('JavClub refer 请求超时'), { retryable: true })),
     });
   });
 }
@@ -125,20 +129,25 @@ function requestReferTarget(document, referUrl, gmRequest, referer) {
 export function resolveHdblogReferUrl(
   document,
   referUrl,
-  gmRequest = globalThis.GM_xmlhttpRequest
+  gmRequest = globalThis.GM_xmlhttpRequest,
+  timeoutMs = REQUEST_TIMEOUT,
+  retryCount = 0
 ) {
-  const absoluteReferUrl = absoluteHttpUrl(referUrl, document?.baseURI || 'https://hdblog.me/');
+  const absoluteReferUrl = absoluteHttpUrl(referUrl, document?.baseURI || 'https://javclub.me/');
   if (!absoluteReferUrl || !isHdblogReferUrl(absoluteReferUrl, document?.baseURI)) {
     return Promise.resolve('');
   }
   if (resolutionCache.has(absoluteReferUrl)) return resolutionCache.get(absoluteReferUrl);
 
-  const promise = requestReferTarget(
-    document,
-    absoluteReferUrl,
-    gmRequest,
-    document?.location?.href
-  ).catch(() => '');
+  const promise = retryJavclubPreviewRequest(
+    () => requestReferTarget(
+      document, absoluteReferUrl, gmRequest, document?.location?.href, timeoutMs
+    ),
+    retryCount
+  ).catch(() => {
+    resolutionCache.delete(absoluteReferUrl);
+    return '';
+  });
   resolutionCache.set(absoluteReferUrl, promise);
   return promise;
 }
@@ -178,15 +187,23 @@ function previewRange(document, locationObject) {
   const nodes = textNodesUnder(content);
   const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
   if (!marker) return null;
-  const boundary = nodes.find((node) => (
+  const textBoundary = nodes.find((node) => (
     isAfter(marker, node)
-    && PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))
+    && (
+      PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))
+      || /^(?:関連作品|関連記事|関連動画)\s*[:：]?$/i.test(normalizeText(node.nodeValue))
+    )
   )) || null;
+  const relatedBoundary = [...content.querySelectorAll('.yarpp, .yarpp-related, .related-posts')]
+    .find((node) => isAfter(marker, node)) || null;
+  const boundary = relatedBoundary && (!textBoundary || isAfter(relatedBoundary, textBoundary))
+    ? relatedBoundary : textBoundary;
   return { content, marker, boundary };
 }
 
 function inPreviewRange(range, node) {
   if (!range || !isAfter(range.marker, node)) return false;
+  if (node.closest?.('.yarpp, .yarpp-related, .related-posts')) return false;
   return !range.boundary || !isAfter(range.boundary, node);
 }
 
@@ -208,8 +225,9 @@ export async function resolveHdblogPreviewReferLinks(
 
   if (!anchors.length) return 0;
 
+  const { timeoutMs, retryCount } = getJavclubPreviewLoadingSettings();
   const results = await Promise.all(anchors.map(async ({ anchor, referUrl }) => {
-    const target = await resolveHdblogReferUrl(document, referUrl, gmRequest);
+    const target = await resolveHdblogReferUrl(document, referUrl, gmRequest, timeoutMs, retryCount);
     if (!target) return false;
     anchor.dataset.x1080xHdblogReferUrl = referUrl;
     anchor.href = target;

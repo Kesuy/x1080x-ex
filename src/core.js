@@ -428,7 +428,10 @@ export function extractThreadResources(document) {
     .filter((attachment) => attachment.url);
 
   const images = contentImages(document, content);
-  const hdblogPreviews = hdblogPreviewImages(document, content);
+  // On the modern site the injected Preview section is a sibling of .post-text
+  // inside #first-post .post-content. Restricting this scan to .post-text made
+  // visible Preview images disappear from the bulk-download job list.
+  const hdblogPreviews = hdblogPreviewImages(document, firstPost);
   const magnets = contentMagnets(content);
   const largestImage = images.reduce((largest, image) => {
     if (!largest) return image;

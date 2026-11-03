@@ -1,4 +1,5 @@
 import { isHdblogImagePageHost } from './hdblog-image-hosts.js';
+import { retryJavclubPreviewRequest } from './javclub-preview-loading.js';
 
 const PIXHOST_PAGE_HOST_PATTERN = /^(?:www\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
 const PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(.+)$/i;
@@ -121,7 +122,7 @@ export function parsePixhostImagePage(document, html, pageUrl) {
   return candidateUrl(raw, pageUrl);
 }
 
-function requestPixhostPage(showUrl, gmRequest, referer) {
+function requestPixhostPage(showUrl, gmRequest, referer, timeout = REQUEST_TIMEOUT) {
   return new Promise((resolve, reject) => {
     if (typeof gmRequest !== 'function') {
       reject(new Error('当前 userscript 管理器不支持 GM_xmlhttpRequest'));
@@ -131,7 +132,7 @@ function requestPixhostPage(showUrl, gmRequest, referer) {
       method: 'GET',
       url: showUrl,
       responseType: 'text',
-      timeout: REQUEST_TIMEOUT,
+      timeout,
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
         ...(referer ? { Referer: referer } : {}),
@@ -148,8 +149,8 @@ function requestPixhostPage(showUrl, gmRequest, referer) {
           finalUrl: response.finalUrl || response.responseURL || showUrl,
         });
       },
-      onerror: () => reject(new Error('图床页面请求发生网络错误')),
-      ontimeout: () => reject(new Error('图床页面请求超时')),
+      onerror: () => reject(Object.assign(new Error('图床页面请求发生网络错误'), { retryable: true })),
+      ontimeout: () => reject(Object.assign(new Error('图床页面请求超时'), { retryable: true })),
     });
   });
 }
@@ -158,7 +159,9 @@ export function resolvePixhostShowUrl(
   document,
   showUrl,
   thumbnailUrl = '',
-  gmRequest = globalThis.GM_xmlhttpRequest
+  gmRequest = globalThis.GM_xmlhttpRequest,
+  timeout = REQUEST_TIMEOUT,
+  retryCount = 0
 ) {
   const absoluteShowUrl = absoluteUrl(showUrl, document?.baseURI || 'https://pixhost.to/');
   if (!absoluteShowUrl || !isPixhostShowUrl(absoluteShowUrl, document?.baseURI)) {
@@ -167,14 +170,20 @@ export function resolvePixhostShowUrl(
   if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
 
   const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl, document?.baseURI || absoluteShowUrl);
-  const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document?.location?.href)
-    .then(({ html, finalUrl }) => {
+  const promise = retryJavclubPreviewRequest(
+    () => requestPixhostPage(absoluteShowUrl, gmRequest, document?.location?.href, timeout),
+    retryCount
+  ).then(({ html, finalUrl }) => {
       if (isPixhostUnavailablePage(document, html)) return '';
       return parsePixhostImagePage(document, html, finalUrl || absoluteShowUrl) || fallback;
     })
-    .catch((error) => (
-      error?.status === 404 || error?.status === 410 ? '' : fallback
-    ));
+    .catch((error) => {
+      // Do not cache a transient failure: a later attempt should be allowed to
+      // re-request the Pixhost page rather than reuse a stale fallback result.
+      if (error?.status === 404 || error?.status === 410) return '';
+      resolutionCache.delete(absoluteShowUrl);
+      return fallback;
+    });
   resolutionCache.set(absoluteShowUrl, promise);
   return promise;
 }

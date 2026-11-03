@@ -45,7 +45,7 @@ test('1PON torrent and all main-post plus Preview images use canonical sequentia
 
   renderAgaghhhHdblogPreview(dom.window.document, {
     code: '1PON-121125_001',
-    articleUrl: 'https://hdblog.me/900001/121125_001/',
+    articleUrl: 'https://javclub.me/900001/121125_001/',
     imageUrls: ['https://img.example.com/preview.jpg'],
   });
 
@@ -79,17 +79,17 @@ test('canonical 1PON code searches hdblog with 121125_001 and returns Preview im
   const requested = [];
   const gmRequest = (options) => {
     requested.push(options.url);
-    if (options.url === 'https://hdblog.me/?s=121125_001') {
+    if (options.url === 'https://javclub.me/?s=121125_001') {
       options.onload({
         status: 200,
         finalUrl: options.url,
         responseText: `<!doctype html><main id="genesis-content">
-          <article class="entry"><h2 class="entry-title"><a href="https://hdblog.me/900001/121125_001/">1pondo 121125_001 sample</a></h2></article>
+          <article class="entry"><h2 class="entry-title"><a href="https://javclub.me/900001/121125_001/">1pondo 121125_001 sample</a></h2></article>
         </main>`,
       });
       return;
     }
-    if (options.url === 'https://hdblog.me/900001/121125_001/') {
+    if (options.url === 'https://javclub.me/900001/121125_001/') {
       options.onload({
         status: 200,
         finalUrl: options.url,
@@ -106,7 +106,7 @@ test('canonical 1PON code searches hdblog with 121125_001 and returns Preview im
 
   const result = await fetchHdblogPreviewForCode('1PON-121125_001', gmRequest, browser.window.document);
   assert.equal(result.code, '1PON-121125_001');
-  assert.equal(result.articleUrl, 'https://hdblog.me/900001/121125_001/');
+  assert.equal(result.articleUrl, 'https://javclub.me/900001/121125_001/');
   assert.deepEqual(result.imageUrls, ['https://img.example.com/121125_001-preview.jpg']);
-  assert.equal(requested[0], 'https://hdblog.me/?s=121125_001');
+  assert.equal(requested[0], 'https://javclub.me/?s=121125_001');
 });
