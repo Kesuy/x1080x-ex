@@ -1626,8 +1626,8 @@ test('bulk download waits for HDblog Preview in flight, then saves cover and Pre
   const requests = [];
   const saved = [];
   let articleReply = null;
-  const searchUrl = 'https://hdblog.me/?s=FNS-267';
-  const articleUrl = 'https://hdblog.me/8765/fns-267/';
+  const searchUrl = 'https://javclub.me/?s=FNS-267';
+  const articleUrl = 'https://javclub.me/8765.html';
   const previewUrl = 'https://images.example.com/fns-267-preview.jpg';
   const originalGet = globalThis.GM_getValue;
   globalThis.GM_getValue = (key, fallback) => {
