@@ -6,6 +6,7 @@ import {
   parseBlockedKeywords,
 } from './hdblog-search.js';
 import { isHdblogReferUrl } from './hdblog-refer.js';
+import { isHdblogArticleUrl } from './hdblog-search.js';
 import { partitionPreviewCandidates } from './hdblog-preview-variants.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
 import { filterPixhostUnavailableImageUrls } from './preview-image-health.js';
@@ -466,6 +467,14 @@ export async function fetchHdblogPreviewForCode(
   if (!searchDocument) return { code: normalizedCode, articleUrl: '', imageUrls: [], blocked: [], remaining: [] };
 
   const candidates = collectHdblogSearchResults(searchDocument);
+  // Some WordPress configurations redirect a unique /?s=CODE search directly
+  // to /123.html. Accept only an article whose title contains that code.
+  if (!candidates.length && isHdblogArticleUrl(searchResponse.finalUrl)) {
+    const title = normalizeText(searchDocument.querySelector('main#genesis-content article.entry h1.entry-title')?.textContent);
+    if (title && codeTokenMatches(title, searchCode)) {
+      candidates.push({ url: searchResponse.finalUrl, title });
+    }
+  }
   const selection = chooseHdblogSearchResult(candidates, searchCode, getHdblogBlockedKeywords());
   if (!selection.selected) {
     return { code: normalizedCode, articleUrl: '', imageUrls: [], ...selection };
