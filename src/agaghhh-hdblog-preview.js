@@ -626,9 +626,17 @@ export async function installAgaghhhHdblogPreview(
   }
 
   const task = (async () => {
-    let result = await fetchHdblogPreviewWithRetries(code, gmRequest, document);
+    let result = null;
+    try {
+      result = await fetchHdblogPreviewWithRetries(code, gmRequest, document);
+    } catch (error) {
+      console.warn('[x1080x-ex] HDblog Preview search/loading failed', {
+        code, error: error?.message || String(error),
+      });
+    }
 
-    // Three HDblog checks (original + two retries) finish before any fallback.
+    // Fallback is reached only after an eligible HDblog article has exhausted
+    // its configured retries, or an actual no-result/no-Preview response.
     if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
       try {
         result = await fetchJavfreePreviewForCode(code, gmRequest, document);
