@@ -1819,7 +1819,7 @@ function refreshBatchProgressLocatorButton(button = document.getElementById(BATC
   if (!button || batchProgressScanState) return;
   const historyCount = readBatchOpenHistory().length;
   const tooltip = historyCount
-    ? `定位浏览进度\n跨页寻找已浏览与未浏览主题的相邻位置，找到后跳转或滚动定位。\n当前保存 ${historyCount} 条脚本浏览记录，查找过程中再次点击可停止。`
+    ? `定位浏览进度\n跨页寻找已浏览与未浏览主题的相邻位置，找到后跳转或滚动定位。\n现有 ${historyCount} 条脚本记录，查找过程中再次点击可停止。`
     : '定位浏览进度\n目前没有脚本浏览记录，请先在设置中开启“保存批量打开记录”。\n浏览器自己的 :visited 记录不能自动读取。';
   renderCompactBatchControl(button, 'locator', '定位浏览进度', '', tooltip);
   button.style.background = '#6d7d87';
