@@ -645,11 +645,18 @@ function refreshModernResourceActionButtons(document) {
   else document.getElementById(COPY_BUTTON_ID)?.remove();
 }
 
-function observeModernResourceActionButtons(document) {
+function observeModernResourceActionButtons(document, gmRequest = globalThis.GM_xmlhttpRequest) {
   if (!document?.body || modernActionObservers.has(document)) return;
   const Observer = document.defaultView?.MutationObserver;
   if (typeof Observer !== 'function') return;
-  const observer = new Observer(() => refreshModernResourceActionButtons(document));
+  const observer = new Observer(() => {
+    refreshModernResourceActionButtons(document);
+    // Next.js can hydrate the resource title and first post after document-idle.
+    // The Preview installer deduplicates in-flight lookups and completed pages.
+    if (isAgaghhhHdblogPreviewEnabled()) {
+      void installAgaghhhHdblogPreview(document, document.location, gmRequest);
+    }
+  });
   observer.observe(document.body, { childList: true, subtree: true });
   modernActionObservers.set(document, observer);
 }
@@ -1140,5 +1147,5 @@ export function installAgaghhhEnhancement(
 
   if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
   refreshModernResourceActionButtons(document);
-  observeModernResourceActionButtons(document);
+  observeModernResourceActionButtons(document, gmRequest);
 }
