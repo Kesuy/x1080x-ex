@@ -1,5 +1,6 @@
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { isHdblogPreviewExpansionEnabled } from './hdblog-article.js';
+import { getJavclubPreviewLoadingSettings } from './javclub-preview-loading.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
 
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)$/i;
@@ -330,10 +331,13 @@ export async function expandHdblogPixhostPreviewImages(
     .map((anchor) => ({ anchor, showUrl: pixhostShowHref(document, anchor) }))
     .filter(({ showUrl }) => showUrl);
 
+  const { timeoutMs, retryCount } = getJavclubPreviewLoadingSettings();
   const results = await Promise.all(anchors.map(async ({ anchor, showUrl }) => {
     let image = anchor.querySelector('img');
     const thumbnailUrl = previewThumbnailUrl(document, image);
-    const fullUrl = await resolvePixhostShowUrl(document, showUrl, thumbnailUrl, gmRequest);
+    const fullUrl = await resolvePixhostShowUrl(
+      document, showUrl, thumbnailUrl, gmRequest, timeoutMs, retryCount
+    );
     if (!fullUrl) return false;
     if (!image) {
       image = document.createElement('img');
