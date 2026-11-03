@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { buildDownloadJobs } from '../src/core.js';
 import {
   fetchHdblogPreviewForCode,
   getHdblogPreviewLoadingSettings,
@@ -139,4 +140,45 @@ test('x1080x settings display editable Preview timeout/retry controls', () => {
     else globalThis.GM_getValue = previous;
     doc.window.close();
   }
+});
+
+test('regression: a visible HDblog Preview alongside modern .post-text must be counted as a download', () => {
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <header class="thread-header"><h1>FNS-267 [BT] Sample</h1></header>
+    <article id="first-post"><div class="post-content">
+      <div class="post-text"><div class="protected-text">
+        <img class="body-image" src="https://images.example.com/fns-267-cover.webp">
+      </div></div>
+    </div></article>
+  </body></html>`, { url: 'https://1080xin.com/resources/modern-fns-267' });
+  const doc = dom.window.document;
+  const section = renderAgaghhhHdblogPreview(doc, {
+    code: 'FNS-267', articleUrl: ARTICLE, imageUrls: [IMAGE],
+  });
+  assert.ok(section);
+  assert.equal(section.parentElement?.className, 'post-content');
+  assert.equal(doc.querySelector('.post-text #x1080x-ex-agaghhh-hdblog-preview'), null,
+    'the injected Preview lives next to .post-text in the new layout');
+  const jobs = buildDownloadJobs(doc).filter((job) => job.kind === 'image');
+  assert.deepEqual(jobs.map((job) => [job.url, job.name]), [
+    ['https://images.example.com/fns-267-cover.webp', 'FNS-267 A.webp'],
+    [IMAGE, 'FNS-267 B.jpg'],
+  ]);
+  dom.window.close();
+});
+
+test('modern non-BT download collects its cover and an injected Preview', () => {
+  const dom = new JSDOM(`<header class="thread-header"><h1>RTRY-001 Example</h1></header>
+    <article id="first-post"><div class="post-content">
+      <div class="post-text"><img class="body-image" src="https://images.example.com/cover.webp"></div>
+    </div></article>`, { url: 'https://1080xin.com/resources/nonbt-rtry' });
+  renderAgaghhhHdblogPreview(dom.window.document, {
+    code: 'RTRY-001', articleUrl: ARTICLE, imageUrls: [IMAGE],
+  });
+  const jobs = buildDownloadJobs(dom.window.document).filter((job) => job.kind === 'image');
+  assert.deepEqual(jobs.map((job) => [job.url, job.name]), [
+    ['https://images.example.com/cover.webp', 'RTRY-001 A.webp'],
+    [IMAGE, 'RTRY-001 B.jpg'],
+  ]);
+  dom.window.close();
 });
