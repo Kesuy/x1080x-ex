@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { expandHdblogPreviewImages } from '../src/hdblog-preview.js';
+import { collectHdblogPixhostPreviewImages } from '../src/hdblog-article.js';
 
 function installDomGlobals(window, storedDomains = null) {
   const names = [
@@ -139,6 +141,51 @@ test('非 hdblog 域名不修改同样的 Preview 页面结构', async () => {
     assert.equal(image.dataset.x1080xPreviewExpanded, undefined);
   } finally {
     restore();
+    dom.window.close();
+  }
+});
+
+
+test('JavClub 関連作品 YARPP 推荐区不属于 Preview，缩略图和链接样式保持原状', () => {
+  const dom = new JSDOM(`<!doctype html><body class="single single-post">
+    <main id="genesis-content"><article class="entry">
+      <header><h1 class="entry-title">FC2-PPV 5002680</h1></header>
+      <div class="entry-content">
+        <p>Preview:</p>
+        <p><a id="real-preview" href="/preview-full.jpg">
+          <img id="real-image" src="/preview-thumb.jpg" width="180"></a></p>
+        <p><a href="https://pixhost.cc/show/123/real-preview.jpg">
+          <img src="https://t1.pixhost.cc/thumbs/123/real-preview.jpg"></a></p>
+        <div class="yarpp yarpp-related yarpp-template-yarpp-template-thumbnail">
+          <h2>関連作品</h2>
+          <ul class="yarpp-custom-thumbnails"><li>
+            <a id="related-link" href="https://imgsky.me/images/2026/11/03/sample.th.jpg">
+              <img id="related-thumb" src="https://imgsky.me/images/2026/11/03/sample.th.jpg" width="100"></a>
+          </li><li>
+            <a id="related-pixhost" href="https://pixhost.cc/show/456/not-preview.jpg">
+              <img src="https://t2.pixhost.cc/thumbs/456/not-preview.jpg"></a>
+          </li></ul>
+        </div>
+        <p><a id="after-related" href="/other-full.jpg"><img id="after-thumb" src="/other-thumb.jpg"></a></p>
+      </div>
+    </article></main>`, { url: 'https://javclub.me/1013935.html' });
+  try {
+    const doc = dom.window.document;
+    const expanded = expandHdblogPreviewImages(doc, dom.window.location);
+    assert.equal(expanded, 1, '只放大真正 Preview');
+    assert.equal(doc.querySelector('#real-image').dataset.x1080xPreviewLarge, '1');
+    const related = doc.querySelector('#related-link');
+    const thumb = doc.querySelector('#related-thumb');
+    assert.equal(related.getAttribute('style'), null, '相关作品链接不能注入宽度/位移样式');
+    assert.equal(related.href, 'https://imgsky.me/images/2026/11/03/sample.th.jpg');
+    assert.equal(thumb.getAttribute('width'), '100');
+    assert.equal(thumb.dataset.x1080xPreviewLarge, undefined);
+    assert.equal(doc.querySelector('#after-related').getAttribute('style'), null);
+    assert.equal(doc.querySelector('#after-thumb').dataset.x1080xPreviewLarge, undefined);
+    const collected = collectHdblogPixhostPreviewImages(doc);
+    assert.equal(collected.length, 1, '下载器不得把 YARPP 的 Pixhost 缩略图算作 Preview');
+    assert.match(collected[0].pixhostShowUrl, /real-preview\\.jpg$/);
+  } finally {
     dom.window.close();
   }
 });
