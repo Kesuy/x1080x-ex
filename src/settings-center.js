@@ -192,6 +192,10 @@ export function openUnifiedSettingsCenter(
         };
         form.addEventListener('change', markDirty);
         form.addEventListener('input', markDirty);
+        // Reset buttons modify form state programmatically without a change event.
+        form.addEventListener('click', (event) => {
+          if (event.target?.closest?.('button[data-action^="reset-"]')) markDirty();
+        });
       } catch (error) {
         status.textContent = '加载失败：' + (error?.message || String(error));
         console.error('[x1080x-ex] settings center failed:', key, error);
