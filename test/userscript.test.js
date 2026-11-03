@@ -1603,7 +1603,7 @@ test('bulk download waits for HDblog Preview in flight, then saves cover and Pre
         <img class="body-image" src="https://images.example.com/fns-267-cover.jpg">
       </div></div>
     </div></article>
-  </body></html>`, { url: 'https://1080xin.com/resources/modern-fns267?page=1' });
+  </body></html>`, { url: 'https://1080xin.com/resources/modernfns267?page=1' });
   const restore = installDomGlobals(dom.window);
   const requests = [];
   const saved = [];
