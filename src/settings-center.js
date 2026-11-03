@@ -6,7 +6,7 @@ import { FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, isFc2cmadbHdblogSearchEnabled } fro
 import { enhanceQbittorrentSettingsPanel } from './qbittorrent-settings.js';
 import { enhanceHdblogSettingsPanel } from './hdblog-image-hosts.js';
 import { addSettingsExtraSection } from './settings-layout.js';
-import { runSiteSettingsTool } from './userscript.js';
+import { runSiteSettingsTool } from './settings-actions.js';
 import { isAgaghhhHost } from './site-domains.js';
 
 export const SETTINGS_CENTER_ID = 'x1080x-ex-unified-settings-center';
