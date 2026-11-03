@@ -2,6 +2,7 @@ import { renderDownloadIcon } from './download-icon.js';
 import { organizeSettingsPanel } from './settings-layout.js';
 import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
+import { getJavclubPreviewLoadingSettings } from './javclub-preview-loading.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
 
@@ -836,14 +837,22 @@ function hdblogPreviewRange(document) {
   const nodes = textNodesUnder(content);
   const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
   if (!marker) return null;
-  const boundary = nodes.find((node) => (
-    isAfter(marker, node) && HDBLOG_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))
+  const textBoundary = nodes.find((node) => (
+    isAfter(marker, node) && (
+      HDBLOG_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))
+      || /^(?:関連作品|関連記事|関連動画)\s*[:：]?$/i.test(normalizeText(node.nodeValue))
+    )
   )) || null;
+  const relatedBoundary = [...content.querySelectorAll('.yarpp, .yarpp-related, .related-posts')]
+    .find((node) => isAfter(marker, node)) || null;
+  const boundary = relatedBoundary && (!textBoundary || isAfter(relatedBoundary, textBoundary))
+    ? relatedBoundary : textBoundary;
   return { content, marker, boundary };
 }
 
 function inHdblogPreviewRange(range, node) {
   if (!range || !isAfter(range.marker, node)) return false;
+  if (node.closest?.('.yarpp, .yarpp-related, .related-posts')) return false;
   return !range.boundary || !isAfter(range.boundary, node);
 }
 
@@ -865,8 +874,9 @@ async function hasUsableHdblogPreview(document, request) {
     if (!href) continue;
     if (isPixhostShowUrl(href, document.baseURI)) {
       const thumb = imageUrlFromElement(document, anchor.querySelector('img'));
+      const { timeoutMs, retryCount } = getJavclubPreviewLoadingSettings();
       try {
-        if (await resolvePixhostShowUrl(document, href, thumb, request)) return true;
+        if (await resolvePixhostShowUrl(document, href, thumb, request, timeoutMs, retryCount)) return true;
       } catch {
         // 继续尝试其他候选。
       }
