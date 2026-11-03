@@ -1595,7 +1595,6 @@ export function installHdblogArticleEnhancement(
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
   if (!document) return;
-  registerHdblogSettingsMenu(document, locationObject);
   if (!isHdblogArticlePage(document, locationObject)) return;
   const storedWidth = readStoredWidth();
   if (isHdblogArticleLayoutEnabled()) {
