@@ -157,7 +157,7 @@ function saveDomains(domains) {
 
 function registerSettingsMenu() {
   if (window.top !== window.self) return;
-  GM_registerMenuCommand('🌐 设置 x1080x 站点域名', () => {
+  GM_registerMenuCommand('🌐 设置 x1080x 主站域名', () => {
     const input = window.prompt(
       '请输入 x1080x 站点当前使用的域名（如 1080xin.com）。跨站搜索及浏览进度链接将使用该地址，旧域名仍可识别：',
       getAgaghhhPrimaryDomain()
