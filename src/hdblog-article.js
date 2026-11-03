@@ -1181,7 +1181,7 @@ function closeHdblogSettingsPanel(document) {
   document?.getElementById(HDBLOG_SETTINGS_PANEL_ID)?.remove();
 }
 
-export function openHdblogSettingsPanel(document = globalThis.document) {
+export function openHdblogSettingsPanel(document = globalThis.document, { embedded = false, onSaved } = {}) {
   if (!document?.body) return null;
   closeHdblogSettingsPanel(document);
 
@@ -1573,11 +1573,12 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
 
     closeHdblogSettingsPanel(document);
     const view = document.defaultView;
-    if (view?.location?.reload) view.location.reload();
+    if (typeof onSaved === 'function') onSaved();
+    else if (view?.location?.reload) view.location.reload();
   });
 
   overlay.append(panel);
-  document.body.append(overlay);
+  if (!embedded) document.body.append(overlay);
   return overlay;
 }
 
