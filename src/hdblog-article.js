@@ -66,7 +66,7 @@ function normalizeText(value) {
 
 function isHdblogHost(locationObject) {
   const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 export function normalizeHdblogArticleWidth(value, fallback = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
@@ -112,6 +112,7 @@ export function isHdblogArticlePage(document, locationObject = document?.locatio
   if (title.matches('a[href]') || title.querySelector('a[href]')) return false;
   const bodyClass = document.body?.className || '';
   return /\bsingle(?:-post)?\b/i.test(bodyClass)
+    || /^\/\d+\.html$/i.test(url.pathname)
     || /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)
     || Boolean(document.querySelector('article.entry .entry-meta, article.post .entry-meta'));
 }
@@ -870,7 +871,7 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
         showStatus('已跳过失效 Preview', 'Pixhost Preview 已失效，未下载占位图。');
         return;
       }
-      showStatus('无可下载 Preview', 'HDblog 与 JavFree 都没有可下载的 Preview。');
+      showStatus('无可下载 Preview', 'JavClub 与 JavFree 都没有可下载的 Preview。');
       return;
     }
   } catch (error) {
@@ -1535,7 +1536,7 @@ function registerHdblogSettingsMenu(document, locationObject) {
   if (!isHdblogHost(locationObject) || typeof GM_registerMenuCommand !== 'function') return;
   const view = document?.defaultView;
   if (view && view.top !== view) return;
-  GM_registerMenuCommand('⚙️ hdblog 设置', () => openHdblogSettingsPanel(document));
+  GM_registerMenuCommand('⚙️ JavClub 设置', () => openHdblogSettingsPanel(document));
 }
 
 export function installHdblogArticleEnhancement(
