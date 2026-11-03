@@ -7,6 +7,7 @@ import {
   parseDomainList,
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
+import { pendingAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
 import {
   DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
   LEGACY_AGAGHHH_DOMAIN,
@@ -1532,6 +1533,37 @@ const downloadResetTimers = new WeakMap();
 
 async function downloadAll(button) {
   if (button.disabled || activeDownloadState) return;
+
+  // The modern forum's Preview is appended asynchronously. If HDblog (or a
+  // configured fallback) is still loading, snapshotting the DOM now silently
+  // drops Preview from the job count and the downloaded files.
+  const pendingPreview = isAgaghhhHost(location)
+    ? pendingAgaghhhHdblogPreview(document)
+    : null;
+  if (pendingPreview) {
+    const downloadPath = location.pathname;
+    activeDownloadState = { button, pathname: downloadPath, text: '', label: '' };
+    button.disabled = true;
+    const endPreparationGuard = beginDownloadGuard(document, {
+      enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY),
+    });
+    try {
+      setDownloadStatus(button, '正在等待 Preview 加载完成，再统计下载文件…', '下载中 · Preview');
+      await pendingPreview;
+    } catch (error) {
+      console.warn('[x1080x-ex] Preview lookup failed before download snapshot', {
+        error: redactDiagnostic(error?.message || error),
+      });
+    } finally {
+      endPreparationGuard();
+      activeDownloadState = null;
+      button.disabled = false;
+      const visible = document.getElementById(BUTTON_ID);
+      if (visible && location.pathname === downloadPath) visible.disabled = false;
+    }
+    if (location.pathname !== downloadPath) return;
+  }
+
   const jobs = buildDownloadJobs(document);
   const nativeFiles = collectModernNativeAttachments(document);
   const totalTasks = jobs.length + nativeFiles.length;
