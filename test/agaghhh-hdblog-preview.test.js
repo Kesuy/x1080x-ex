@@ -504,3 +504,36 @@ test('Pixhost show/images/thumbs aliases share one identity while genuinely diff
   assert.equal(images[0].getAttribute('src'), `https://img2.pixhost.cc/images/7097/${second}`);
   assert.equal(images[0].alt, 'CEMD-826 Preview 1');
 });
+
+test('JavClub 单结果搜索直接跳转 .html 时仍能读取 Preview', async () => {
+  const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://1080xin.com/' });
+  const requested = [];
+  const searchUrl = 'https://javclub.me/?s=START-662';
+  const articleUrl = 'https://javclub.me/1013749.html';
+  const previewUrl = 'https://imgsky.me/preview/start-662.jpg';
+  const gmRequest = (options) => {
+    requested.push(options.url);
+    const redirected = options.url === searchUrl;
+    const html = redirected
+      ? `<main id="genesis-content"><article class="entry">
+          <h1 class="entry-title">START-662 sample</h1>
+          <div class="entry-content">Search redirect article</div>
+        </article></main>`
+      : `<main id="genesis-content"><article class="entry"><div class="entry-content">
+          <p>Preview:</p><p><a href="${previewUrl}"><img src="${previewUrl}"></a></p>
+          <p>Btafile:</p>
+        </div></article></main>`;
+    if (options.url !== searchUrl && options.url !== articleUrl) {
+      throw new Error('unexpected search request ' + options.url);
+    }
+    options.onload({ status: 200, finalUrl: redirected ? articleUrl : options.url, responseText: html });
+  };
+  try {
+    const result = await fetchHdblogPreviewForCode('START-662', gmRequest, browser.window.document);
+    assert.equal(result.articleUrl, articleUrl);
+    assert.deepEqual(result.imageUrls, [previewUrl]);
+    assert.deepEqual(requested, [searchUrl, articleUrl]);
+  } finally {
+    browser.window.close();
+  }
+});
