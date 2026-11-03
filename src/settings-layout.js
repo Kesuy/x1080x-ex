@@ -190,9 +190,13 @@ export function organizeSettingsPanel(form, sections) {
 export function addSettingsExtraSection(form, spec, element) {
   if (!form?.querySelector('[data-settings-workspace]')) return false;
   const existing = form.querySelector('[data-settings-section="' + spec.key + '"]');
+  const activeKey = form.querySelector('[data-settings-tab][aria-selected="true"]')?.dataset.settingsTab;
   const group = existing
     ? { body: existing.querySelector('.sx-group-body') }
     : appendSection(form, spec);
   group.body.append(element);
+  // A dynamically added section starts visible by default. Preserve the
+  // selected tab so extra settings never leak into the active category.
+  if (!existing) activateSettingsSection(form, activeKey || spec.key);
   return true;
 }
