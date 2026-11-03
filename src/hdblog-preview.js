@@ -12,7 +12,7 @@ function normalizeText(value) {
 
 function isHdblogHost(locationObject) {
   const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 function absoluteHttpUrl(document, value) {
