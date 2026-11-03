@@ -187,14 +187,17 @@ function previewRange(document, locationObject) {
   const nodes = textNodesUnder(content);
   const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
   if (!marker) return null;
-  const boundary = nodes.find((node) => (
+  const textBoundary = nodes.find((node) => (
     isAfter(marker, node)
     && (
       PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))
-      || /^(?:関連作品|関連記事|関連動画)\\s*[:：]?$/i.test(normalizeText(node.nodeValue))
+      || /^(?:関連作品|関連記事|関連動画)\s*[:：]?$/i.test(normalizeText(node.nodeValue))
     )
-  )) || [...content.querySelectorAll('.yarpp, .yarpp-related, .related-posts')]
+  )) || null;
+  const relatedBoundary = [...content.querySelectorAll('.yarpp, .yarpp-related, .related-posts')]
     .find((node) => isAfter(marker, node)) || null;
+  const boundary = relatedBoundary && (!textBoundary || isAfter(relatedBoundary, textBoundary))
+    ? relatedBoundary : textBoundary;
   return { content, marker, boundary };
 }
 
