@@ -1196,7 +1196,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
     font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
   panel.innerHTML = `
-    <h2 style="margin:0 0 18px;font-size:20px">HDBLOG 设置</h2>
+    <h2 style="margin:0 0 18px;font-size:20px">JavClub 设置</h2>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">文章布局</div>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
@@ -1243,7 +1243,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px">
         <input data-setting="deleted-javfree-search" type="checkbox" style="margin-top:3px">
-        <span>已删除文章自动搜索 JavFree<small style="display:block;margin-top:2px;color:#666">访问 HDblog 已删除的历史文章时，自动新开标签搜索同番号的 javfree.me。</small></span>
+        <span>已删除文章自动搜索 JavFree<small style="display:block;margin-top:2px;color:#666">访问 JavClub 或旧 HDblog 已删除的历史文章时，自动新开标签搜索同番号的 javfree.me。</small></span>
       </label>
     </div>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
@@ -1294,7 +1294,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
         <input data-setting="search-filter" type="checkbox" style="margin-top:3px">
-        <span><strong>搜索结果屏蔽与单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">仅作用于 hdblog 搜索结果页。</small></span>
+        <span><strong>搜索结果屏蔽与单结果自动跳转</strong><small style="display:block;margin-top:2px;color:#666">仅作用于 JavClub 搜索结果页。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
         <input data-setting="browse-filter" type="checkbox" style="margin-top:3px">
@@ -1304,7 +1304,7 @@ export function openHdblogSettingsPanel(document = globalThis.document) {
         <span style="display:block;font-weight:600;margin-bottom:6px">屏蔽关键词（搜索 / 正常浏览共用）</span>
         <textarea data-setting="keywords" rows="5" placeholder="留空 = 不屏蔽"
           style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 x1080x 的 hdblog Preview 搜索复用。</small>
+        <small style="display:block;margin-top:5px;color:#666">每行一个，也可用逗号或分号分隔；搜索与正常浏览共用，该规则也供 x1080x 的 JavClub Preview 搜索复用。</small>
       </label>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
