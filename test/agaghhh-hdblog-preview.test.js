@@ -446,7 +446,7 @@ test('x1080x settings exposes an independent hdblog preview switch', () => {
     const input = overlay.querySelector('[data-setting="hdblog-preview"]');
     assert.ok(input);
     assert.equal(input.checked, false);
-    assert.match(overlay.textContent, /显示 hdblog 大预览图/);
+    assert.match(overlay.textContent, /显示 JavClub 大预览图/);
   } finally {
     if (oldGet === undefined) delete globalThis.GM_getValue;
     else globalThis.GM_getValue = oldGet;
