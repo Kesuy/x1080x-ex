@@ -980,6 +980,17 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
       'modern history marks should recover after client-side pagination');
     await waitFor(() => button.textContent === '批量打开未浏览（0）',
       'modern bulk open count should follow new list contents');
+
+    // A zero-unread board still offers an all-posts action without opening settings.
+    const modeTrigger = dom.window.document.getElementById('x1080x-ex-batch-mode-trigger');
+    modeTrigger.click();
+    const allMode = dom.window.document.querySelector('[data-batch-mode="all"]');
+    assert.match(allMode.textContent, /打开本页全部（1）/);
+    allMode.click();
+    await waitFor(() => opened.length === 2, 'modern all-mode should open visited-only page');
+    assert.match(opened.at(-1).url, /5Sf2HTs5zogM0TuHJz1LD5/);
+    await waitFor(() => button.textContent === '批量打开本页（1）',
+      'modern all-mode should remain selected for the next page');
   } finally {
     dom.window.setTimeout = oldTimeout;
     dom.window.clearTimeout = oldClearTimeout;
