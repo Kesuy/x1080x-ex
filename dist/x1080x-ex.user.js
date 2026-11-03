@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.32
-// @description  一键下载主楼资源，增强 hdblog 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
+// @version      1.10.33
+// @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
 // @supportURL   https://github.com/Kesuy/x1080x-ex/issues
@@ -14,6 +14,8 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_addValueChangeListener
+// @grant        GM_removeValueChangeListener
 // @grant        GM_setClipboard
 // @grant        GM_registerMenuCommand
 // @grant        GM_openInTab
@@ -374,7 +376,7 @@
       sourceName: attachmentSourceName(link)
     })).filter((attachment) => attachment.url);
     const images = contentImages(document2, content);
-    const hdblogPreviews = hdblogPreviewImages(document2, content);
+    const hdblogPreviews = hdblogPreviewImages(document2, firstPost);
     const magnets = contentMagnets(content);
     const largestImage = images.reduce((largest, image) => {
       if (!largest) return image;
@@ -689,7 +691,7 @@
   }
   function isHdblogHost(locationObject) {
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
+    return ["javclub.me", "hdblog.me"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
   }
   function enhanceHdblogSettingsPanel(document2) {
     const overlay = document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID);
@@ -736,6 +738,33 @@
     if (typeof MutationObserverCtor !== "function") return;
     const observer = new MutationObserverCtor(() => enhanceHdblogSettingsPanel(document2));
     observer.observe(document2.body, { childList: true, subtree: true });
+  }
+
+  // src/javclub-preview-loading.js
+  var JAVCLUB_PREVIEW_TIMEOUT_KEY = "x1080x-ex:javclub-preview-request-timeout-ms";
+  var JAVCLUB_PREVIEW_RETRIES_KEY = "x1080x-ex:javclub-preview-retry-count";
+  var DEFAULT_JAVCLUB_PREVIEW_TIMEOUT_MS = 3e4;
+  var DEFAULT_JAVCLUB_PREVIEW_RETRIES = 2;
+  function getJavclubPreviewLoadingSettings() {
+    const read2 = typeof GM_getValue === "function" ? GM_getValue : (_key, fallback) => fallback;
+    const timeoutMs = Number(read2(JAVCLUB_PREVIEW_TIMEOUT_KEY, DEFAULT_JAVCLUB_PREVIEW_TIMEOUT_MS));
+    const retryCount = Number(read2(JAVCLUB_PREVIEW_RETRIES_KEY, DEFAULT_JAVCLUB_PREVIEW_RETRIES));
+    return {
+      timeoutMs: Number.isInteger(timeoutMs) && timeoutMs >= 3e3 && timeoutMs <= 12e4 ? timeoutMs : DEFAULT_JAVCLUB_PREVIEW_TIMEOUT_MS,
+      retryCount: Number.isInteger(retryCount) && retryCount >= 0 && retryCount <= 5 ? retryCount : DEFAULT_JAVCLUB_PREVIEW_RETRIES
+    };
+  }
+  async function retryJavclubPreviewRequest(operation, retryCount = 0) {
+    const maxRetries = Number.isInteger(retryCount) && retryCount >= 0 && retryCount <= 5 ? retryCount : 0;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        const status = Number(error?.status || 0);
+        const retryable = error?.retryable === true || status >= 500;
+        if (!retryable || attempt >= maxRetries) throw error;
+      }
+    }
   }
 
   // src/pixhost.js
@@ -830,7 +859,7 @@
     const raw = String(html).match(/<img\b(?=[^>]*\bclass=["'][^"']*\bimage-img\b[^"']*["'])[^>]*\bsrc=["']([^"']+)["'][^>]*>/i)?.[1];
     return candidateUrl(raw, pageUrl);
   }
-  function requestPixhostPage(showUrl, gmRequest2, referer) {
+  function requestPixhostPage(showUrl, gmRequest2, referer, timeout = REQUEST_TIMEOUT) {
     return new Promise((resolve, reject) => {
       if (typeof gmRequest2 !== "function") {
         reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
@@ -840,7 +869,7 @@
         method: "GET",
         url: showUrl,
         responseType: "text",
-        timeout: REQUEST_TIMEOUT,
+        timeout,
         headers: {
           Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
           ...referer ? { Referer: referer } : {}
@@ -857,24 +886,218 @@
             finalUrl: response.finalUrl || response.responseURL || showUrl
           });
         },
-        onerror: () => reject(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF")),
-        ontimeout: () => reject(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u8D85\u65F6"))
+        onerror: () => reject(Object.assign(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF"), { retryable: true })),
+        ontimeout: () => reject(Object.assign(new Error("\u56FE\u5E8A\u9875\u9762\u8BF7\u6C42\u8D85\u65F6"), { retryable: true }))
       });
     });
   }
-  function resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2 = "", gmRequest2 = globalThis.GM_xmlhttpRequest) {
+  function resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2 = "", gmRequest2 = globalThis.GM_xmlhttpRequest, timeout = REQUEST_TIMEOUT, retryCount = 0) {
     const absoluteShowUrl = absoluteUrl2(showUrl, document2?.baseURI || "https://pixhost.to/");
     if (!absoluteShowUrl || !isPixhostShowUrl(absoluteShowUrl, document2?.baseURI)) {
       return Promise.resolve("");
     }
     if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
     const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl2, document2?.baseURI || absoluteShowUrl);
-    const promise = requestPixhostPage(absoluteShowUrl, gmRequest2, document2?.location?.href).then(({ html, finalUrl }) => {
+    const promise = retryJavclubPreviewRequest(
+      () => requestPixhostPage(absoluteShowUrl, gmRequest2, document2?.location?.href, timeout),
+      retryCount
+    ).then(({ html, finalUrl }) => {
       if (isPixhostUnavailablePage(document2, html)) return "";
       return parsePixhostImagePage(document2, html, finalUrl || absoluteShowUrl) || fallback;
-    }).catch((error) => error?.status === 404 || error?.status === 410 ? "" : fallback);
+    }).catch((error) => {
+      if (error?.status === 404 || error?.status === 410) return "";
+      resolutionCache.delete(absoluteShowUrl);
+      return fallback;
+    });
     resolutionCache.set(absoluteShowUrl, promise);
     return promise;
+  }
+
+  // src/preview-native-save.js
+  function preparePreviewForNativeSave(image, request = globalThis.GM_xmlhttpRequest) {
+    const source = image.getAttribute("data-x1080x-hdblog-preview-url");
+    const view = image.ownerDocument.defaultView;
+    const urls = view?.URL;
+    if (!source || typeof request !== "function" || !urls?.createObjectURL) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let finished = false;
+      const finish = (value) => {
+        if (!finished) {
+          finished = true;
+          resolve(value);
+        }
+      };
+      const referer = image.getAttribute("data-x1080x-preview-referer");
+      try {
+        request({
+          method: "GET",
+          url: source,
+          responseType: "blob",
+          timeout: 3e4,
+          headers: { Accept: "image/*", ...referer ? { Referer: referer } : {} },
+          async onload(response) {
+            try {
+              const blob = response.response;
+              if (finished || response.status < 200 || response.status >= 300 || !blob?.size || typeof blob.arrayBuffer !== "function") return finish(false);
+              const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
+              const text = String.fromCharCode(...bytes);
+              const type = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 ? "image/jpeg" : text.startsWith("\x89PNG\r\n\n") ? "image/png" : /^GIF8[79]a/.test(text) ? "image/gif" : text.startsWith("RIFF") && text.slice(8, 12) === "WEBP" ? "image/webp" : text.slice(4, 8) === "ftyp" && /avif|avis/.test(text.slice(8)) ? "image/avif" : "";
+              if (!type || finished || !image.isConnected) return finish(false);
+              const objectUrl = urls.createObjectURL(new view.Blob([blob], { type }));
+              image.src = objectUrl;
+              const anchor = image.closest("a");
+              if (anchor) anchor.href = objectUrl;
+              view.addEventListener("pagehide", (event) => {
+                if (event.persisted) return;
+                if (image.src === objectUrl) image.src = source;
+                if (anchor?.href === objectUrl) anchor.href = source;
+                urls.revokeObjectURL(objectUrl);
+              });
+              finish(true);
+            } catch {
+              finish(false);
+            }
+          },
+          onerror: () => finish(false),
+          ontimeout: () => finish(false),
+          onabort: () => finish(false)
+        });
+      } catch {
+        finish(false);
+      }
+    });
+  }
+
+  // src/hdblog-search.js
+  var STORAGE_KEY = "x1080x-ex:hdblog-blocked-keywords";
+  var HDBLOG_SEARCH_FILTER_ENABLED_KEY = "x1080x-ex:hdblog-search-filter-enabled";
+  var HDBLOG_BROWSE_FILTER_ENABLED_KEY = "x1080x-ex:hdblog-browse-filter-enabled";
+  var DEFAULT_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  function normalizeKeyword(value) {
+    return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  }
+  function parseBlockedKeywords(value) {
+    const seen = /* @__PURE__ */ new Set();
+    const keywords = [];
+    String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).forEach((entry) => {
+      const normalized = normalizeKeyword(entry);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      keywords.push(entry);
+    });
+    return keywords;
+  }
+  function isBlockedTitle(title, keywords) {
+    const normalizedTitle = normalizeKeyword(title);
+    return keywords.some((keyword) => {
+      const normalizedKeyword = normalizeKeyword(keyword);
+      return normalizedKeyword && normalizedTitle.includes(normalizedKeyword);
+    });
+  }
+  function isHdblogUrl(value) {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase().replace(/\.$/, "");
+      return ["javclub.me", "hdblog.me"].some((domain) => host === domain || host.endsWith(`.${domain}`));
+    } catch {
+      return false;
+    }
+  }
+  function isHdblogSearchUrl(value) {
+    try {
+      const url = new URL(value);
+      return isHdblogUrl(url.href) && url.searchParams.has("s") && Boolean(url.searchParams.get("s")?.trim());
+    } catch {
+      return false;
+    }
+  }
+  function isHdblogArticleUrl(value) {
+    try {
+      const url = new URL(value);
+      return isHdblogUrl(url.href) && (/^\/\d+\.html$/i.test(url.pathname) || /^\/\d+\/[^/]+\/?$/.test(url.pathname));
+    } catch {
+      return false;
+    }
+  }
+  function filterSearchCandidates(candidates, keywords) {
+    const blocked = [];
+    const remaining = [];
+    for (const candidate of candidates) {
+      (isBlockedTitle(candidate.title, keywords) ? blocked : remaining).push(candidate);
+    }
+    return { blocked, remaining };
+  }
+  function redirectTargetForSearch(candidates) {
+    return candidates.length === 1 ? candidates[0].url : "";
+  }
+  function collectHdblogSearchResults(document2) {
+    const baseUrl = new URL(document2.baseURI);
+    return [...document2.querySelectorAll("main#genesis-content article.entry")].map((article) => {
+      const link = article.querySelector(
+        ".entry-header .entry-title a[href], h2.entry-title a[href], .entry-title a[href]"
+      );
+      if (!link) return null;
+      try {
+        const url = new URL(link.getAttribute("href"), document2.baseURI);
+        if (!/^https?:$/.test(url.protocol) || url.origin !== baseUrl.origin) return null;
+        return {
+          article,
+          link,
+          title: String(link.textContent ?? "").replace(/\s+/g, " ").trim(),
+          url: url.href
+        };
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  }
+  function filterHdblogSearchResults(document2, keywords) {
+    const candidates = collectHdblogSearchResults(document2);
+    const { blocked, remaining } = filterSearchCandidates(candidates, keywords);
+    blocked.forEach(({ article }) => article.remove());
+    return { blocked, remaining };
+  }
+  function getBlockedKeywords() {
+    const stored = typeof GM_getValue === "function" ? GM_getValue(STORAGE_KEY, null) : null;
+    if (stored === null || stored === void 0) {
+      return parseBlockedKeywords(DEFAULT_BLOCKED_KEYWORDS);
+    }
+    return parseBlockedKeywords(stored);
+  }
+  function isHdblogSearchEnhancementEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, true) !== false;
+  }
+  function isHdblogBrowseFilterEnabled() {
+    if (typeof GM_getValue !== "function") return false;
+    return GM_getValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY, false) === true;
+  }
+  function applyHdblogSearchEnhancement(windowObject = window) {
+    if (!isHdblogSearchEnhancementEnabled() || !isHdblogSearchUrl(windowObject.location.href)) {
+      return { blocked: [], remaining: [], redirectTarget: "" };
+    }
+    const keywords = getBlockedKeywords();
+    const result = filterHdblogSearchResults(windowObject.document, keywords);
+    const redirectTarget = redirectTargetForSearch(result.remaining);
+    if (redirectTarget && redirectTarget !== windowObject.location.href) {
+      windowObject.location.assign(redirectTarget);
+    }
+    return { ...result, redirectTarget };
+  }
+  function applyHdblogBrowseEnhancement(windowObject = window) {
+    const href = windowObject.location.href;
+    if (!isHdblogBrowseFilterEnabled() || !isHdblogUrl(href) || isHdblogSearchUrl(href) || isHdblogArticleUrl(href)) {
+      return { blocked: [], remaining: [] };
+    }
+    return filterHdblogSearchResults(windowObject.document, getBlockedKeywords());
+  }
+  function installHdblogSearchEnhancement() {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    if (isHdblogSearchUrl(window.location.href)) {
+      applyHdblogSearchEnhancement(window);
+      return;
+    }
+    applyHdblogBrowseEnhancement(window);
   }
 
   // src/site-domains.js
@@ -916,6 +1139,3887 @@
   }
   function getAgaghhhOrigin() {
     return `https://${getAgaghhhPrimaryDomain()}`;
+  }
+
+  // src/clipboard.js
+  async function copyTextToClipboard(document2, value, gmSetClipboard = globalThis.GM_setClipboard) {
+    const text = String(value ?? "").trim();
+    if (!text) throw new Error("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
+    if (typeof gmSetClipboard === "function") {
+      await Promise.resolve(gmSetClipboard(text, "text"));
+      return text;
+    }
+    const clipboard = document2?.defaultView?.navigator?.clipboard;
+    if (clipboard?.writeText) {
+      await clipboard.writeText(text);
+      return text;
+    }
+    if (!document2?.body) throw new Error("\u5F53\u524D\u9875\u9762\u65E0\u6CD5\u8BBF\u95EE\u526A\u5207\u677F\u3002");
+    const textarea = document2.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    Object.assign(textarea.style, {
+      position: "fixed",
+      left: "-9999px",
+      top: "0",
+      opacity: "0"
+    });
+    document2.body.append(textarea);
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    const copied = typeof document2.execCommand === "function" && document2.execCommand("copy");
+    textarea.remove();
+    if (!copied) throw new Error("\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u81EA\u52A8\u590D\u5236\uFF0C\u8BF7\u624B\u52A8\u590D\u5236\u3002");
+    return text;
+  }
+  async function copyCodeWithButtonFeedback(button, document2, code) {
+    if (!button) return false;
+    const originalText = button.textContent || "\u{1F4CB}";
+    const originalTitle = button.title || "\u590D\u5236\u756A\u53F7\u5230\u526A\u5207\u677F";
+    button.disabled = true;
+    try {
+      const copied = await copyTextToClipboard(document2, code);
+      button.textContent = "\u2713";
+      button.title = `\u5DF2\u590D\u5236\uFF1A${copied}`;
+      return true;
+    } catch (error) {
+      button.textContent = "!";
+      button.title = error?.message || "\u590D\u5236\u756A\u53F7\u5931\u8D25";
+      document2?.defaultView?.alert?.(`\u590D\u5236\u756A\u53F7\u5931\u8D25\uFF1A${error?.message || error}`);
+      return false;
+    } finally {
+      document2?.defaultView?.setTimeout?.(() => {
+        button.disabled = false;
+        button.textContent = originalText;
+        button.title = originalTitle;
+      }, 1200);
+    }
+  }
+
+  // src/hdblog-preview-variants.js
+  var FOUR_K_PREVIEW_TOKEN_PATTERN = /(?:^|[^a-z0-9])(?:4k(?:\d{2,3}fps)?|2160p|uhd)(?=$|[^a-z0-9])/i;
+  function searchablePreviewValue(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    try {
+      const url = new URL(raw, "https://example.invalid/");
+      return decodeURIComponent(url.pathname);
+    } catch {
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
+    }
+  }
+  function isFourKPreviewValue(value) {
+    return FOUR_K_PREVIEW_TOKEN_PATTERN.test(searchablePreviewValue(value));
+  }
+  function isFourKPreviewCandidate(candidate) {
+    if (typeof candidate === "string") return isFourKPreviewValue(candidate);
+    if (!candidate || typeof candidate !== "object") return false;
+    const values = [
+      candidate.href,
+      candidate.pixhostShowUrl,
+      candidate.directUrl,
+      candidate.thumbUrl,
+      ...Array.isArray(candidate.values) ? candidate.values : []
+    ];
+    return values.some(isFourKPreviewValue);
+  }
+  function partitionPreviewCandidates(candidates = []) {
+    const standard = [];
+    const fourK = [];
+    for (const candidate of candidates) {
+      (isFourKPreviewCandidate(candidate) ? fourK : standard).push(candidate);
+    }
+    return { standard, fourK };
+  }
+
+  // src/download-guard.js
+  var AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY = "x1080x-ex:agaghhh-download-guard-enabled";
+  var HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY = "x1080x-ex:hdblog-download-guard-enabled";
+  var activeStates = /* @__PURE__ */ new WeakMap();
+  function isDownloadGuardEnabled(key) {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(key, true) !== false;
+  }
+  function beginDownloadGuard(document2 = globalThis.document, { enabled = true, label = "\u2B07 \u4E0B\u8F7D\u4E2D" } = {}) {
+    const view = document2?.defaultView || globalThis.window;
+    if (!enabled || !document2 || !view?.addEventListener || !view?.removeEventListener) {
+      return () => {
+      };
+    }
+    let state = activeStates.get(document2);
+    if (!state) {
+      state = {
+        count: 0,
+        originalTitle: "",
+        beforeUnload(event) {
+          event.preventDefault();
+          event.returnValue = "";
+          return "";
+        }
+      };
+      activeStates.set(document2, state);
+    }
+    state.count += 1;
+    if (state.count === 1) {
+      state.originalTitle = document2.title || "";
+      document2.title = state.originalTitle ? `${label} \xB7 ${state.originalTitle}` : label;
+      view.addEventListener("beforeunload", state.beforeUnload);
+    }
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      state.count = Math.max(0, state.count - 1);
+      if (state.count !== 0) return;
+      view.removeEventListener("beforeunload", state.beforeUnload);
+      document2.title = state.originalTitle;
+      activeStates.delete(document2);
+    };
+  }
+
+  // src/preview-gesture.js
+  function makePreviewGestureFriendly(image) {
+    if (!image) return image;
+    image.draggable = false;
+    image.setAttribute("draggable", "false");
+    image.style.setProperty("-webkit-user-drag", "none", "important");
+    const anchor = image.closest?.("a[href]");
+    if (anchor) {
+      anchor.draggable = false;
+      anchor.setAttribute("draggable", "false");
+      anchor.style.setProperty("-webkit-user-drag", "none", "important");
+    }
+    return image;
+  }
+
+  // src/javfree.js
+  var JAVFREE_ORIGIN = "https://javfree.me";
+  var REQUEST_TIMEOUT2 = 3e4;
+  var HDBLOG_SECTION_ID = "x1080x-ex-hdblog-javfree-preview";
+  var JAVFREE_SETTINGS_PANEL_ID = "x1080x-ex-javfree-settings-panel";
+  var JAVFREE_DOWNLOAD_BUTTON_ID = "x1080x-ex-javfree-preview-download";
+  var JAVFREE_AGAGHHH_SEARCH_BUTTON_ID = "x1080x-ex-javfree-agaghhh-search";
+  var JAVFREE_COPY_CODE_BUTTON_ID = "x1080x-ex-javfree-copy-code";
+  var JAVFREE_PREVIEW_ATTR = "data-x1080x-javfree-preview-url";
+  var PREVIEW_REFERER_ATTR = "data-x1080x-preview-referer";
+  var AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:agaghhh-javfree-preview-fallback-enabled";
+  var HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:hdblog-javfree-preview-fallback-enabled";
+  var HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY = "x1080x-ex:hdblog-deleted-javfree-search-enabled";
+  var JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:javfree-search-auto-redirect-enabled";
+  var JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY = "x1080x-ex:javfree-preview-download-enabled";
+  var JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY = "x1080x-ex:javfree-agaghhh-search-enabled";
+  var JAVFREE_COPY_CODE_ENABLED_KEY = "x1080x-ex:javfree-copy-code-enabled";
+  var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
+  var HDBLOG_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  function normalizeText(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function absoluteHttpUrl(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function parseHtml(html, baseUrl, hostDocument = globalThis.document) {
+    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (typeof Parser !== "function") return null;
+    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
+    const base = parsed.createElement("base");
+    base.href = baseUrl;
+    (parsed.head || parsed.documentElement).prepend(base);
+    return parsed;
+  }
+  function requestText(url, request = globalThis.GM_xmlhttpRequest, referer = "") {
+    return new Promise((resolve, reject) => {
+      if (typeof request !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      request({
+        method: "GET",
+        url,
+        responseType: "text",
+        timeout: REQUEST_TIMEOUT2,
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          ...referer ? { Referer: referer } : {}
+        },
+        onload(response) {
+          if (response.status < 200 || response.status >= 400) {
+            reject(new Error("\u8BF7\u6C42\u5931\u8D25\uFF08HTTP " + (response.status || 0) + "\uFF09"));
+            return;
+          }
+          resolve({
+            html: String(response.responseText ?? response.response ?? ""),
+            finalUrl: response.finalUrl || response.responseURL || url
+          });
+        },
+        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
+        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  function requestImageBlob(url, referer, request = globalThis.GM_xmlhttpRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof request !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      request({
+        method: "GET",
+        url,
+        responseType: "blob",
+        timeout: REQUEST_TIMEOUT2,
+        headers: referer ? { Referer: referer } : void 0,
+        onload(response) {
+          if (response.status < 200 || response.status >= 300 || !response.response) {
+            reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\uFF08HTTP " + (response.status || 0) + "\uFF09"));
+            return;
+          }
+          resolve(response.response);
+        },
+        onerror: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25")),
+        ontimeout: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  function readEnabled(key, fallback = true) {
+    if (typeof GM_getValue !== "function") return fallback;
+    return GM_getValue(key, fallback) !== false;
+  }
+  function isAgaghhhJavfreePreviewFallbackEnabled() {
+    return readEnabled(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, true);
+  }
+  function isHdblogJavfreePreviewFallbackEnabled() {
+    return readEnabled(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, true);
+  }
+  function isHdblogDeletedJavfreeSearchEnabled() {
+    return readEnabled(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, true);
+  }
+  function isJavfreeSearchAutoRedirectEnabled() {
+    return readEnabled(JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY, true);
+  }
+  function isJavfreePreviewDownloadEnabled() {
+    return readEnabled(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, true);
+  }
+  function isJavfreeAgaghhhSearchEnabled() {
+    return readEnabled(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, true);
+  }
+  function isJavfreeCopyCodeEnabled() {
+    return readEnabled(JAVFREE_COPY_CODE_ENABLED_KEY, true);
+  }
+  function isJavfreeHost(locationObject = globalThis.location) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return hostname === "javfree.me" || hostname.endsWith(".javfree.me");
+  }
+  function isHdblogHost2(locationObject = globalThis.location) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return ["javclub.me", "hdblog.me"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+  }
+  function extractJavfreeVideoCode(value) {
+    const source = normalizeText(value).toUpperCase();
+    if (!source) return "";
+    const fc2 = source.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
+    if (fc2) return "FC2" + (fc2[1] ? "-PPV" : "") + "-" + fc2[2];
+    const alphanumericPrefix = source.match(
+      /(?:^|[^A-Z0-9])([A-Z][A-Z0-9]{1,11})-(\d{2,8}[A-Z]?)(?:$|[^A-Z0-9])/i
+    );
+    if (alphanumericPrefix) return alphanumericPrefix[1] + "-" + alphanumericPrefix[2];
+    const standard = source.match(
+      /(?:^|[^A-Z0-9])([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)(?:$|[^A-Z0-9])/i
+    );
+    return standard ? standard[1] + "-" + standard[2] : "";
+  }
+  function codeTokenMatches(value, code) {
+    const target = String(code || "").trim().toUpperCase();
+    if (!target) return false;
+    const normalized = normalizeText(value).toUpperCase();
+    const escaped = target.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
+    return new RegExp("(?:^|[^A-Z0-9])" + escaped + "(?:$|[^A-Z0-9])", "i").test(normalized);
+  }
+  function javfreeSearchUrl(code) {
+    const normalized = String(code || "").trim().toUpperCase();
+    return normalized ? JAVFREE_ORIGIN + "/search/" + encodeURIComponent(normalized) : "";
+  }
+  function isJavfreeArticleUrl(value, baseUrl = JAVFREE_ORIGIN) {
+    const href = absoluteHttpUrl(value, baseUrl);
+    if (!href) return false;
+    try {
+      const url = new URL(href);
+      return url.origin === JAVFREE_ORIGIN && /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function collectJavfreeSearchResults(document2) {
+    if (!document2) return [];
+    let anchors = [...document2.querySelectorAll(
+      "main#main article .entry-title a[href], main.site-main article .entry-title a[href]"
+    )];
+    if (!anchors.length) anchors = [...document2.querySelectorAll("article .entry-title a[href]")];
+    const seen = /* @__PURE__ */ new Set();
+    return anchors.map((anchor) => {
+      const url = absoluteHttpUrl(anchor.getAttribute("href"), document2.baseURI || JAVFREE_ORIGIN);
+      if (!isJavfreeArticleUrl(url) || seen.has(url)) return null;
+      seen.add(url);
+      return { title: normalizeText(anchor.textContent), url };
+    }).filter(Boolean);
+  }
+  function chooseJavfreeSearchResult(candidates, code = "") {
+    const unique = [...new Map(
+      (candidates || []).filter(Boolean).map((candidate) => [candidate.url, candidate])
+    ).values()];
+    if (unique.length === 1) return unique[0];
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return null;
+    const slug = normalizedCode.toLowerCase();
+    const slugMatches = unique.filter((candidate) => {
+      try {
+        return new URL(candidate.url).pathname.split("/").filter(Boolean).at(-1)?.toLowerCase() === slug;
+      } catch {
+        return false;
+      }
+    });
+    if (slugMatches.length === 1) return slugMatches[0];
+    const titleMatches = unique.filter((candidate) => codeTokenMatches(candidate.title, normalizedCode));
+    return titleMatches.length === 1 ? titleMatches[0] : null;
+  }
+  function imageUrlFromElement(document2, image) {
+    const candidates = [
+      image?.getAttribute("data-original"),
+      image?.getAttribute("data-lazy-src"),
+      image?.getAttribute("data-src"),
+      image?.currentSrc,
+      image?.getAttribute("src")
+    ];
+    for (const candidate of candidates) {
+      const url = absoluteHttpUrl(candidate, document2.baseURI || JAVFREE_ORIGIN);
+      if (url) return url;
+    }
+    return "";
+  }
+  function filenameOf(value) {
+    try {
+      return decodeURIComponent(new URL(value).pathname.split("/").pop() || "").toUpperCase();
+    } catch {
+      return "";
+    }
+  }
+  function imageMatchesCode(url, code) {
+    const compactCode = String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const compactFilename = filenameOf(url).replace(/[^A-Z0-9]/g, "");
+    return compactCode && compactFilename.includes(compactCode);
+  }
+  function collectJavfreeArticleImages(document2, code = "") {
+    const content = document2?.querySelector(
+      "main#main article .entry-content, main.site-main article .entry-content, article .entry-content, .entry-content"
+    );
+    if (!content) return { coverUrl: "", previewUrl: "", imageUrls: [] };
+    const all = [...content.querySelectorAll("img")].map((image) => imageUrlFromElement(document2, image)).filter(Boolean);
+    const matching = code ? all.filter((url) => imageMatchesCode(url, code)) : [];
+    const imageUrls = matching.length >= 2 ? matching : all;
+    if (!imageUrls.length) return { coverUrl: "", previewUrl: "", imageUrls: [] };
+    const coverUrl = imageUrls[0] || "";
+    const preferred = imageUrls.find((url, index) => index > 0 && /(?:^|[-_])(?:1080p|2160p|4k(?:\d{2,3}fps)?|preview|sample)(?:[-_.]|$)/i.test(filenameOf(url)));
+    return {
+      coverUrl,
+      previewUrl: preferred || imageUrls[1] || "",
+      imageUrls
+    };
+  }
+  function javfreeCodeFromDocument(document2, locationObject = document2?.location) {
+    const title = document2?.querySelector(
+      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
+    )?.textContent || document2?.title || "";
+    const fromTitle = extractJavfreeVideoCode(title);
+    if (fromTitle) return fromTitle;
+    try {
+      const slug = new URL(locationObject?.href || document2?.baseURI || JAVFREE_ORIGIN).pathname.split("/").filter(Boolean).at(-1) || "";
+      return extractJavfreeVideoCode(slug);
+    } catch {
+      return "";
+    }
+  }
+  function buildJavfreeAgaghhhSearchUrl(code) {
+    const normalized = String(code || "").trim().toUpperCase();
+    if (!normalized) return "";
+    const fc2 = normalized.match(/^FC2[-_ ]*(?:PPV[-_ ]*)?(\d{5,9})$/i);
+    return `${getAgaghhhOrigin()}/search?q=${encodeURIComponent(fc2 ? fc2[1] : normalized)}`;
+  }
+  function openJavfreeAgaghhhSearch(document2, code) {
+    const url = buildJavfreeAgaghhhSearchUrl(code);
+    if (!url) return false;
+    if (typeof GM_openInTab === "function") {
+      try {
+        GM_openInTab(url, { active: true, insert: true, setParent: true });
+        return true;
+      } catch (error) {
+        console.warn("[x1080x-ex] JavFree agaghhh search GM_openInTab failed", {
+          url,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return Boolean(document2.defaultView?.open?.(url, "_blank"));
+  }
+  function styleJavfreeActionButton(button) {
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      if (!button.disabled) button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      if (!button.disabled) button.style.background = "#398bd4";
+    });
+  }
+  function installJavfreeAgaghhhSearchButton(document2, locationObject) {
+    if (!isJavfreeAgaghhhSearchEnabled() || document2.getElementById(JAVFREE_AGAGHHH_SEARCH_BUTTON_ID)) {
+      return null;
+    }
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return null;
+    }
+    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
+    const title = document2.querySelector(
+      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
+    );
+    const code = javfreeCodeFromDocument(document2, locationObject);
+    if (!title || !code) return null;
+    const button = document2.createElement("button");
+    button.id = JAVFREE_AGAGHHH_SEARCH_BUTTON_ID;
+    button.type = "button";
+    button.textContent = "\u{1F50D}";
+    button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 x1080x \u641C\u7D22";
+    button.setAttribute("aria-label", "\u5728 x1080x \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+    styleJavfreeActionButton(button);
+    button.addEventListener("click", () => {
+      openJavfreeAgaghhhSearch(document2, javfreeCodeFromDocument(document2, locationObject));
+    });
+    title.append(button);
+    return button;
+  }
+  function installJavfreeCopyCodeButton(document2, locationObject) {
+    if (!isJavfreeCopyCodeEnabled() || document2.getElementById(JAVFREE_COPY_CODE_BUTTON_ID)) {
+      return null;
+    }
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return null;
+    }
+    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
+    const title = document2.querySelector(
+      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
+    );
+    const code = javfreeCodeFromDocument(document2, locationObject);
+    if (!title || !code) return null;
+    const button = document2.createElement("button");
+    button.id = JAVFREE_COPY_CODE_BUTTON_ID;
+    button.type = "button";
+    button.textContent = "\u{1F4CB}";
+    button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
+    button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
+    styleJavfreeActionButton(button);
+    button.addEventListener("click", () => {
+      void copyCodeWithButtonFeedback(
+        button,
+        document2,
+        javfreeCodeFromDocument(document2, locationObject)
+      );
+    });
+    title.append(button);
+    return button;
+  }
+  async function fetchJavfreePreviewForCode(code, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    const empty = {
+      code: normalizedCode,
+      sourceName: "JavFree",
+      sourceUrl: "",
+      articleUrl: "",
+      referer: "",
+      imageUrls: []
+    };
+    if (!normalizedCode) return empty;
+    const searchUrl = javfreeSearchUrl(normalizedCode);
+    const search = await requestText(searchUrl, request, JAVFREE_ORIGIN + "/");
+    let articleUrl = "";
+    let articleHtml = "";
+    let articleFinalUrl = "";
+    if (isJavfreeArticleUrl(search.finalUrl, JAVFREE_ORIGIN)) {
+      articleUrl = search.finalUrl;
+      articleHtml = search.html;
+      articleFinalUrl = search.finalUrl;
+    } else {
+      const searchDocument = parseHtml(search.html, search.finalUrl || searchUrl, hostDocument);
+      const selected = chooseJavfreeSearchResult(
+        collectJavfreeSearchResults(searchDocument),
+        normalizedCode
+      );
+      if (!selected) return { ...empty, sourceUrl: searchUrl };
+      articleUrl = selected.url;
+      const article = await requestText(articleUrl, request, searchUrl);
+      articleHtml = article.html;
+      articleFinalUrl = article.finalUrl || articleUrl;
+    }
+    const articleDocument = parseHtml(articleHtml, articleFinalUrl || articleUrl, hostDocument);
+    const images = collectJavfreeArticleImages(articleDocument, normalizedCode);
+    return {
+      code: normalizedCode,
+      sourceName: "JavFree",
+      sourceUrl: articleUrl,
+      articleUrl,
+      referer: articleUrl,
+      coverUrl: images.coverUrl,
+      imageUrls: images.previewUrl ? [images.previewUrl] : []
+    };
+  }
+  function javfreeUniqueSearchTarget(document2, locationObject = document2?.location) {
+    if (!document2 || !isJavfreeHost(locationObject)) return "";
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return "";
+    }
+    if (!/^\/search(?:\/|$)/i.test(url.pathname)) return "";
+    const results = collectJavfreeSearchResults(document2);
+    return results.length === 1 ? results[0].url : "";
+  }
+  function extensionFromBlob(blob, url) {
+    const type = String(blob?.type || "").toLowerCase();
+    if (type.includes("jpeg")) return "jpg";
+    if (type.includes("png")) return "png";
+    if (type.includes("webp")) return "webp";
+    if (type.includes("gif")) return "gif";
+    if (type.includes("avif")) return "avif";
+    try {
+      const match = new URL(url).pathname.match(/\.((?:jpe?g|png|webp|gif|avif))$/i);
+      return match?.[1]?.toLowerCase().replace("jpeg", "jpg") || "jpg";
+    } catch {
+      return "jpg";
+    }
+  }
+  function saveBlob(document2, blob, filename) {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document2.createElement("a");
+    anchor.hidden = true;
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document2.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+      document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    }
+  }
+  async function downloadJavfreePreview(button, document2, locationObject, request) {
+    const code = javfreeCodeFromDocument(document2, locationObject);
+    const previewUrl = collectJavfreeArticleImages(document2, code).previewUrl;
+    if (!code || !previewUrl) return;
+    button.disabled = true;
+    button.textContent = "\u4E0B\u8F7D\u4E2D\u2026";
+    try {
+      const blob = await requestImageBlob(previewUrl, locationObject?.href || document2.baseURI, request);
+      saveBlob(document2, blob, code + "." + extensionFromBlob(blob, previewUrl));
+      button.textContent = "\u2713";
+    } catch (error) {
+      button.textContent = "\u5931\u8D25";
+      button.title = error?.message || "Preview \u4E0B\u8F7D\u5931\u8D25";
+    } finally {
+      document2.defaultView?.setTimeout(() => {
+        button.disabled = false;
+        renderDownloadIcon(button);
+        button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
+      }, 2500);
+    }
+  }
+  function installJavfreePreviewDownloadButton(document2, locationObject, request) {
+    if (!isJavfreePreviewDownloadEnabled() || document2.getElementById(JAVFREE_DOWNLOAD_BUTTON_ID)) {
+      return null;
+    }
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return null;
+    }
+    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
+    const title = document2.querySelector("main#main article h1.entry-title, article h1.entry-title, h1.entry-title");
+    const code = javfreeCodeFromDocument(document2, locationObject);
+    const previewUrl = collectJavfreeArticleImages(document2, code).previewUrl;
+    if (!title || !code || !previewUrl) return null;
+    const button = document2.createElement("button");
+    button.id = JAVFREE_DOWNLOAD_BUTTON_ID;
+    button.type = "button";
+    renderDownloadIcon(button);
+    button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("click", () => void downloadJavfreePreview(
+      button,
+      document2,
+      locationObject,
+      request
+    ));
+    title.append(button);
+    return button;
+  }
+  function closeJavfreeSettingsPanel(document2) {
+    document2?.getElementById(JAVFREE_SETTINGS_PANEL_ID)?.remove();
+  }
+  function openJavfreeSettingsPanel(document2 = globalThis.document) {
+    if (!document2?.body) return null;
+    closeJavfreeSettingsPanel(document2);
+    const overlay = document2.createElement("div");
+    overlay.id = JAVFREE_SETTINGS_PANEL_ID;
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483646",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "20px",
+      background: "rgba(0,0,0,.42)",
+      boxSizing: "border-box"
+    });
+    const form = document2.createElement("form");
+    Object.assign(form.style, {
+      width: "min(480px, 100%)",
+      padding: "22px",
+      borderRadius: "10px",
+      background: "#fff",
+      color: "#222",
+      boxShadow: "0 18px 60px rgba(0,0,0,.28)",
+      boxSizing: "border-box",
+      font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    });
+    form.innerHTML = `
+    <h2 style="margin:0 0 18px;font-size:20px">JavFree \u8BBE\u7F6E</h2>
+    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
+      <span><strong>\u641C\u7D22\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">\u641C\u7D22\u9875\u53EA\u6709 1 \u4E2A\u552F\u4E00\u6587\u7AE0\u7ED3\u679C\u65F6\u81EA\u52A8\u8FDB\u5165\u8BE6\u60C5\u9875\u3002</small></span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <input data-setting="agaghhh-search" type="checkbox" style="margin-top:3px">
+      <span><strong>x1080x \u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u8BC6\u522B\u5F53\u524D\u756A\u53F7\uFF0C\u5E76\u5728 x1080x \u7AD9\u70B9\u641C\u7D22\u3002</small></span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
+      <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
+      <span><strong>\u590D\u5236\u756A\u53F7\u6309\u94AE\uFF08\u{1F4CB}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u6807\u9898\u65C1\u663E\u793A\u590D\u5236\u6309\u94AE\uFF0C\u884C\u4E3A\u4E0E JavClub \u4E00\u81F4\u3002</small></span>
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:9px">
+      <input data-setting="preview-download" type="checkbox" style="margin-top:3px">
+      <span><strong>Preview \u4E0B\u8F7D\u6309\u94AE</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u6807\u9898\u65C1\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u53EA\u4E0B\u8F7D\u5C01\u9762\u540E\u7684 Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D\u3002</small></span>
+    </label>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
+      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
+    </div>`;
+    organizeSettingsPanel(form, [
+      {
+        "key": "search",
+        "title": "\u641C\u7D22\u529F\u80FD",
+        "description": "\u81EA\u52A8\u8DF3\u8F6C\u4E0E\u8DE8\u7AD9\u641C\u7D22",
+        "settings": [
+          "search-auto-redirect",
+          "agaghhh-search"
+        ]
+      },
+      {
+        "key": "buttons",
+        "title": "\u6587\u7AE0\u64CD\u4F5C",
+        "description": "\u5FEB\u901F\u590D\u5236\u756A\u53F7\u53CA\u4E0B\u8F7D\u9884\u89C8\u56FE",
+        "settings": [
+          "copy-code",
+          "preview-download"
+        ]
+      }
+    ]);
+    const redirectInput = form.querySelector('[data-setting="search-auto-redirect"]');
+    const agaghhhSearchInput = form.querySelector('[data-setting="agaghhh-search"]');
+    const copyCodeInput = form.querySelector('[data-setting="copy-code"]');
+    const downloadInput = form.querySelector('[data-setting="preview-download"]');
+    redirectInput.checked = isJavfreeSearchAutoRedirectEnabled();
+    agaghhhSearchInput.checked = isJavfreeAgaghhhSearchEnabled();
+    copyCodeInput.checked = isJavfreeCopyCodeEnabled();
+    downloadInput.checked = isJavfreePreviewDownloadEnabled();
+    form.querySelector('[data-action="cancel"]')?.addEventListener(
+      "click",
+      () => closeJavfreeSettingsPanel(document2)
+    );
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeJavfreeSettingsPanel(document2);
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (typeof GM_setValue === "function") {
+        GM_setValue(JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY, redirectInput.checked);
+        GM_setValue(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, agaghhhSearchInput.checked);
+        GM_setValue(JAVFREE_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
+        GM_setValue(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
+      }
+      closeJavfreeSettingsPanel(document2);
+      document2.defaultView?.location?.reload?.();
+    });
+    overlay.append(form);
+    document2.body.append(overlay);
+    return overlay;
+  }
+  function registerJavfreeSettingsMenu(document2, locationObject) {
+    if (!isJavfreeHost(locationObject) || typeof GM_registerMenuCommand !== "function") return;
+    const view = document2?.defaultView;
+    if (view && view.top !== view) return;
+    GM_registerMenuCommand("\u2699\uFE0F JavFree \u8BBE\u7F6E", () => openJavfreeSettingsPanel(document2));
+  }
+  function installJavfreeEnhancement(document2 = globalThis.document, locationObject = globalThis.location, request = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isJavfreeHost(locationObject)) return null;
+    registerJavfreeSettingsMenu(document2, locationObject);
+    if (isJavfreeSearchAutoRedirectEnabled()) {
+      const target = javfreeUniqueSearchTarget(document2, locationObject);
+      if (target && typeof locationObject?.replace === "function") {
+        locationObject.replace(target);
+        return { redirectTarget: target, button: null };
+      }
+    }
+    const downloadButton = installJavfreePreviewDownloadButton(document2, locationObject, request);
+    const copyButton = installJavfreeCopyCodeButton(document2, locationObject);
+    const searchButton = installJavfreeAgaghhhSearchButton(document2, locationObject);
+    return {
+      redirectTarget: "",
+      searchButton,
+      copyButton,
+      button: downloadButton
+    };
+  }
+  function hdblogCodeFromLocation(document2, locationObject) {
+    try {
+      const slug = new URL(locationObject?.href || document2?.baseURI || "").pathname.split("/").filter(Boolean).at(-1) || "";
+      const slugCode = extractJavfreeVideoCode(slug);
+      if (slugCode && !/^ERROR-?404$/i.test(slugCode)) return slugCode;
+    } catch {
+    }
+    const titleCode = extractJavfreeVideoCode(
+      document2?.querySelector("h1.entry-title, #genesis-content h1, h1")?.textContent || ""
+    );
+    return /^ERROR-?404$/i.test(titleCode) ? "" : titleCode;
+  }
+  function isDeletedHdblogArticlePage(document2, locationObject = document2?.location) {
+    if (!document2 || !isHdblogHost2(locationObject)) return false;
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return false;
+    }
+    if (!/^\/\d+\.html$/i.test(url.pathname) && !/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return false;
+    const bodyClass = String(document2.body?.className || "");
+    const signalTexts = [
+      document2.title,
+      document2.querySelector("h1, .entry-title, .page-title")?.textContent
+    ].map(normalizeText).filter(Boolean);
+    const has404Signal = /(?:^|\s)(?:error404|error-404|not-found)(?:\s|$)/i.test(bodyClass) || signalTexts.some((text) => /(?:\berror[-\s]?404\b|page\s+not\s+found|not\s+found)/i.test(text) || /^404(?:$|\s|[|:–—])/i.test(text));
+    if (has404Signal) return true;
+    return !document2.querySelector(
+      "main#genesis-content article.entry h1.entry-title, article.entry h1.entry-title"
+    );
+  }
+  function openJavfreeSearchTab(document2, code) {
+    const url = javfreeSearchUrl(code);
+    if (!url) return false;
+    const key = "x1080x-ex:hdblog-javfree-opened:" + (document2?.location?.pathname || code);
+    try {
+      if (document2.defaultView?.sessionStorage?.getItem(key) === "1") return false;
+      document2.defaultView?.sessionStorage?.setItem(key, "1");
+    } catch {
+    }
+    if (typeof GM_openInTab === "function") {
+      try {
+        GM_openInTab(url, { active: true, insert: true, setParent: true });
+        return true;
+      } catch (error) {
+        console.warn("[x1080x-ex] GM_openInTab failed, fallback to window.open", {
+          url,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    const opened = document2.defaultView?.open?.(url, "_blank");
+    return Boolean(opened);
+  }
+  function textNodesUnder(root) {
+    const view = root?.ownerDocument?.defaultView;
+    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
+    const walker = root?.ownerDocument?.createTreeWalker?.(root, showText);
+    if (!walker) return [];
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function isAfter(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
+  }
+  function hdblogPreviewRange(document2) {
+    const content = document2?.querySelector(
+      "main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content"
+    );
+    if (!content) return null;
+    const nodes = textNodesUnder(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
+    if (!marker) return null;
+    const textBoundary = nodes.find((node) => isAfter(marker, node) && (HDBLOG_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue)) || /^(?:関連作品|関連記事|関連動画)\s*[:：]?$/i.test(normalizeText(node.nodeValue)))) || null;
+    const relatedBoundary = [...content.querySelectorAll(".yarpp, .yarpp-related, .related-posts")].find((node) => isAfter(marker, node)) || null;
+    const boundary = relatedBoundary && (!textBoundary || isAfter(relatedBoundary, textBoundary)) ? relatedBoundary : textBoundary;
+    return { content, marker, boundary };
+  }
+  function inHdblogPreviewRange(range, node) {
+    if (!range || !isAfter(range.marker, node)) return false;
+    if (node.closest?.(".yarpp, .yarpp-related, .related-posts")) return false;
+    return !range.boundary || !isAfter(range.boundary, node);
+  }
+  async function hasUsableHdblogPreview(document2, request) {
+    const range = hdblogPreviewRange(document2);
+    if (!range) return false;
+    if ([...range.content.querySelectorAll(
+      'img[data-x1080x-preview-large="1"], img[data-x1080x-preview-expanded="1"]'
+    )].some((image) => inHdblogPreviewRange(range, image))) {
+      return true;
+    }
+    const anchors = [...range.content.querySelectorAll("a[href]")].filter((anchor) => inHdblogPreviewRange(range, anchor));
+    for (const anchor of anchors) {
+      const href = absoluteHttpUrl(anchor.getAttribute("href"), document2.baseURI);
+      if (!href) continue;
+      if (isPixhostShowUrl(href, document2.baseURI)) {
+        const thumb = imageUrlFromElement(document2, anchor.querySelector("img"));
+        const { timeoutMs, retryCount } = getJavclubPreviewLoadingSettings();
+        try {
+          if (await resolvePixhostShowUrl(document2, href, thumb, request, timeoutMs, retryCount)) return true;
+        } catch {
+        }
+        continue;
+      }
+      if (IMAGE_EXTENSION_PATTERN2.test(href)) return true;
+    }
+    return [...range.content.querySelectorAll("img")].filter((image) => inHdblogPreviewRange(range, image)).some((image) => {
+      const anchor = image.closest("a[href]");
+      if (anchor && isPixhostShowUrl(anchor.getAttribute("href"), document2.baseURI)) return false;
+      return Boolean(imageUrlFromElement(document2, image));
+    });
+  }
+  function renderHdblogJavfreePreview(document2, result) {
+    if (!document2 || !result?.imageUrls?.length || document2.getElementById(HDBLOG_SECTION_ID)) {
+      return null;
+    }
+    const content = document2.querySelector(
+      "main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content"
+    );
+    if (!content) return null;
+    const url = absoluteHttpUrl(result.imageUrls[0], result.articleUrl || JAVFREE_ORIGIN);
+    if (!url) return null;
+    const section = document2.createElement("section");
+    section.id = HDBLOG_SECTION_ID;
+    section.style.cssText = "clear:both;margin:24px 0 8px;padding:16px 0 0;border-top:1px solid #ddd";
+    const heading = document2.createElement("div");
+    heading.style.cssText = "margin:0 0 12px;font-size:15px;font-weight:700;color:#444";
+    const source = document2.createElement("a");
+    source.href = result.articleUrl || result.sourceUrl || JAVFREE_ORIGIN;
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    source.textContent = "JavFree Preview \xB7 " + (result.code || "");
+    source.style.cssText = "color:inherit;text-decoration:none";
+    heading.append(source);
+    const anchor = document2.createElement("a");
+    anchor.href = url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.style.cssText = "display:block;clear:both;margin:14px 0;text-align:center";
+    const image = document2.createElement("img");
+    image.src = url;
+    image.alt = ((result.code || "") + " Preview").trim();
+    image.loading = "eager";
+    image.decoding = "async";
+    image.setAttribute(JAVFREE_PREVIEW_ATTR, url);
+    image.setAttribute(
+      PREVIEW_REFERER_ATTR,
+      result.referer || result.articleUrl || JAVFREE_ORIGIN
+    );
+    image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
+    anchor.append(image);
+    makePreviewGestureFriendly(image);
+    section.append(heading, anchor);
+    content.append(section);
+    return section;
+  }
+  async function installHdblogJavfreeFallback(document2 = globalThis.document, locationObject = globalThis.location, request = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isHdblogHost2(locationObject)) return null;
+    const code = hdblogCodeFromLocation(document2, locationObject);
+    if (!code) return null;
+    if (isDeletedHdblogArticlePage(document2, locationObject)) {
+      if (isHdblogDeletedJavfreeSearchEnabled()) openJavfreeSearchTab(document2, code);
+      return null;
+    }
+    if (!isHdblogJavfreePreviewFallbackEnabled()) return null;
+    if (!document2.querySelector(
+      "main#genesis-content article.entry .entry-content, article.entry .entry-content"
+    )) {
+      return null;
+    }
+    try {
+      if (await hasUsableHdblogPreview(document2, request)) return null;
+      return renderHdblogJavfreePreview(
+        document2,
+        await fetchJavfreePreviewForCode(code, request, document2)
+      );
+    } catch (error) {
+      console.warn("[x1080x-ex] JavFree preview fallback failed on JavClub", {
+        code,
+        error: error?.message || String(error)
+      });
+      return null;
+    }
+  }
+
+  // src/hdblog-article.js
+  var HDBLOG_ARTICLE_WIDTH_KEY = "x1080x-ex:hdblog-article-width";
+  var HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY = "x1080x-ex:hdblog-article-layout-enabled";
+  var HDBLOG_SHOW_DOWNLOAD_AREA_KEY = "x1080x-ex:hdblog-show-download-area";
+  var HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY = "x1080x-ex:hdblog-show-image-download-button";
+  var HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY = "x1080x-ex:hdblog-show-cross-search-button";
+  var HDBLOG_SHOW_COPY_CODE_BUTTON_KEY = "x1080x-ex:hdblog-show-copy-code-button";
+  var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = "x1080x-ex:hdblog-expand-preview-images";
+  var HDBLOG_BLOCKED_KEYWORDS_KEY = "x1080x-ex:hdblog-blocked-keywords";
+  var HDBLOG_SEARCH_FILTER_ENABLED_KEY2 = "x1080x-ex:hdblog-search-filter-enabled";
+  var HDBLOG_BROWSE_FILTER_ENABLED_KEY2 = "x1080x-ex:hdblog-browse-filter-enabled";
+  var HDBLOG_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-enabled";
+  var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = "x1080x-ex:hdblog-batch-open-interval-min-ms";
+  var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:hdblog-batch-open-interval-max-ms";
+  var HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-history-enabled";
+  var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = "x1080x-ex:hdblog-batch-open-history-limit";
+  var HDBLOG_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:hdblog-batch-open-history";
+  var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = "x1080x-ex:hdblog-batch-open-history-color";
+  var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:hdblog-batch-open-unopened-only";
+  var HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = "x1080x-ex:hdblog-batch-progress-locator-enabled";
+  var DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT = 5e3;
+  var DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
+  var DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS = 800;
+  var DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS = 1600;
+  var DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
+  var DEFAULT_HDBLOG_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  var HDBLOG_SETTINGS_PANEL_ID2 = "x1080x-ex-hdblog-settings-panel";
+  var DOWNLOAD_HIDDEN_ATTR = "data-x1080x-hdblog-download-hidden";
+  var DOWNLOAD_WRAPPER_ATTR = "data-x1080x-hdblog-download-wrapper";
+  var DOWNLOAD_SECTION_LABEL_PATTERN = /^(?:bt(?:a)?file|katfile|freedl|rapidgator)\s*[:：]?$/i;
+  var PREVIEW_LABEL_PATTERN = /^preview\s*[:：]?$/i;
+  var MIN_HDBLOG_ARTICLE_WIDTH = 600;
+  var MAX_HDBLOG_ARTICLE_WIDTH = 3e3;
+  var LAYOUT_STYLE_ID = "x1080x-ex-hdblog-article-layout";
+  var DOWNLOAD_BUTTON_ID = "x1080x-ex-hdblog-image-download";
+  var SEARCH_BUTTON_ID = "x1080x-ex-hdblog-agaghhh-search";
+  var COPY_BUTTON_ID = "x1080x-ex-hdblog-copy-code";
+  var ARTICLE_BODY_CLASS = "x1080x-hdblog-single";
+  var REQUEST_TIMEOUT3 = 6e4;
+  var PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
+  var PIXHOST_IMAGE_HOST_PATTERN = /^img\d+\.(?:pixhost\.(?:to|cc)|pixho\.st)$/i;
+  function normalizeText2(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function isHdblogHost3(locationObject) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return ["javclub.me", "hdblog.me"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+  }
+  function normalizeHdblogArticleWidth(value, fallback = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
+    const text = String(value ?? "").trim();
+    if (!text) return fallback;
+    const parsed = Number.parseInt(text, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(MAX_HDBLOG_ARTICLE_WIDTH, Math.max(MIN_HDBLOG_ARTICLE_WIDTH, parsed));
+  }
+  function articleElement(document2) {
+    return document2?.querySelector(
+      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post"
+    ) || null;
+  }
+  function articleTitleElement(document2) {
+    const article = articleElement(document2);
+    return article?.querySelector(".entry-header .entry-title, h1.entry-title, header h1, h1") || document2?.querySelector("main#genesis-content h1.entry-title, h1.entry-title") || null;
+  }
+  function articleContentElement(document2) {
+    const article = articleElement(document2);
+    return article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || document2?.querySelector("main#genesis-content .entry-content, .entry-content") || null;
+  }
+  function isHdblogArticlePage(document2, locationObject = document2?.location) {
+    if (!document2 || !isHdblogHost3(locationObject)) return false;
+    let url;
+    try {
+      url = new URL(locationObject?.href || document2.baseURI);
+    } catch {
+      return false;
+    }
+    if (url.searchParams.has("s")) return false;
+    const title = articleTitleElement(document2);
+    const content = articleContentElement(document2);
+    if (!title || !content) return false;
+    if (title.matches("a[href]") || title.querySelector("a[href]")) return false;
+    const bodyClass = document2.body?.className || "";
+    return /\bsingle(?:-post)?\b/i.test(bodyClass) || /^\/\d+\.html$/i.test(url.pathname) || /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname) || Boolean(document2.querySelector("article.entry .entry-meta, article.post .entry-meta"));
+  }
+  function originalHdblogArticleWidth(document2, fallback) {
+    const stored = Number(document2?.body?.dataset?.x1080xHdblogOriginalArticleWidth || 0);
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    const candidates = [
+      articleElement(document2),
+      document2?.querySelector("main#genesis-content, #genesis-content.content")
+    ].filter(Boolean);
+    for (const element of candidates) {
+      const measured = Number(element.getBoundingClientRect?.().width || 0);
+      if (!Number.isFinite(measured) || measured <= 0) continue;
+      const rounded = Math.round(measured * 100) / 100;
+      if (document2.body?.dataset) {
+        document2.body.dataset.x1080xHdblogOriginalArticleWidth = String(rounded);
+      }
+      return rounded;
+    }
+    return fallback;
+  }
+  function applyHdblogArticleLayout(document2, width = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
+    if (!document2?.head || !document2.body) return false;
+    const safeWidth = normalizeHdblogArticleWidth(width);
+    const originalWidth = originalHdblogArticleWidth(document2, safeWidth);
+    document2.body.classList.add(ARTICLE_BODY_CLASS);
+    let style = document2.getElementById(LAYOUT_STYLE_ID);
+    if (!style) {
+      style = document2.createElement("style");
+      style.id = LAYOUT_STYLE_ID;
+      document2.head.append(style);
+    }
+    style.textContent = `
+body.${ARTICLE_BODY_CLASS} {
+  --x1080x-hdblog-article-width: ${safeWidth}px;
+  --x1080x-hdblog-original-article-width: ${originalWidth}px;
+  --x1080x-hdblog-sidebar-width: 300px;
+  --x1080x-hdblog-column-gap: 32px;
+}
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header {
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid rgba(0, 0, 0, .08);
+}
+body.${ARTICLE_BODY_CLASS} article.entry .entry-title,
+body.${ARTICLE_BODY_CLASS} article.post .entry-title {
+  line-height: 1.4;
+}
+body.${ARTICLE_BODY_CLASS} article.entry .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post .entry-content {
+  line-height: 1.75;
+}
+body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+body.${ARTICLE_BODY_CLASS} .site-inner,
+body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry,
+body.${ARTICLE_BODY_CLASS} article.post {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  box-shadow: none !important;
+}
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-content,
+body.${ARTICLE_BODY_CLASS} article.entry > .entry-footer,
+body.${ARTICLE_BODY_CLASS} article.post > .entry-footer,
+body.${ARTICLE_BODY_CLASS} main#genesis-content > .entry-comments,
+body.${ARTICLE_BODY_CLASS} main#genesis-content > .comment-respond,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content > .entry-comments,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content > .comment-respond {
+  width: min(100%, var(--x1080x-hdblog-original-article-width)) !important;
+  max-width: var(--x1080x-hdblog-original-article-width) !important;
+  box-sizing: border-box !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+body.${ARTICLE_BODY_CLASS} main#genesis-content,
+body.${ARTICLE_BODY_CLASS} #genesis-content.content {
+  background: #fff !important;
+  box-sizing: border-box !important;
+}
+@media (min-width: 1100px) {
+  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+  body.${ARTICLE_BODY_CLASS} .site-inner,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    width: min(
+      calc(var(--x1080x-hdblog-article-width) + var(--x1080x-hdblog-sidebar-width) + var(--x1080x-hdblog-column-gap)),
+      calc(100vw - 40px)
+    ) !important;
+    max-width: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    display: grid !important;
+    grid-template-columns: minmax(0, var(--x1080x-hdblog-article-width)) var(--x1080x-hdblog-sidebar-width) !important;
+    column-gap: var(--x1080x-hdblog-column-gap) !important;
+    justify-content: center !important;
+    align-items: start !important;
+    position: static !important;
+    float: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::before,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::after {
+    content: none !important;
+    display: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} main#genesis-content,
+  body.${ARTICLE_BODY_CLASS} #genesis-content.content {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    width: 100% !important;
+    max-width: var(--x1080x-hdblog-article-width) !important;
+    min-width: 0 !important;
+    justify-self: stretch !important;
+    align-self: start !important;
+    float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    margin: 0 !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    width: 100% !important;
+    max-width: var(--x1080x-hdblog-sidebar-width) !important;
+    min-width: 0 !important;
+    justify-self: stretch !important;
+    align-self: start !important;
+    float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+}
+@media (max-width: 1099px) {
+  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
+  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
+  body.${ARTICLE_BODY_CLASS} .site-inner,
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
+    display: block !important;
+  }
+  body.${ARTICLE_BODY_CLASS} main#genesis-content,
+  body.${ARTICLE_BODY_CLASS} #genesis-content.content,
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    float: none !important;
+    position: static !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
+  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
+    margin-top: 28px !important;
+  }
+}
+`;
+    return true;
+  }
+  function clearHdblogArticleLayout(document2) {
+    if (!document2) return false;
+    document2.body?.classList.remove(ARTICLE_BODY_CLASS);
+    if (document2.body?.dataset) delete document2.body.dataset.x1080xHdblogOriginalArticleWidth;
+    document2.getElementById(LAYOUT_STYLE_ID)?.remove();
+    return true;
+  }
+  function extractHdblogVideoCode(value) {
+    const source = normalizeText2(value);
+    if (!source) return "";
+    const uncensored = source.match(/^([A-Z0-9][A-Z0-9.+-]{1,31})\s+(\d{6}[-_]\d{2,4})\b/i);
+    if (uncensored) return `${uncensored[1]} ${uncensored[2]}`;
+    const text = source.toUpperCase();
+    const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
+    if (fc2) return `FC2${fc2[1] ? "-PPV" : ""}-${fc2[2]}`;
+    const alphanumericPrefix = text.match(/\b([A-Z][A-Z0-9]{1,11})-(\d{2,8}[A-Z]?)\b/i);
+    const standard = alphanumericPrefix || text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)\b/i);
+    if (!standard) return "";
+    const prefix = standard[1];
+    if (["HTTP", "HTTPS", "IMG", "IMAGE", "JPG", "JPEG", "PNG", "WEBP", "ERROR"].includes(prefix)) return "";
+    return `${prefix}-${standard[2]}`;
+  }
+  function extractHdblogArticleCode(document2) {
+    try {
+      const slug = new URL(document2?.location?.href || document2?.baseURI || "").pathname.split("/").filter(Boolean).at(-1) || "";
+      const fromSlug = extractHdblogVideoCode(slug);
+      if (fromSlug) return fromSlug;
+    } catch {
+    }
+    const titleText = normalizeText2(articleTitleElement(document2)?.textContent || document2?.title);
+    const fromTitle = extractHdblogVideoCode(titleText);
+    if (fromTitle) return fromTitle;
+    const content = articleContentElement(document2);
+    if (!content) return "";
+    const text = normalizeText2(content.textContent).slice(0, 5e3);
+    const labelled = text.match(/(?:品番|品號|品号|番号|番號|code)\s*[:：]?\s*([A-Z0-9 _-]{4,30})/i);
+    return extractHdblogVideoCode(labelled?.[1] || text);
+  }
+  function hdblogAgaghhhSearchKeyword(code) {
+    const source = normalizeText2(code);
+    const fc2 = source.match(/^FC2(?:[\s_-]*PPV)?[\s_-]*(\d{5,9})$/i);
+    if (fc2) return fc2[1];
+    const uncensored = source.match(/^[A-Z0-9][A-Z0-9.+-]{1,31}\s+(\d{6}[-_]\d{2,4})$/i);
+    return uncensored?.[1] || source;
+  }
+  function buildAgaghhhSearchUrl(code) {
+    const keyword = hdblogAgaghhhSearchKeyword(code);
+    if (!keyword) return "";
+    return `${getAgaghhhOrigin()}/search?q=${encodeURIComponent(keyword)}`;
+  }
+  function openSearchTab(document2, url) {
+    if (!url) return;
+    if (typeof GM_openInTab === "function") {
+      GM_openInTab(url, { active: true, insert: true, setParent: true });
+      return;
+    }
+    document2.defaultView?.open(url, "_blank", "noopener");
+  }
+  function absoluteHttpUrl2(document2, value) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), document2.baseURI);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function largestSrcsetUrl(document2, value) {
+    const candidates = String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
+      const match = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)(w|x)$/i);
+      const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
+      const amount = match ? Number(match[2]) : order;
+      const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
+      const url = absoluteHttpUrl2(document2, rawUrl);
+      return url ? { url, score } : null;
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+    return candidates[0]?.url || "";
+  }
+  function thumbnailUrl(document2, image) {
+    if (!image) return "";
+    const values = [
+      image.getAttribute("data-orig-file"),
+      image.getAttribute("data-original"),
+      image.getAttribute("data-lazy-src"),
+      image.getAttribute("data-src"),
+      largestSrcsetUrl(document2, image.getAttribute("data-srcset")),
+      largestSrcsetUrl(document2, image.getAttribute("data-lazy-srcset")),
+      largestSrcsetUrl(document2, image.getAttribute("srcset")),
+      image.currentSrc,
+      image.getAttribute("src")
+    ];
+    for (const value of values) {
+      const url = absoluteHttpUrl2(document2, value);
+      if (url) return url;
+    }
+    return "";
+  }
+  function isPixhostImageUrl(value, baseUrl) {
+    try {
+      const url = new URL(value, baseUrl);
+      return PIXHOST_IMAGE_HOST_PATTERN.test(url.hostname) && /^\/images\//i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function displayedPixhostImageUrl(document2, image) {
+    if (!image || image.dataset.x1080xPreviewLarge !== "1") return "";
+    const anchorHref = absoluteHttpUrl2(document2, image.closest("a[href]")?.getAttribute("href"));
+    const candidates = [image.currentSrc, image.getAttribute("src"), anchorHref];
+    for (const value of candidates) {
+      const url = absoluteHttpUrl2(document2, value);
+      if (url && isPixhostImageUrl(url, document2.baseURI)) return url;
+    }
+    return "";
+  }
+  function textNodesUnder2(root) {
+    const view = root.ownerDocument.defaultView;
+    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
+    const walker = root.ownerDocument.createTreeWalker(root, showText);
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function lowestCommonAncestorWithin(first, second, limit) {
+    if (!first || !second || !limit) return null;
+    const ancestors = /* @__PURE__ */ new Set();
+    let current = first.parentNode;
+    while (current) {
+      ancestors.add(current);
+      if (current === limit) break;
+      current = current.parentNode;
+    }
+    current = second.parentNode;
+    while (current) {
+      if (ancestors.has(current)) return current;
+      if (current === limit) break;
+      current = current.parentNode;
+    }
+    return null;
+  }
+  function directChildContaining(ancestor, node) {
+    let current = node;
+    while (current && current.parentNode !== ancestor) current = current.parentNode;
+    return current?.parentNode === ancestor ? current : null;
+  }
+  function markDownloadAreaNode(document2, node) {
+    if (!node) return false;
+    if (node.nodeType === 1) {
+      node.setAttribute(DOWNLOAD_HIDDEN_ATTR, "1");
+      node.style.setProperty("display", "none", "important");
+      return true;
+    }
+    if (node.nodeType === 3 && normalizeText2(node.nodeValue)) {
+      const wrapper = document2.createElement("span");
+      wrapper.setAttribute(DOWNLOAD_HIDDEN_ATTR, "1");
+      wrapper.setAttribute(DOWNLOAD_WRAPPER_ATTR, "1");
+      wrapper.style.setProperty("display", "none", "important");
+      node.parentNode?.insertBefore(wrapper, node);
+      wrapper.append(node);
+      return true;
+    }
+    return false;
+  }
+  function clearHdblogDownloadAreaMarkers(document2) {
+    if (!document2) return;
+    [...document2.querySelectorAll(`[${DOWNLOAD_HIDDEN_ATTR}="1"]`)].forEach((element) => {
+      if (element.getAttribute(DOWNLOAD_WRAPPER_ATTR) === "1") {
+        element.replaceWith(...element.childNodes);
+        return;
+      }
+      element.style.removeProperty("display");
+      element.removeAttribute(DOWNLOAD_HIDDEN_ATTR);
+    });
+  }
+  function applyHdblogDownloadAreaVisibility(document2, visible = true) {
+    if (!document2) return 0;
+    clearHdblogDownloadAreaMarkers(document2);
+    if (visible) return 0;
+    const content = articleContentElement(document2);
+    if (!content) return 0;
+    const nodes = textNodesUnder2(content);
+    const start = nodes.find((node) => DOWNLOAD_SECTION_LABEL_PATTERN.test(normalizeText2(node.nodeValue)));
+    if (!start) return 0;
+    const preview = nodes.find((node) => isAfter2(start, node) && PREVIEW_LABEL_PATTERN.test(normalizeText2(node.nodeValue)));
+    if (!preview) return 0;
+    const common = lowestCommonAncestorWithin(start, preview, content);
+    if (!common) return 0;
+    const first = directChildContaining(common, start);
+    const stop = directChildContaining(common, preview);
+    if (!first || !stop || first === stop) return 0;
+    let hidden = 0;
+    let current = first;
+    while (current && current !== stop) {
+      const next = current.nextSibling;
+      if (markDownloadAreaNode(document2, current)) hidden += 1;
+      current = next;
+    }
+    return hidden;
+  }
+  function isAfter2(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
+  }
+  function previewRange(content) {
+    const nodes = textNodesUnder2(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue)));
+    if (!marker) return null;
+    const boundary = nodes.find((node) => isAfter2(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText2(node.nodeValue))) || null;
+    return { marker, boundary };
+  }
+  function inPreviewRange(range, node) {
+    if (!range || !isAfter2(range.marker, node)) return false;
+    const element = node.nodeType === 1 ? node : node.parentElement;
+    if (element?.closest?.('.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, [class*="related-posts"]')) return false;
+    const content = element?.closest?.(".entry-content");
+    const related = content?.querySelector?.('.yarpp, .yarpp-related, .related-posts, [class*="related-posts"]');
+    if (related && isAfter2(range.marker, related) && isAfter2(related, node)) return false;
+    return !range.boundary || !isAfter2(range.boundary, node);
+  }
+  function collectHdblogPixhostPreviewImages(document2) {
+    const content = articleContentElement(document2);
+    if (!content) return [];
+    const range = previewRange(content);
+    const seen = /* @__PURE__ */ new Set();
+    const candidates = [];
+    if (range) {
+      candidates.push(
+        ...[...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(range, anchor)).map((anchor) => {
+          const image = anchor.querySelector("img");
+          if (!image) return null;
+          const href = absoluteHttpUrl2(document2, anchor.getAttribute("href"));
+          const pixhostShowUrl = isPixhostShowUrl(href, document2.baseURI) ? href : "";
+          const directUrl = displayedPixhostImageUrl(document2, image);
+          if (!pixhostShowUrl && !directUrl) return null;
+          return {
+            image,
+            pixhostShowUrl,
+            thumbUrl: thumbnailUrl(document2, image),
+            directUrl,
+            referer: document2.baseURI
+          };
+        }).filter(Boolean)
+      );
+    }
+    candidates.push(
+      ...[...content.querySelectorAll("img[" + JAVFREE_PREVIEW_ATTR + "]")].map((image) => {
+        const directUrl = absoluteHttpUrl2(document2, image.getAttribute(JAVFREE_PREVIEW_ATTR));
+        if (!directUrl) return null;
+        return {
+          image,
+          pixhostShowUrl: "",
+          thumbUrl: directUrl,
+          directUrl,
+          referer: image.getAttribute(PREVIEW_REFERER_ATTR) || "https://javfree.me/"
+        };
+      }).filter(Boolean)
+    );
+    return candidates.filter((candidate) => {
+      const key = candidate.pixhostShowUrl || candidate.directUrl;
+      return !seen.has(key) && seen.add(key);
+    }).slice(0, 24);
+  }
+  function hdblogImageFilename(code, index, total, extension = "jpg") {
+    const safeCode = normalizeText2(code).replace(/[<>:"/\\|?*]/g, "-");
+    const safeExtension = String(extension || "jpg").replace(/^\./, "").toLowerCase();
+    const suffix = total > 1 ? `-${index + 1}` : "";
+    return `${safeCode}${suffix}.${safeExtension || "jpg"}`;
+  }
+  function extensionFromUrl(value) {
+    try {
+      const match = new URL(value).pathname.match(/\.((?:jpe?g|png|webp|gif|avif))$/i);
+      return match?.[1]?.toLowerCase().replace("jpeg", "jpg") || "";
+    } catch {
+      return "";
+    }
+  }
+  function extensionFromBlob2(blob, url) {
+    const type = String(blob?.type || "").toLowerCase();
+    if (type.includes("jpeg")) return "jpg";
+    if (type.includes("png")) return "png";
+    if (type.includes("webp")) return "webp";
+    if (type.includes("gif")) return "gif";
+    if (type.includes("avif")) return "avif";
+    return extensionFromUrl(url) || "jpg";
+  }
+  function requestImageBlob2(url, referer, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest2 !== "function") {
+        reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
+        return;
+      }
+      gmRequest2({
+        method: "GET",
+        url,
+        responseType: "blob",
+        timeout: REQUEST_TIMEOUT3,
+        headers: referer ? { Referer: referer } : void 0,
+        onload: (response) => {
+          if (response.status < 200 || response.status >= 300 || !response.response) {
+            reject(new Error(`\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
+            return;
+          }
+          resolve(response.response);
+        },
+        onerror: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\u3002")),
+        ontimeout: () => reject(new Error(`\u56FE\u7247\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT3 / 1e3} \u79D2\uFF09\u3002`))
+      });
+    });
+  }
+  function saveBlob2(document2, blob, name) {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document2.createElement("a");
+    anchor.hidden = true;
+    anchor.download = name;
+    anchor.href = objectUrl;
+    document2.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+      document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    }
+  }
+  async function resolveCandidateUrl(document2, candidate, gmRequest2) {
+    const displayed = displayedPixhostImageUrl(document2, candidate.image);
+    if (displayed) return displayed;
+    if (!candidate.pixhostShowUrl) return candidate.directUrl;
+    return resolvePixhostShowUrl(
+      document2,
+      candidate.pixhostShowUrl,
+      candidate.thumbUrl,
+      gmRequest2
+    );
+  }
+  async function downloadHdblogArticleImages(button, document2, locationObject, gmRequest2, initialCandidates = []) {
+    const view = document2.defaultView;
+    const resetButton = (delay = 3e3) => {
+      view?.setTimeout(() => {
+        renderDownloadIcon(button);
+        button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
+      }, delay);
+    };
+    const showStatus = (text, detail = "") => {
+      button.disabled = false;
+      button.textContent = text;
+      if (detail) button.title = detail;
+      resetButton();
+    };
+    const code = extractHdblogArticleCode(document2);
+    if (!code) {
+      showStatus("\u672A\u8BC6\u522B\u756A\u53F7", "\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\uFF0C\u672A\u5F00\u59CB\u4E0B\u8F7D\u3002");
+      return;
+    }
+    const liveCandidates = collectHdblogPixhostPreviewImages(document2);
+    const candidateMap = /* @__PURE__ */ new Map();
+    [...initialCandidates, ...liveCandidates].forEach((candidate) => {
+      const key = candidate?.pixhostShowUrl || candidate?.directUrl || candidate?.thumbUrl;
+      if (key && !candidateMap.has(key)) candidateMap.set(key, candidate);
+    });
+    const candidates = [...candidateMap.values()];
+    if (!candidates.length) {
+      showStatus("\u65E0 Preview", "Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
+      return;
+    }
+    const { standard, fourK } = partitionPreviewCandidates(candidates);
+    const phases = standard.length ? [
+      { candidates: standard, label: "\u666E\u901A Preview", fallback: false },
+      ...fourK.length ? [{ candidates: fourK, label: "4K Preview", fallback: true }] : []
+    ] : [{ candidates: fourK, label: "4K Preview", fallback: false }];
+    const endDownloadGuard = beginDownloadGuard(document2, {
+      enabled: isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY)
+    });
+    button.disabled = true;
+    const failures = [];
+    let skipped = 0;
+    let downloaded = 0;
+    let usedFourKFallback = false;
+    try {
+      for (const [phaseIndex, phase] of phases.entries()) {
+        const hasFallbackPhase = phaseIndex < phases.length - 1;
+        button.textContent = phase.fallback ? "\u56DE\u9000\u89E3\u6790 4K Preview\u2026" : "\u89E3\u6790 Preview\u2026";
+        const phaseFailures = [];
+        let phaseSkipped = 0;
+        const resolved = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (const candidate of phase.candidates) {
+          try {
+            const url = await resolveCandidateUrl(document2, candidate, gmRequest2);
+            if (!url) {
+              if (candidate.pixhostShowUrl) phaseSkipped += 1;
+              continue;
+            }
+            if (!seen.has(url)) {
+              seen.add(url);
+              resolved.push({ url, candidate });
+            }
+          } catch (error) {
+            phaseFailures.push(error?.message || "Pixhost \u5927\u56FE\u5730\u5740\u89E3\u6790\u5931\u8D25");
+          }
+        }
+        if (!resolved.length) {
+          if (hasFallbackPhase) continue;
+          skipped += phaseSkipped;
+          failures.push(...phaseFailures);
+          break;
+        }
+        let phaseDownloaded = 0;
+        const downloadFailures = [];
+        let downloadSkipped = 0;
+        for (const [index, item] of resolved.entries()) {
+          const { url, candidate } = item;
+          button.textContent = phase.fallback ? `4K \u56DE\u9000\u4E0B\u8F7D ${index + 1}/${resolved.length}` : `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
+          try {
+            const blob = await requestImageBlob2(
+              url,
+              candidate?.referer || locationObject?.href,
+              gmRequest2
+            );
+            const extension = extensionFromBlob2(blob, url);
+            saveBlob2(
+              document2,
+              blob,
+              hdblogImageFilename(code, downloaded + phaseDownloaded, resolved.length, extension)
+            );
+            phaseDownloaded += 1;
+          } catch (error) {
+            const message = error?.message || "\u4E0B\u8F7D\u5931\u8D25";
+            const unavailable = Boolean(candidate?.pixhostShowUrl) && /HTTP\s+(?:404|410)\b/i.test(message);
+            if (unavailable) {
+              downloadSkipped += 1;
+              continue;
+            }
+            downloadFailures.push(`${index + 1}. ${message}`);
+          }
+        }
+        if (phaseDownloaded > 0) {
+          downloaded += phaseDownloaded;
+          skipped += phaseSkipped + downloadSkipped;
+          failures.push(...phaseFailures, ...downloadFailures);
+          usedFourKFallback = phase.fallback;
+          break;
+        }
+        if (hasFallbackPhase) continue;
+        skipped += phaseSkipped + downloadSkipped;
+        failures.push(...phaseFailures, ...downloadFailures);
+        break;
+      }
+      if (!downloaded && isHdblogJavfreePreviewFallbackEnabled()) {
+        try {
+          button.textContent = "\u5C1D\u8BD5 JavFree Preview\u2026";
+          const javfree = await fetchJavfreePreviewForCode(code, gmRequest2, document2);
+          const javfreeUrl = javfree.imageUrls?.[0] || "";
+          if (javfreeUrl) {
+            const blob = await requestImageBlob2(
+              javfreeUrl,
+              javfree.referer || javfree.articleUrl || "https://javfree.me/",
+              gmRequest2
+            );
+            const extension = extensionFromBlob2(blob, javfreeUrl);
+            saveBlob2(document2, blob, hdblogImageFilename(code, 0, 1, extension));
+            downloaded = 1;
+            failures.length = 0;
+            skipped = 0;
+          }
+        } catch (error) {
+          failures.push("JavFree\uFF1A" + (error?.message || "Preview \u4E0B\u8F7D\u5931\u8D25"));
+        }
+      }
+      if (!downloaded && !failures.length) {
+        if (skipped) {
+          showStatus("\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview", "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002");
+          return;
+        }
+        showStatus("\u65E0\u53EF\u4E0B\u8F7D Preview", "JavClub \u4E0E JavFree \u90FD\u6CA1\u6709\u53EF\u4E0B\u8F7D\u7684 Preview\u3002");
+        return;
+      }
+    } catch (error) {
+      failures.push(error?.message || "\u4E0B\u8F7D\u5931\u8D25");
+    } finally {
+      if (button.disabled) {
+        button.disabled = false;
+        button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}\uFF09` : skipped ? downloaded ? `\u2713 \u5B8C\u6210\uFF08\u8DF3\u8FC7 ${skipped}\uFF09` : "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
+        if (failures.length) button.title = failures.join("\uFF1B");
+        else if (usedFourKFallback) button.title = "\u666E\u901A Preview \u4E0D\u53EF\u7528\uFF0C\u5DF2\u81EA\u52A8\u56DE\u9000\u4E0B\u8F7D 4K Preview\u3002";
+        else if (skipped) button.title = "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002";
+        resetButton();
+      }
+      endDownloadGuard();
+    }
+  }
+  function articleActions(document2) {
+    let actions = document2.getElementById("x1080x-ex-hdblog-actions");
+    if (actions) return actions;
+    const title = articleTitleElement(document2);
+    const header = title?.closest(".entry-header, header") || title?.parentElement;
+    if (!header) return null;
+    const meta = header.querySelector(".entry-meta");
+    const row = document2.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;width:100%";
+    if (meta) {
+      meta.before(row);
+      meta.style.margin = "0";
+      row.append(meta);
+    } else header.append(row);
+    actions = document2.createElement("span");
+    actions.id = "x1080x-ex-hdblog-actions";
+    actions.style.cssText = "display:inline-flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end";
+    row.append(actions);
+    return actions;
+  }
+  function installDownloadButton(document2, locationObject, gmRequest2) {
+    if (document2.getElementById(DOWNLOAD_BUTTON_ID)) return;
+    const title = articleTitleElement(document2);
+    if (!title) return;
+    const initialCandidates = collectHdblogPixhostPreviewImages(document2);
+    const button = document2.createElement("button");
+    button.id = DOWNLOAD_BUTTON_ID;
+    button.type = "button";
+    renderDownloadIcon(button);
+    button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
+    button.setAttribute("aria-label", "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE");
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      justifyContent: "center",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      if (!button.disabled) button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      if (!button.disabled) button.style.background = "#398bd4";
+    });
+    button.addEventListener("click", () => void downloadHdblogArticleImages(
+      button,
+      document2,
+      locationObject,
+      gmRequest2,
+      initialCandidates
+    ));
+    button.style.margin = "0";
+    articleActions(document2)?.append(button);
+  }
+  function installAgaghhhSearchButton(document2) {
+    if (document2.getElementById(SEARCH_BUTTON_ID)) return;
+    const title = articleTitleElement(document2);
+    if (!title) return;
+    const searchButton = document2.createElement("button");
+    searchButton.id = SEARCH_BUTTON_ID;
+    searchButton.type = "button";
+    searchButton.textContent = "\u{1F50D}";
+    searchButton.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 x1080x \u641C\u7D22";
+    searchButton.setAttribute("aria-label", "\u5728 x1080x \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+    Object.assign(searchButton.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      justifyContent: "center",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    searchButton.addEventListener("mouseenter", () => {
+      searchButton.style.background = "#246eaf";
+    });
+    searchButton.addEventListener("mouseleave", () => {
+      searchButton.style.background = "#398bd4";
+    });
+    searchButton.addEventListener("click", () => {
+      const url = buildAgaghhhSearchUrl(extractHdblogArticleCode(document2));
+      if (!url) {
+        document2.defaultView?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
+        return;
+      }
+      openSearchTab(document2, url);
+    });
+    searchButton.style.margin = "0";
+    articleActions(document2)?.append(searchButton);
+  }
+  function installCopyCodeButton(document2) {
+    if (document2.getElementById(COPY_BUTTON_ID)) return;
+    const code = extractHdblogArticleCode(document2);
+    if (!code) return;
+    const title = articleTitleElement(document2);
+    if (!title) return;
+    const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID);
+    const searchButton = document2.getElementById(SEARCH_BUTTON_ID);
+    const button = document2.createElement("button");
+    button.id = COPY_BUTTON_ID;
+    button.type = "button";
+    button.textContent = "\u{1F4CB}";
+    button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
+    button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
+    Object.assign(button.style, {
+      display: "inline-flex",
+      alignItems: "center",
+      verticalAlign: "middle",
+      margin: "0 0 4px 8px",
+      padding: "5px 8px",
+      minWidth: "34px",
+      justifyContent: "center",
+      border: "1px solid #2878c8",
+      borderRadius: "5px",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "13px",
+      fontWeight: "600",
+      lineHeight: "20px"
+    });
+    button.addEventListener("mouseenter", () => {
+      if (!button.disabled) button.style.background = "#246eaf";
+    });
+    button.addEventListener("mouseleave", () => {
+      if (!button.disabled) button.style.background = "#398bd4";
+    });
+    button.addEventListener("click", () => {
+      void copyCodeWithButtonFeedback(button, document2, extractHdblogArticleCode(document2));
+    });
+    button.style.margin = "0";
+    if (downloadButton) downloadButton.insertAdjacentElement("afterend", button);
+    else if (searchButton) searchButton.insertAdjacentElement("beforebegin", button);
+    else articleActions(document2)?.append(button);
+  }
+  function rawStoredWidth() {
+    if (typeof GM_getValue !== "function") return "";
+    const value = GM_getValue(HDBLOG_ARTICLE_WIDTH_KEY, "");
+    return value === null || value === void 0 ? "" : String(value).trim();
+  }
+  function readStoredWidth() {
+    const stored = rawStoredWidth();
+    return stored ? normalizeHdblogArticleWidth(stored, DEFAULT_HDBLOG_ARTICLE_WIDTH) : null;
+  }
+  function isHdblogArticleLayoutEnabled() {
+    if (typeof GM_getValue !== "function") return Boolean(rawStoredWidth());
+    const stored = GM_getValue(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY, null);
+    if (stored === null || stored === void 0) return Boolean(rawStoredWidth());
+    return stored !== false;
+  }
+  function readDownloadAreaVisible() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, true) !== false;
+  }
+  function readImageDownloadButtonVisible() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, true) !== false;
+  }
+  function isHdblogCrossSearchEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, true) !== false;
+  }
+  function isHdblogCopyCodeEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, true) !== false;
+  }
+  function isHdblogSearchFilterEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY2, true) !== false;
+  }
+  function isHdblogBrowseFilterEnabled2() {
+    if (typeof GM_getValue !== "function") return false;
+    return GM_getValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY2, false) === true;
+  }
+  function isHdblogBatchOpenEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
+  }
+  function readBatchOpenIntervalMs(key, fallback) {
+    if (typeof GM_getValue !== "function") return fallback;
+    const numeric = Number(GM_getValue(key, fallback));
+    return Number.isFinite(numeric) && numeric >= 100 && numeric <= 6e5 ? Math.round(numeric) : fallback;
+  }
+  function getHdblogBatchOpenInterval() {
+    const delayMin = readBatchOpenIntervalMs(
+      HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY,
+      DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS
+    );
+    const delayMax = readBatchOpenIntervalMs(
+      HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY,
+      DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS
+    );
+    if (delayMax < delayMin) {
+      return {
+        delayMin: DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS,
+        delayMax: DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS
+      };
+    }
+    return { delayMin, delayMax };
+  }
+  function isHdblogBatchOpenHistoryEnabled() {
+    if (typeof GM_getValue !== "function") return false;
+    return GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY, false) === true;
+  }
+  function isHdblogBatchOpenUnopenedOnlyEnabled() {
+    if (typeof GM_getValue !== "function") return false;
+    return GM_getValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY, false) === true;
+  }
+  function isHdblogBatchProgressLocatorEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY, true) !== false;
+  }
+  function getHdblogBatchOpenHistoryLimit() {
+    if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
+    const numeric = Number(GM_getValue(
+      HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
+      DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT
+    ));
+    return Number.isInteger(numeric) && numeric >= 1 && numeric <= 5e4 ? numeric : DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
+  }
+  function getHdblogBatchOpenHistoryColor() {
+    if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
+    const value = String(GM_getValue(
+      HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
+      DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR
+    ) || "").trim();
+    return /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
+  }
+  function isHdblogPreviewExpansionEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
+  }
+  function readBlockedKeywordsText() {
+    if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BLOCKED_KEYWORDS;
+    const stored = GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY, null);
+    return stored === null || stored === void 0 ? DEFAULT_HDBLOG_BLOCKED_KEYWORDS : String(stored);
+  }
+  function normalizeBlockedKeywordsText(value) {
+    const seen = /* @__PURE__ */ new Set();
+    return String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).filter((entry) => {
+      const key = entry.normalize("NFKC").toLocaleLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).join("\n");
+  }
+  function closeHdblogSettingsPanel(document2) {
+    document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID2)?.remove();
+  }
+  function openHdblogSettingsPanel(document2 = globalThis.document) {
+    if (!document2?.body) return null;
+    closeHdblogSettingsPanel(document2);
+    const overlay = document2.createElement("div");
+    overlay.id = HDBLOG_SETTINGS_PANEL_ID2;
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "2147483646",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "20px",
+      background: "rgba(0,0,0,.42)",
+      boxSizing: "border-box"
+    });
+    const panel = document2.createElement("form");
+    Object.assign(panel.style, {
+      width: "min(560px, 100%)",
+      maxHeight: "calc(100vh - 40px)",
+      overflow: "auto",
+      padding: "22px",
+      borderRadius: "10px",
+      background: "#fff",
+      color: "#222",
+      boxShadow: "0 18px 60px rgba(0,0,0,.28)",
+      boxSizing: "border-box",
+      font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    });
+    panel.innerHTML = `
+    <h2 style="margin:0 0 18px;font-size:20px">JavClub \u8BBE\u7F6E</h2>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:10px">\u6587\u7AE0\u5E03\u5C40</div>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="layout-enabled" type="checkbox">
+        \u542F\u7528\u6587\u7AE0\u5BBD\u5EA6\u589E\u5F3A
+      </label>
+      <label data-width-row style="display:block;margin-left:24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">\u6587\u7AE0\u4E3B\u5185\u5BB9\u533A\u5BBD\u5EA6\uFF08px\uFF09</span>
+        <input data-setting="width" type="number" min="${MIN_HDBLOG_ARTICLE_WIDTH}" max="${MAX_HDBLOG_ARTICLE_WIDTH}" step="1"
+          placeholder="${DEFAULT_HDBLOG_ARTICLE_WIDTH}"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+        <small style="display:block;margin-top:5px;color:#666">\u5173\u95ED\u5F00\u5173\u65F6\u5B8C\u5168\u4F7F\u7528\u7F51\u7AD9\u539F\u59CB\u5E03\u5C40\uFF1B\u5F00\u542F\u540E\u53EA\u6269\u5C55\u767D\u8272\u4E3B\u5185\u5BB9\u533A\u57DF\u3002</small>
+      </label>
+    </div>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:10px">\u6587\u7AE0\u9875\u529F\u80FD</div>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="show-downloads" type="checkbox">
+        \u663E\u793A Btfile / katfile / Freedl / Rapidgator \u7F51\u76D8\u4E0B\u8F7D\u533A\u57DF
+      </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
+        <input data-setting="show-image-download" type="checkbox">
+        \u663E\u793A\u6587\u7AE0\u4FE1\u606F\u680F\u53F3\u4FA7\u7684\u56FE\u7247\u4E0B\u8F7D\u6309\u94AE
+      </label>
+      <label data-download-guard-row style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
+        <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
+        <span>\u4E0B\u8F7D\u65F6\u6807\u8BB0\u6807\u7B7E\u9875\u5E76\u5728\u5173\u95ED\u65F6\u63D0\u9192<small style="display:block;margin-top:2px;color:#666">\u4EC5\u4E0B\u8F7D\u8FDB\u884C\u4E2D\u751F\u6548\uFF0C\u5B8C\u6210\u540E\u81EA\u52A8\u6062\u590D\u6807\u7B7E\u6807\u9898\u5E76\u89E3\u9664\u5173\u95ED\u63D0\u793A\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="cross-search" type="checkbox">
+        \u663E\u793A\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF0C\u641C\u7D22 x1080x\uFF09
+      </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <input data-setting="copy-code" type="checkbox">
+        \u663E\u793A\u590D\u5236\u756A\u53F7\u6309\u94AE\uFF08\u{1F4CB}\uFF09
+      </label>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
+        <input data-setting="expand-preview" type="checkbox">
+        \u81EA\u52A8\u5C55\u5F00 Preview \u5927\u56FE\uFF08\u542B Pixhost / refer \u89E3\u6790\uFF09
+      </label>
+      <div data-preview-loading-row style="margin:0 0 12px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">Preview \u8BFB\u53D6\u5931\u8D25\u8BBE\u7F6E</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:5px">\u8D85\u65F6\u65F6\u95F4\uFF08\u79D2\uFF09
+            <input data-setting="javclub-preview-timeout" type="number" min="3" max="120" step="1" aria-label="JavClub Preview \u8D85\u65F6\u65F6\u95F4\uFF08\u79D2\uFF09"
+              style="width:76px;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          </label>
+          <label style="display:flex;align-items:center;gap:5px">\u8D85\u65F6\u91CD\u8BD5\u6B21\u6570
+            <input data-setting="javclub-preview-retries" type="number" min="0" max="5" step="1" aria-label="JavClub Preview \u91CD\u8BD5\u6B21\u6570"
+              style="width:64px;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          </label>
+          <button type="button" data-action="reset-javclub-preview-settings"
+            style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">\u6062\u590D\u9ED8\u8BA4</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">\u9ED8\u8BA4 30 \u79D2\u3001\u91CD\u8BD5 2 \u6B21\u3002\u9002\u7528\u4E8E\u5F53\u524D JavClub \u6587\u7AE0\u7684 Pixhost / refer Preview \u89E3\u6790\uFF1B\u8D85\u65F6\u6216\u4E34\u65F6\u7F51\u7EDC\u5931\u8D25\u65F6\u91CD\u8BD5\uFF0C\u4E0D\u91CD\u590D\u8BF7\u6C42\u660E\u786E\u5931\u6548\u7684\u56FE\u7247\u3002\u4E0E x1080x \u7684 Preview \u8BBE\u7F6E\u76F8\u4E92\u72EC\u7ACB\u3002</small>
+      </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
+        <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
+        <span>JavFree Preview \u540E\u5907\u6E90<small style="display:block;margin-top:2px;color:#666">\u5F53\u524D\u6587\u7AE0\u6CA1\u6709\u53EF\u7528 Preview \u6216 Pixhost \u5DF2\u5931\u6548\u65F6\uFF0C\u6309\u756A\u53F7\u4ECE javfree.me \u8865\u5145\u7B2C 2 \u5F20 Preview\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px">
+        <input data-setting="deleted-javfree-search" type="checkbox" style="margin-top:3px">
+        <span>\u5DF2\u5220\u9664\u6587\u7AE0\u81EA\u52A8\u641C\u7D22 JavFree<small style="display:block;margin-top:2px;color:#666">\u8BBF\u95EE JavClub \u6216\u65E7 HDblog \u5DF2\u5220\u9664\u7684\u5386\u53F2\u6587\u7AE0\u65F6\uFF0C\u81EA\u52A8\u65B0\u5F00\u6807\u7B7E\u641C\u7D22\u540C\u756A\u53F7\u7684 javfree.me\u3002</small></span>
+      </label>
+    </div>
+    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
+      <div style="font-weight:700;margin-bottom:10px">\u641C\u7D22 / \u5217\u8868\u9875\u529F\u80FD</div>
+      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
+        <input data-setting="batch-open" type="checkbox">
+        \u663E\u793A\u201C\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\u201D\u6309\u94AE
+      </label>
+      <div data-batch-open-interval-row style="margin:0 0 10px 24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">\u4E3B\u9898\u6253\u5F00\u95F4\u9694\uFF08\u79D2\uFF09</span>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input data-setting="batch-open-interval-min" type="number" min="0.1" max="600" step="0.1" aria-label="\u6700\u5C0F\u95F4\u9694"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>\u2014</span>
+          <input data-setting="batch-open-interval-max" type="number" min="0.1" max="600" step="0.1" aria-label="\u6700\u5927\u95F4\u9694"
+            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">\u6062\u590D\u9ED8\u8BA4</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u4E2A\u4E3B\u9898\u5728\u8BE5\u8303\u56F4\u5185\u968F\u673A\u7B49\u5F85\uFF1B\u9ED8\u8BA4 0.8\u20131.6 \u79D2\u3002\u5B9A\u671F\u957F\u505C\u987F\u89C4\u5219\u4FDD\u6301\u4E0D\u53D8\u3002</small>
+      </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
+        <input data-setting="batch-open-history" type="checkbox" style="margin-top:3px">
+        <span><strong>\u4FDD\u5B58\u6279\u91CF\u6253\u5F00\u8BB0\u5F55</strong><small style="display:block;margin-top:2px;color:#666">\u8BB0\u5F55\u811A\u672C\u6279\u91CF\u6253\u5F00\u8FC7\u7684\u6587\u7AE0\u5E76\u6301\u4E45\u6807\u8BB0\uFF1B\u624B\u52A8\u8BBF\u95EE\u8FC7\u7684\u94FE\u63A5\u4E5F\u4F7F\u7528\u76F8\u540C\u989C\u8272\u663E\u793A\u3002</small></span>
+      </label>
+      <div data-batch-open-history-row style="margin:0 0 13px 24px">
+        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+          <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
+          <span><strong>\u53EA\u6253\u5F00\u672A\u6253\u5F00\u7684\u4E3B\u9898</strong><small style="display:block;margin-top:2px;color:#666">\u6279\u91CF\u6253\u5F00\u65F6\u8DF3\u8FC7\u5DF2\u7ECF\u4FDD\u5B58\u5728\u201C\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u4E2D\u7684\u6587\u7AE0\u3002</small></span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+          <input data-setting="batch-progress-locator" type="checkbox" style="margin-top:3px">
+          <span><strong>\u663E\u793A\u201C\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u201D\u6309\u94AE</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u6279\u91CF\u6253\u5F00\u6309\u94AE\u65C1\u663E\u793A\u5165\u53E3\uFF0C\u8DF3\u5230\u5DF2\u6253\u5F00\u8BB0\u5F55\u4E0E\u672A\u6253\u5F00\u6587\u7AE0\u76F8\u90BB\u7684\u5206\u9875\u4F4D\u7F6E\u3002</small></span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:600">\u6700\u591A\u4FDD\u5B58</span>
+          <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u4FDD\u5B58\u6761\u6570"
+            style="width:100px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          <span>\u6761</span>
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <span style="font-weight:600">\u8BBF\u95EE\u6807\u8BB0\u989C\u8272</span>
+          <input data-setting="batch-open-history-color" type="color" aria-label="\u8BBF\u95EE\u6807\u8BB0\u989C\u8272"
+            style="width:44px;height:32px;padding:2px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer">
+          <button type="button" data-action="reset-batch-open-history-color"
+            style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">\u8FD8\u539F\u9ED8\u8BA4\u7D2B\u8272</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">\u9ED8\u8BA4 5000 \u6761\uFF0C\u9ED8\u8BA4\u989C\u8272 #bd10e0\uFF1B\u8D85\u8FC7\u4E0A\u9650\u81EA\u52A8\u5220\u9664\u6700\u65E7\u8BB0\u5F55\u3002</small>
+      </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+        <input data-setting="search-filter" type="checkbox" style="margin-top:3px">
+        <span><strong>\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u4E0E\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u4F5C\u7528\u4E8E JavClub \u641C\u7D22\u7ED3\u679C\u9875\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+        <input data-setting="browse-filter" type="checkbox" style="margin-top:3px">
+        <span><strong>\u6B63\u5E38\u6D4F\u89C8\u5173\u952E\u8BCD\u5C4F\u853D</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u9996\u9875\u3001\u5206\u7C7B\u3001\u6807\u7B7E\u548C\u5206\u9875\u7B49\u6587\u7AE0\u5217\u8868\u4E2D\u6309\u76F8\u540C\u5173\u952E\u8BCD\u9690\u85CF\u4E3B\u9898\uFF1B\u4E0D\u5F71\u54CD\u6587\u7AE0\u8BE6\u60C5\u9875\u3002</small></span>
+      </label>
+      <label data-keywords-row style="display:block;margin-left:24px">
+        <span style="display:block;font-weight:600;margin-bottom:6px">\u5C4F\u853D\u5173\u952E\u8BCD\uFF08\u641C\u7D22 / \u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF09</span>
+        <textarea data-setting="keywords" rows="5" placeholder="\u7559\u7A7A = \u4E0D\u5C4F\u853D"
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
+        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u641C\u7D22\u4E0E\u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF0C\u8BE5\u89C4\u5219\u4E5F\u4F9B x1080x \u7684 JavClub Preview \u641C\u7D22\u590D\u7528\u3002</small>
+      </label>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
+      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
+    </div>`;
+    organizeSettingsPanel(panel, [
+      {
+        "key": "layout",
+        "title": "\u6587\u7AE0\u5E03\u5C40",
+        "description": "\u4E3B\u5185\u5BB9\u533A\u663E\u793A\u5BBD\u5EA6\u4E0E\u9875\u9762\u5E03\u5C40",
+        "settings": [
+          "layout-enabled",
+          "width"
+        ]
+      },
+      {
+        "key": "download",
+        "title": "\u4E0B\u8F7D\u4E0E\u6309\u94AE",
+        "description": "\u4E0B\u8F7D\u533A\u57DF\u3001\u56FE\u7247\u4E0B\u8F7D\u548C\u5E38\u7528\u64CD\u4F5C",
+        "settings": [
+          "show-downloads",
+          "show-image-download",
+          "download-guard",
+          "cross-search",
+          "copy-code"
+        ]
+      },
+      {
+        "key": "preview",
+        "title": "\u9884\u89C8\u4E0E\u4FEE\u590D",
+        "description": "\u56FE\u7247\u5C55\u5F00\u4E0E\u5931\u6548\u6587\u7AE0\u7684\u540E\u5907\u641C\u7D22",
+        "settings": [
+          "expand-preview",
+          "javclub-preview-timeout",
+          "javclub-preview-retries",
+          "javfree-preview-fallback",
+          "deleted-javfree-search"
+        ]
+      },
+      {
+        "key": "batch",
+        "title": "\u6279\u91CF\u6253\u5F00",
+        "description": "\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u4E3B\u9898\u4E0E\u65F6\u95F4\u95F4\u9694",
+        "settings": [
+          "batch-open",
+          "batch-open-interval-min"
+        ]
+      },
+      {
+        "key": "history",
+        "title": "\u6D4F\u89C8\u8BB0\u5F55",
+        "description": "\u4FDD\u5B58\u5DF2\u8BBF\u95EE\u7684\u4E3B\u9898\u3001\u8FDB\u5EA6\u5B9A\u4F4D\u548C\u989C\u8272\u6807\u8BB0",
+        "settings": [
+          "batch-open-history",
+          "batch-open-unopened-only"
+        ]
+      },
+      {
+        "key": "filter",
+        "title": "\u5173\u952E\u8BCD\u8FC7\u6EE4",
+        "description": "\u641C\u7D22\u9875\u548C\u666E\u901A\u5217\u8868\u9875\u7684\u5173\u952E\u8BCD\u5C4F\u853D",
+        "settings": [
+          "search-filter",
+          "browse-filter",
+          "keywords"
+        ]
+      }
+    ]);
+    const layoutInput = panel.querySelector('[data-setting="layout-enabled"]');
+    const widthInput = panel.querySelector('[data-setting="width"]');
+    const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
+    const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
+    const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
+    const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
+    const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
+    const previewInput = panel.querySelector('[data-setting="expand-preview"]');
+    const previewTimeoutInput = panel.querySelector('[data-setting="javclub-preview-timeout"]');
+    const previewRetriesInput = panel.querySelector('[data-setting="javclub-preview-retries"]');
+    const previewResetButton = panel.querySelector('[data-action="reset-javclub-preview-settings"]');
+    const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
+    const deletedJavfreeSearchInput = panel.querySelector('[data-setting="deleted-javfree-search"]');
+    const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
+    const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
+    const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
+    const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
+    const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
+    const batchUnopenedOnlyInput = panel.querySelector('[data-setting="batch-open-unopened-only"]');
+    const batchProgressLocatorInput = panel.querySelector('[data-setting="batch-progress-locator"]');
+    const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
+    const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
+    const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
+    const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
+    const browseFilterInput = panel.querySelector('[data-setting="browse-filter"]');
+    const keywordsInput = panel.querySelector('[data-setting="keywords"]');
+    layoutInput.checked = isHdblogArticleLayoutEnabled();
+    widthInput.value = rawStoredWidth() || String(DEFAULT_HDBLOG_ARTICLE_WIDTH);
+    downloadsInput.checked = readDownloadAreaVisible();
+    imageDownloadInput.checked = readImageDownloadButtonVisible();
+    downloadGuardInput.checked = isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY);
+    crossSearchInput.checked = isHdblogCrossSearchEnabled();
+    copyCodeInput.checked = isHdblogCopyCodeEnabled();
+    previewInput.checked = isHdblogPreviewExpansionEnabled();
+    const previewLoadingSettings = getJavclubPreviewLoadingSettings();
+    previewTimeoutInput.value = String(previewLoadingSettings.timeoutMs / 1e3);
+    previewRetriesInput.value = String(previewLoadingSettings.retryCount);
+    javfreePreviewInput.checked = isHdblogJavfreePreviewFallbackEnabled();
+    deletedJavfreeSearchInput.checked = isHdblogDeletedJavfreeSearchEnabled();
+    batchOpenInput.checked = isHdblogBatchOpenEnabled();
+    const batchInterval = getHdblogBatchOpenInterval();
+    batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
+    batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
+    batchHistoryInput.checked = isHdblogBatchOpenHistoryEnabled();
+    batchUnopenedOnlyInput.checked = isHdblogBatchOpenUnopenedOnlyEnabled();
+    batchProgressLocatorInput.checked = isHdblogBatchProgressLocatorEnabled();
+    batchHistoryLimitInput.value = String(getHdblogBatchOpenHistoryLimit());
+    batchHistoryColorInput.value = getHdblogBatchOpenHistoryColor();
+    searchFilterInput.checked = isHdblogSearchFilterEnabled();
+    browseFilterInput.checked = isHdblogBrowseFilterEnabled2();
+    keywordsInput.value = readBlockedKeywordsText();
+    const syncDependentFields = () => {
+      widthInput.disabled = !layoutInput.checked;
+      downloadGuardInput.disabled = !imageDownloadInput.checked;
+      keywordsInput.disabled = !searchFilterInput.checked && !browseFilterInput.checked;
+      javfreePreviewInput.disabled = !previewInput.checked;
+      previewTimeoutInput.disabled = !previewInput.checked;
+      previewRetriesInput.disabled = !previewInput.checked;
+      previewResetButton.disabled = !previewInput.checked;
+      const batchIntervalDisabled = !batchOpenInput.checked;
+      batchIntervalMinInput.disabled = batchIntervalDisabled;
+      batchIntervalMaxInput.disabled = batchIntervalDisabled;
+      batchIntervalResetButton.disabled = batchIntervalDisabled;
+      batchHistoryInput.disabled = batchIntervalDisabled;
+      batchUnopenedOnlyInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
+      batchProgressLocatorInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
+      batchHistoryLimitInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
+    };
+    syncDependentFields();
+    layoutInput.addEventListener("change", syncDependentFields);
+    imageDownloadInput.addEventListener("change", syncDependentFields);
+    searchFilterInput.addEventListener("change", syncDependentFields);
+    browseFilterInput.addEventListener("change", syncDependentFields);
+    previewInput.addEventListener("change", syncDependentFields);
+    batchOpenInput.addEventListener("change", syncDependentFields);
+    batchHistoryInput.addEventListener("change", syncDependentFields);
+    previewResetButton.addEventListener("click", () => {
+      previewTimeoutInput.value = String(DEFAULT_JAVCLUB_PREVIEW_TIMEOUT_MS / 1e3);
+      previewRetriesInput.value = String(DEFAULT_JAVCLUB_PREVIEW_RETRIES);
+      previewResetButton.blur();
+    });
+    batchIntervalResetButton.addEventListener("click", () => {
+      batchIntervalMinInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS / 1e3);
+      batchIntervalMaxInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS / 1e3);
+      batchIntervalResetButton.blur();
+    });
+    batchHistoryColorResetButton.addEventListener("click", () => {
+      batchHistoryColorInput.value = DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
+      batchHistoryColorResetButton.blur();
+    });
+    panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeHdblogSettingsPanel(document2));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) closeHdblogSettingsPanel(document2);
+    });
+    panel.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const widthText = widthInput.value.trim();
+      let numeric = DEFAULT_HDBLOG_ARTICLE_WIDTH;
+      if (widthText) {
+        numeric = Number.parseInt(widthText, 10);
+        if (!Number.isFinite(numeric) || numeric < MIN_HDBLOG_ARTICLE_WIDTH || numeric > MAX_HDBLOG_ARTICLE_WIDTH) {
+          document2.defaultView?.alert(`\u8BF7\u8F93\u5165 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} \u4E4B\u95F4\u7684\u6574\u6570\u3002`);
+          widthInput.focus();
+          return;
+        }
+      }
+      const previewTimeoutSeconds = Number(previewTimeoutInput.value);
+      const previewRetries = Number(previewRetriesInput.value);
+      if (!Number.isInteger(previewTimeoutSeconds) || previewTimeoutSeconds < 3 || previewTimeoutSeconds > 120 || !Number.isInteger(previewRetries) || previewRetries < 0 || previewRetries > 5 || !previewTimeoutInput.value.trim() || !previewRetriesInput.value.trim()) {
+        document2.defaultView?.alert("JavClub Preview \u8D85\u65F6\u65F6\u95F4\u5FC5\u987B\u4E3A 3\u2013120 \u79D2\u6574\u6570\uFF0C\u8D85\u65F6\u91CD\u8BD5\u6B21\u6570\u5FC5\u987B\u4E3A 0\u20135 \u7684\u6574\u6570\u3002");
+        previewTimeoutInput.focus();
+        return;
+      }
+      const batchIntervalMinSeconds = Number(batchIntervalMinInput.value);
+      const batchIntervalMaxSeconds = Number(batchIntervalMaxInput.value);
+      if (!Number.isFinite(batchIntervalMinSeconds) || !Number.isFinite(batchIntervalMaxSeconds) || batchIntervalMinSeconds < 0.1 || batchIntervalMaxSeconds > 600 || batchIntervalMaxSeconds < batchIntervalMinSeconds) {
+        document2.defaultView?.alert("\u6279\u91CF\u6253\u5F00\u4E3B\u9898\u95F4\u9694\u8BF7\u8F93\u5165 0.1\u2013600 \u79D2\uFF0C\u4E14\u6700\u5927\u95F4\u9694\u4E0D\u80FD\u5C0F\u4E8E\u6700\u5C0F\u95F4\u9694\u3002");
+        batchIntervalMinInput.focus();
+        return;
+      }
+      const batchHistoryLimit = Number(batchHistoryLimitInput.value);
+      if (!Number.isInteger(batchHistoryLimit) || batchHistoryLimit < 1 || batchHistoryLimit > 5e4) {
+        document2.defaultView?.alert("\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u4FDD\u5B58\u6761\u6570\u8BF7\u8F93\u5165 1\u201350000 \u7684\u6574\u6570\u3002");
+        batchHistoryLimitInput.focus();
+        return;
+      }
+      const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1e3);
+      const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1e3);
+      if (typeof GM_setValue === "function") {
+        GM_setValue(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY, layoutInput.checked);
+        GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
+        GM_setValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, downloadsInput.checked);
+        GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
+        GM_setValue(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
+        GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
+        GM_setValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, copyCodeInput.checked);
+        GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, previewInput.checked);
+        GM_setValue(JAVCLUB_PREVIEW_TIMEOUT_KEY, previewTimeoutSeconds * 1e3);
+        GM_setValue(JAVCLUB_PREVIEW_RETRIES_KEY, previewRetries);
+        GM_setValue(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
+        GM_setValue(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, deletedJavfreeSearchInput.checked);
+        GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
+        GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
+        GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
+        GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY, batchHistoryInput.checked);
+        GM_setValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY, batchUnopenedOnlyInput.checked);
+        GM_setValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY, batchProgressLocatorInput.checked);
+        GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
+        GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
+        if (typeof GM_getValue === "function") {
+          const existingHistory = GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_KEY, []);
+          if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
+            GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_KEY, existingHistory.slice(-batchHistoryLimit));
+          }
+        }
+        GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY2, searchFilterInput.checked);
+        GM_setValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY2, browseFilterInput.checked);
+        GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
+      }
+      closeHdblogSettingsPanel(document2);
+      const view = document2.defaultView;
+      if (view?.location?.reload) view.location.reload();
+    });
+    overlay.append(panel);
+    document2.body.append(overlay);
+    return overlay;
+  }
+  function registerHdblogSettingsMenu(document2, locationObject) {
+    if (!isHdblogHost3(locationObject) || typeof GM_registerMenuCommand !== "function") return;
+    const view = document2?.defaultView;
+    if (view && view.top !== view) return;
+    GM_registerMenuCommand("\u2699\uFE0F JavClub \u8BBE\u7F6E", () => openHdblogSettingsPanel(document2));
+  }
+  function installHdblogArticleEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    if (!document2) return;
+    registerHdblogSettingsMenu(document2, locationObject);
+    if (!isHdblogArticlePage(document2, locationObject)) return;
+    const storedWidth = readStoredWidth();
+    if (isHdblogArticleLayoutEnabled()) {
+      applyHdblogArticleLayout(document2, storedWidth || DEFAULT_HDBLOG_ARTICLE_WIDTH);
+    } else {
+      clearHdblogArticleLayout(document2);
+    }
+    applyHdblogDownloadAreaVisibility(document2, readDownloadAreaVisible());
+    if (readImageDownloadButtonVisible()) installDownloadButton(document2, locationObject, gmRequest2);
+    else document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
+    if (isHdblogCrossSearchEnabled()) installAgaghhhSearchButton(document2);
+    else document2.getElementById(SEARCH_BUTTON_ID)?.remove();
+    if (isHdblogCopyCodeEnabled()) installCopyCodeButton(document2);
+    else document2.getElementById(COPY_BUTTON_ID)?.remove();
+  }
+
+  // src/hdblog-preview.js
+  var IMAGE_EXTENSION_PATTERN3 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
+  var PREVIEW_BOUNDARY_PATTERN2 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  var PREVIEW_VIEWPORT_WIDTH = "min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))";
+  var RELATED_CONTENT_SELECTOR = '.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, .related-posts-container, [class*="related-posts"]';
+  function normalizeText3(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function isHdblogHost4(locationObject) {
+    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return ["javclub.me", "hdblog.me"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+  }
+  function absoluteHttpUrl3(document2, value) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(value)) return "";
+    try {
+      const url = new URL(value, document2.baseURI);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function pixhostShowHref(document2, anchor) {
+    const href = absoluteHttpUrl3(document2, anchor?.getAttribute("href"));
+    return href && isPixhostShowUrl(href, document2.baseURI) ? href : "";
+  }
+  function directImageHref(document2, anchor) {
+    const href = absoluteHttpUrl3(document2, anchor?.getAttribute("href"));
+    if (!href || isPixhostShowUrl(href, document2.baseURI)) return "";
+    try {
+      return IMAGE_EXTENSION_PATTERN3.test(new URL(href).pathname) ? href : "";
+    } catch {
+      return "";
+    }
+  }
+  function wordpressOriginalUrl(document2, value) {
+    const href = absoluteHttpUrl3(document2, value);
+    if (!href) return "";
+    try {
+      const url = new URL(href);
+      if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return "";
+      const originalPath = url.pathname.replace(
+        /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
+        ""
+      );
+      if (originalPath === url.pathname) return "";
+      url.pathname = originalPath;
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+  function largestSrcsetUrl2(document2, value) {
+    const candidates = String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
+      const match = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)(w|x)$/i);
+      const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
+      const amount = match ? Number(match[2]) : order;
+      const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
+      const url = absoluteHttpUrl3(document2, rawUrl);
+      return url ? { url, score } : null;
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+    return candidates[0]?.url || "";
+  }
+  function previewThumbnailUrl(document2, image) {
+    const candidates = [
+      image?.currentSrc,
+      image?.getAttribute("src"),
+      image?.getAttribute("data-original"),
+      image?.getAttribute("data-lazy-src"),
+      image?.getAttribute("data-src")
+    ];
+    for (const candidate of candidates) {
+      const url = absoluteHttpUrl3(document2, candidate);
+      if (url) return url;
+    }
+    return "";
+  }
+  function bestPreviewImageUrl(document2, image) {
+    const anchor = image.closest("a[href]");
+    if (pixhostShowHref(document2, anchor)) return "";
+    const rawCandidates = [
+      directImageHref(document2, anchor),
+      image.getAttribute("data-orig-file"),
+      image.getAttribute("data-original"),
+      image.getAttribute("data-lazy-src"),
+      image.getAttribute("data-src"),
+      image.currentSrc,
+      image.getAttribute("src")
+    ];
+    for (const candidate of rawCandidates) {
+      const direct = absoluteHttpUrl3(document2, candidate);
+      if (!direct) continue;
+      const original = wordpressOriginalUrl(document2, direct);
+      if (original) return original;
+      if (candidate === rawCandidates[0] || candidate === image.getAttribute("data-orig-file")) {
+        return direct;
+      }
+    }
+    const srcsetCandidates = [
+      image.getAttribute("data-srcset"),
+      image.getAttribute("data-lazy-srcset"),
+      image.getAttribute("srcset")
+    ];
+    for (const value of srcsetCandidates) {
+      const url = largestSrcsetUrl2(document2, value);
+      if (url) return wordpressOriginalUrl(document2, url) || url;
+    }
+    for (const candidate of rawCandidates) {
+      const url = absoluteHttpUrl3(document2, candidate);
+      if (url) return url;
+    }
+    return "";
+  }
+  function textNodesUnder3(root) {
+    const view = root.ownerDocument.defaultView;
+    const walker = root.ownerDocument.createTreeWalker(root, view.NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function findPreviewMarker(root) {
+    return textNodesUnder3(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue))) || null;
+  }
+  function isAfter3(reference, node) {
+    return Boolean(reference.compareDocumentPosition(node) & 4);
+  }
+  function findBoundary(root, marker) {
+    const textBoundary = textNodesUnder3(root).find((node) => {
+      if (!isAfter3(marker, node)) return false;
+      const text = normalizeText3(node.nodeValue);
+      return text && (PREVIEW_BOUNDARY_PATTERN2.test(text) || /^(?:関連作品|関連記事|関連動画|Related(?:\s+(?:Posts|Articles|Videos|Works))?)\s*[:：]?$/i.test(text));
+    }) || null;
+    const relatedBoundary = [...root.querySelectorAll(RELATED_CONTENT_SELECTOR)].find((element) => isAfter3(marker, element)) || null;
+    if (relatedBoundary && (!textBoundary || isAfter3(relatedBoundary, textBoundary))) {
+      return relatedBoundary;
+    }
+    return textBoundary;
+  }
+  function inPreviewRange2(marker, boundary, node) {
+    const element = node.nodeType === 1 ? node : node.parentElement;
+    if (element?.closest?.(RELATED_CONTENT_SELECTOR)) return false;
+    if (!isAfter3(marker, node)) return false;
+    return !boundary || !isAfter3(boundary, node);
+  }
+  function findArticleContent(document2) {
+    const article = document2.querySelector(
+      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post, article"
+    );
+    if (article) {
+      return article.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article;
+    }
+    return document2.querySelector("main#genesis-content, main, #content") || document2.body;
+  }
+  function revealPreviewOverflow(image) {
+    const document2 = image.ownerDocument;
+    const view = document2.defaultView;
+    let ancestor = image.parentElement;
+    while (ancestor && ancestor !== document2.body && ancestor !== document2.documentElement) {
+      try {
+        const computed = view?.getComputedStyle?.(ancestor);
+        if (computed?.overflow === "hidden" || computed?.overflow === "clip") {
+          ancestor.style.setProperty("overflow", "visible", "important");
+        }
+        if (computed?.overflowX === "hidden" || computed?.overflowX === "clip") {
+          ancestor.style.setProperty("overflow-x", "visible", "important");
+        }
+      } catch {
+      }
+      ancestor = ancestor.parentElement;
+    }
+  }
+  function styleViewportBleed(element) {
+    element.style.setProperty("display", "block", "important");
+    element.style.setProperty("float", "none", "important");
+    element.style.setProperty("clear", "both", "important");
+    element.style.setProperty("box-sizing", "border-box", "important");
+    element.style.setProperty("position", "relative", "important");
+    element.style.setProperty("left", "50%", "important");
+    element.style.setProperty("transform", "translateX(-50%)", "important");
+    element.style.setProperty("width", PREVIEW_VIEWPORT_WIDTH, "important");
+    element.style.setProperty("max-width", "none", "important");
+    element.style.setProperty("margin", "14px 0", "important");
+    element.style.setProperty("overflow", "visible", "important");
+  }
+  function styleExpandedImage(image, fullUrl) {
+    if (!fullUrl) return false;
+    if (image.dataset.x1080xPreviewLarge === "1" && image.src === fullUrl) {
+      makePreviewGestureFriendly(image);
+      return false;
+    }
+    image.src = fullUrl;
+    [
+      "srcset",
+      "sizes",
+      "width",
+      "height",
+      "data-original",
+      "data-lazy-src",
+      "data-src",
+      "data-srcset",
+      "data-lazy-srcset"
+    ].forEach((attribute) => image.removeAttribute(attribute));
+    image.loading = "eager";
+    image.decoding = "async";
+    image.dataset.x1080xPreviewLarge = "1";
+    image.dataset.x1080xPreviewExpanded = "1";
+    revealPreviewOverflow(image);
+    image.style.setProperty("display", "block", "important");
+    image.style.setProperty("float", "none", "important");
+    image.style.setProperty("clear", "both", "important");
+    image.style.setProperty("width", "auto", "important");
+    image.style.setProperty("height", "auto", "important");
+    image.style.setProperty("max-height", "none", "important");
+    image.style.setProperty("object-fit", "contain", "important");
+    const anchor = image.closest("a[href]");
+    if (anchor) {
+      anchor.href = fullUrl;
+      styleViewportBleed(anchor);
+      anchor.style.setProperty("text-align", "center", "important");
+      image.style.setProperty("max-width", "100%", "important");
+      image.style.setProperty("position", "static", "important");
+      image.style.setProperty("left", "auto", "important");
+      image.style.setProperty("transform", "none", "important");
+      image.style.setProperty("margin", "0 auto", "important");
+    } else {
+      image.style.setProperty("max-width", PREVIEW_VIEWPORT_WIDTH, "important");
+      image.style.setProperty("position", "relative", "important");
+      image.style.setProperty("left", "50%", "important");
+      image.style.setProperty("transform", "translateX(-50%)", "important");
+      image.style.setProperty("margin", "14px 0", "important");
+    }
+    makePreviewGestureFriendly(image);
+    return true;
+  }
+  function previewRange2(document2, locationObject) {
+    if (!document2 || !isHdblogHost4(locationObject)) return null;
+    const content = findArticleContent(document2);
+    if (!content) return null;
+    const marker = findPreviewMarker(content);
+    if (!marker) return null;
+    return { content, marker, boundary: findBoundary(content, marker) };
+  }
+  function expandHdblogPreviewImages(document2, locationObject = document2?.location) {
+    const range = previewRange2(document2, locationObject);
+    if (!range) return 0;
+    const { content, marker, boundary } = range;
+    let expanded = 0;
+    const handled = /* @__PURE__ */ new Set();
+    [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange2(marker, boundary, anchor)).forEach((anchor) => {
+      if (pixhostShowHref(document2, anchor)) return;
+      const fullUrl = directImageHref(document2, anchor);
+      if (!fullUrl) return;
+      let image = anchor.querySelector("img");
+      if (!image) {
+        image = document2.createElement("img");
+        image.alt = normalizeText3(anchor.textContent) || "Preview";
+        anchor.replaceChildren(image);
+      }
+      if (styleExpandedImage(image, wordpressOriginalUrl(document2, fullUrl) || fullUrl)) {
+        handled.add(image);
+        expanded += 1;
+      }
+    });
+    [...content.querySelectorAll("img")].filter((image) => inPreviewRange2(marker, boundary, image) && !handled.has(image)).forEach((image) => {
+      if (styleExpandedImage(image, bestPreviewImageUrl(document2, image))) expanded += 1;
+    });
+    return expanded;
+  }
+  async function expandHdblogPixhostPreviewImages(document2, locationObject = document2?.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    const range = previewRange2(document2, locationObject);
+    if (!range) return 0;
+    const { content, marker, boundary } = range;
+    const anchors = [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange2(marker, boundary, anchor)).map((anchor) => ({ anchor, showUrl: pixhostShowHref(document2, anchor) })).filter(({ showUrl }) => showUrl);
+    const { timeoutMs, retryCount } = getJavclubPreviewLoadingSettings();
+    const results = await Promise.all(anchors.map(async ({ anchor, showUrl }) => {
+      let image = anchor.querySelector("img");
+      const thumbnailUrl2 = previewThumbnailUrl(document2, image);
+      const fullUrl = await resolvePixhostShowUrl(
+        document2,
+        showUrl,
+        thumbnailUrl2,
+        gmRequest2,
+        timeoutMs,
+        retryCount
+      );
+      if (!fullUrl) return false;
+      if (!image) {
+        image = document2.createElement("img");
+        image.alt = normalizeText3(anchor.textContent) || "Preview";
+        anchor.replaceChildren(image);
+      }
+      return styleExpandedImage(image, fullUrl);
+    }));
+    return results.filter(Boolean).length;
+  }
+  function installHdblogPreviewImages(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2 || !isHdblogHost4(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
+    const run = () => {
+      if (!isHdblogPreviewExpansionEnabled()) return;
+      expandHdblogPreviewImages(document2, locationObject);
+      void expandHdblogPixhostPreviewImages(document2, locationObject);
+    };
+    run();
+    const view = document2.defaultView;
+    if (!view) return;
+    view.setTimeout(run, 400);
+    view.setTimeout(run, 1400);
+  }
+
+  // src/hdblog-refer.js
+  var REQUEST_TIMEOUT4 = 3e4;
+  var PREVIEW_BOUNDARY_PATTERN3 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  var resolutionCache2 = /* @__PURE__ */ new Map();
+  function normalizeText4(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function isHdblogHostname(hostname) {
+    const host = String(hostname ?? "").toLowerCase().replace(/\.$/, "");
+    return ["javclub.me", "hdblog.me"].some((domain) => host === domain || host.endsWith(`.${domain}`));
+  }
+  function absoluteHttpUrl4(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function isHdblogReferUrl(value, baseUrl = "https://javclub.me/") {
+    const href = absoluteHttpUrl4(value, baseUrl);
+    if (!href) return false;
+    try {
+      const url = new URL(href);
+      return isHdblogHostname(url.hostname) && /^\/refer\/[^?#]+/i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function responseHeadersMap(value) {
+    const headers = /* @__PURE__ */ new Map();
+    String(value ?? "").split(/\r?\n/).forEach((line) => {
+      const separator = line.indexOf(":");
+      if (separator <= 0) return;
+      headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
+    });
+    return headers;
+  }
+  function htmlRedirectTarget(document2, html, baseUrl) {
+    if (!document2 || !html) return "";
+    try {
+      const parsed = document2.implementation.createHTMLDocument("hdblog-refer");
+      parsed.documentElement.innerHTML = String(html);
+      const meta = parsed.querySelector("meta[http-equiv]");
+      if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
+        const content = meta.getAttribute("content") || "";
+        const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
+        const target = absoluteHttpUrl4(match?.[1], baseUrl);
+        if (target) return target;
+      }
+    } catch {
+    }
+    const scriptMatch = String(html).match(
+      /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
+    );
+    return absoluteHttpUrl4(scriptMatch?.[1], baseUrl);
+  }
+  function targetFromResponse(document2, response, referUrl) {
+    const finalUrl = absoluteHttpUrl4(
+      response?.finalUrl || response?.responseURL,
+      referUrl
+    );
+    if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
+      return finalUrl;
+    }
+    const location2 = responseHeadersMap(response?.responseHeaders).get("location");
+    const locationUrl = absoluteHttpUrl4(location2, referUrl);
+    if (locationUrl && !isHdblogReferUrl(locationUrl, referUrl)) return locationUrl;
+    const html = String(response?.responseText ?? response?.response ?? "");
+    const htmlTarget = htmlRedirectTarget(document2, html, referUrl);
+    return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
+  }
+  function requestReferTarget(document2, referUrl, gmRequest2, referer, timeoutMs = REQUEST_TIMEOUT4) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest2 !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      gmRequest2({
+        method: "GET",
+        url: referUrl,
+        responseType: "text",
+        timeout: timeoutMs,
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          ...referer ? { Referer: referer } : {}
+        },
+        onload(response) {
+          if (response.status >= 400 || response.status === 0) {
+            reject(Object.assign(
+              new Error(`JavClub refer \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`),
+              { status: response.status || 0, retryable: response.status === 0 }
+            ));
+            return;
+          }
+          const target = targetFromResponse(document2, response, referUrl);
+          if (!target) {
+            reject(new Error("JavClub refer \u6CA1\u6709\u8FD4\u56DE\u53EF\u8BC6\u522B\u7684\u8DF3\u8F6C\u5730\u5740"));
+            return;
+          }
+          resolve(target);
+        },
+        onerror: () => reject(Object.assign(new Error("JavClub refer \u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF"), { retryable: true })),
+        ontimeout: () => reject(Object.assign(new Error("JavClub refer \u8BF7\u6C42\u8D85\u65F6"), { retryable: true }))
+      });
+    });
+  }
+  function resolveHdblogReferUrl(document2, referUrl, gmRequest2 = globalThis.GM_xmlhttpRequest, timeoutMs = REQUEST_TIMEOUT4, retryCount = 0) {
+    const absoluteReferUrl = absoluteHttpUrl4(referUrl, document2?.baseURI || "https://javclub.me/");
+    if (!absoluteReferUrl || !isHdblogReferUrl(absoluteReferUrl, document2?.baseURI)) {
+      return Promise.resolve("");
+    }
+    if (resolutionCache2.has(absoluteReferUrl)) return resolutionCache2.get(absoluteReferUrl);
+    const promise = retryJavclubPreviewRequest(
+      () => requestReferTarget(
+        document2,
+        absoluteReferUrl,
+        gmRequest2,
+        document2?.location?.href,
+        timeoutMs
+      ),
+      retryCount
+    ).catch(() => {
+      resolutionCache2.delete(absoluteReferUrl);
+      return "";
+    });
+    resolutionCache2.set(absoluteReferUrl, promise);
+    return promise;
+  }
+  function textNodesUnder4(root) {
+    const view = root.ownerDocument.defaultView;
+    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
+    const walker = root.ownerDocument.createTreeWalker(root, showText);
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function isAfter4(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
+  }
+  function findArticleContent2(document2) {
+    const article = document2.querySelector(
+      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post, article"
+    );
+    if (article) {
+      return article.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article;
+    }
+    return document2.querySelector("main#genesis-content, main, #content") || document2.body;
+  }
+  function previewRange3(document2, locationObject) {
+    if (!document2 || !isHdblogHostname(locationObject?.hostname)) return null;
+    const content = findArticleContent2(document2);
+    if (!content) return null;
+    const nodes = textNodesUnder4(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText4(node.nodeValue)));
+    if (!marker) return null;
+    const textBoundary = nodes.find((node) => isAfter4(marker, node) && (PREVIEW_BOUNDARY_PATTERN3.test(normalizeText4(node.nodeValue)) || /^(?:関連作品|関連記事|関連動画)\s*[:：]?$/i.test(normalizeText4(node.nodeValue)))) || null;
+    const relatedBoundary = [...content.querySelectorAll(".yarpp, .yarpp-related, .related-posts")].find((node) => isAfter4(marker, node)) || null;
+    const boundary = relatedBoundary && (!textBoundary || isAfter4(relatedBoundary, textBoundary)) ? relatedBoundary : textBoundary;
+    return { content, marker, boundary };
+  }
+  function inPreviewRange3(range, node) {
+    if (!range || !isAfter4(range.marker, node)) return false;
+    if (node.closest?.(".yarpp, .yarpp-related, .related-posts")) return false;
+    return !range.boundary || !isAfter4(range.boundary, node);
+  }
+  async function resolveHdblogPreviewReferLinks(document2, locationObject = document2?.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    const range = previewRange3(document2, locationObject);
+    if (!range) return 0;
+    const anchors = [...range.content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange3(range, anchor)).map((anchor) => ({
+      anchor,
+      referUrl: absoluteHttpUrl4(anchor.getAttribute("href"), document2.baseURI)
+    })).filter(({ referUrl }) => isHdblogReferUrl(referUrl, document2.baseURI));
+    if (!anchors.length) return 0;
+    const { timeoutMs, retryCount } = getJavclubPreviewLoadingSettings();
+    const results = await Promise.all(anchors.map(async ({ anchor, referUrl }) => {
+      const target = await resolveHdblogReferUrl(document2, referUrl, gmRequest2, timeoutMs, retryCount);
+      if (!target) return false;
+      anchor.dataset.x1080xHdblogReferUrl = referUrl;
+      anchor.href = target;
+      return true;
+    }));
+    const resolved = results.filter(Boolean).length;
+    if (resolved) {
+      expandHdblogPreviewImages(document2, locationObject);
+      await expandHdblogPixhostPreviewImages(document2, locationObject, gmRequest2);
+    }
+    return resolved;
+  }
+  function installHdblogReferResolver(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isHdblogHostname(locationObject?.hostname) || !isHdblogPreviewExpansionEnabled()) return;
+    const run = () => {
+      if (!isHdblogPreviewExpansionEnabled()) return;
+      void resolveHdblogPreviewReferLinks(document2, locationObject, gmRequest2);
+    };
+    run();
+    const view = document2.defaultView;
+    if (!view) return;
+    view.setTimeout(run, 500);
+    view.setTimeout(run, 1500);
+  }
+
+  // src/preview-image-health.js
+  var PIXHOST_IMAGE_HOST = /^(?:img\d+|t\d+)\.(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
+  var IMAGE_CHECK_TIMEOUT = 8e3;
+  function isPixhostAssetUrl2(value) {
+    try {
+      const url = new URL(value);
+      return /^https?:$/.test(url.protocol) && PIXHOST_IMAGE_HOST.test(url.hostname) && /^\/(?:images|thumbs)\//i.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
+  function isPixhostRemovedPlaceholder(value, width, height) {
+    if (!isPixhostAssetUrl2(value)) return false;
+    return width >= 240 && width <= 285 && height >= 110 && height <= 155 && width / height >= 1.7 && width / height <= 2.35;
+  }
+  function checkPixhostPreviewImage(value, document2, timeout = IMAGE_CHECK_TIMEOUT) {
+    if (!isPixhostAssetUrl2(value)) return Promise.resolve(true);
+    const ImageConstructor = document2?.defaultView?.Image;
+    if (typeof ImageConstructor !== "function") return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const image = new ImageConstructor();
+      let settled = false;
+      let timer;
+      const finish = (valid) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        image.onload = null;
+        image.onerror = null;
+        resolve(valid);
+      };
+      image.onload = () => finish(
+        image.naturalWidth > 0 && image.naturalHeight > 0 && !isPixhostRemovedPlaceholder(value, image.naturalWidth, image.naturalHeight)
+      );
+      image.onerror = () => finish(false);
+      timer = setTimeout(() => finish(false), timeout);
+      image.src = value;
+      if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        image.onload();
+      }
+    });
+  }
+  async function filterPixhostUnavailableImageUrls(result, document2, timeout = IMAGE_CHECK_TIMEOUT) {
+    if (!result?.imageUrls?.length) return result;
+    const valid = await Promise.all(result.imageUrls.map(
+      (url) => checkPixhostPreviewImage(url, document2, timeout)
+    ));
+    if (valid.every(Boolean)) return result;
+    const imageUrls = result.imageUrls.filter((_url, index) => valid[index]);
+    console.warn("[x1080x-ex] Pixhost unavailable Preview skipped", {
+      code: result.code,
+      skipped: result.imageUrls.length - imageUrls.length
+    });
+    return { ...result, imageUrls };
+  }
+
+  // src/agaghhh-preview-official.js
+  var AV_WIKI_ORIGIN = "https://av-wiki.net";
+  var FANZA_IMAGE_ORIGIN = "https://pics.dmm.co.jp";
+  var FANZA_REFERER = "https://www.dmm.co.jp/";
+  var MGS_ORIGIN = "https://www.mgstage.com";
+  var REQUEST_TIMEOUT5 = 3e4;
+  var MAX_PREVIEW_IMAGES = 20;
+  var AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:agaghhh-official-preview-fallback-enabled";
+  function normalizeText5(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function absoluteHttpUrl5(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function gmRequest(details, request = globalThis.GM_xmlhttpRequest) {
+    return new Promise((resolve, reject) => {
+      if (typeof request !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      request({
+        timeout: REQUEST_TIMEOUT5,
+        ...details,
+        onload: resolve,
+        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
+        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  async function requestText2(url, request, options = {}) {
+    const response = await gmRequest({
+      method: "GET",
+      url,
+      responseType: "text",
+      headers: {
+        Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        ...options.referer ? { Referer: options.referer } : {},
+        ...options.headers || {}
+      },
+      ...options.cookie ? { cookie: options.cookie } : {}
+    }, request);
+    if (response.status < 200 || response.status >= 400) {
+      throw new Error(`\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`);
+    }
+    return {
+      html: String(response.responseText ?? response.response ?? ""),
+      finalUrl: response.finalUrl || response.responseURL || url
+    };
+  }
+  async function urlExists(url, request, referer = "") {
+    try {
+      const response = await gmRequest({
+        method: "HEAD",
+        url,
+        responseType: "text",
+        headers: referer ? { Referer: referer } : void 0
+      }, request);
+      return response.status >= 200 && response.status < 400;
+    } catch {
+      return false;
+    }
+  }
+  function parseHtml2(html, baseUrl, hostDocument = globalThis.document) {
+    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (typeof Parser !== "function") return null;
+    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
+    const base = parsed.createElement("base");
+    base.href = baseUrl;
+    (parsed.head || parsed.documentElement).prepend(base);
+    return parsed;
+  }
+  function codeTokenMatches2(text, code) {
+    const target = String(code || "").trim().toUpperCase();
+    if (!target) return false;
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`, "i").test(normalizeText5(text).toUpperCase());
+  }
+  function findAvWikiResultUrl(document2, code) {
+    if (!document2 || !code) return "";
+    const exactPath = `/${String(code).toLowerCase()}/`;
+    const anchors = [...document2.querySelectorAll("a[href]")];
+    for (const anchor of anchors) {
+      const url = absoluteHttpUrl5(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+      if (!url) continue;
+      try {
+        const parsed = new URL(url);
+        if (parsed.origin === AV_WIKI_ORIGIN && parsed.pathname.toLowerCase() === exactPath) return parsed.href;
+      } catch {
+      }
+    }
+    for (const anchor of anchors) {
+      const article = anchor.closest("article");
+      if (!codeTokenMatches2(article?.textContent || anchor.textContent, code)) continue;
+      const url = absoluteHttpUrl5(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
+      if (!url) continue;
+      try {
+        const parsed = new URL(url);
+        if (parsed.origin === AV_WIKI_ORIGIN && parsed.pathname !== "/") return parsed.href;
+      } catch {
+      }
+    }
+    return "";
+  }
+  function cleanProviderId(value) {
+    return normalizeText5(value).replace(/^(?:MGS|FANZA)\s*品番\s*[:：]?\s*/i, "").split(/\s+/, 1)[0].replace(/[，,;；]+$/u, "").trim();
+  }
+  function labeledValue(document2, labelPattern) {
+    if (!document2) return "";
+    for (const row of document2.querySelectorAll("tr")) {
+      const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
+      if (cells.length < 2) continue;
+      if (labelPattern.test(normalizeText5(cells[0].textContent))) {
+        return cleanProviderId(cells[1].textContent);
+      }
+    }
+    for (const term of document2.querySelectorAll("dt")) {
+      if (!labelPattern.test(normalizeText5(term.textContent))) continue;
+      return cleanProviderId(term.nextElementSibling?.textContent || "");
+    }
+    const lines = String(document2.body?.innerText || document2.body?.textContent || "").replace(/\r/g, "").split("\n").map((line) => normalizeText5(line)).filter(Boolean);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!labelPattern.test(lines[index])) continue;
+      const inline = lines[index].replace(labelPattern, "").replace(/^\s*[:：]\s*/, "");
+      if (inline) return cleanProviderId(inline);
+      return cleanProviderId(lines[index + 1] || "");
+    }
+    return "";
+  }
+  function parseAvWikiProviderIds(document2) {
+    return {
+      fanzaId: labeledValue(document2, /^FANZA\s*品番\s*[:：]?/i),
+      mgsId: labeledValue(document2, /^MGS\s*品番\s*[:：]?/i)
+    };
+  }
+  async function fetchAvWikiProductInfo(code, request, hostDocument) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return { code: "", detailUrl: "", fanzaId: "", mgsId: "" };
+    const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
+    const search = await requestText2(searchUrl, request, { referer: `${AV_WIKI_ORIGIN}/` });
+    const searchDocument = parseHtml2(search.html, search.finalUrl || searchUrl, hostDocument);
+    const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
+    const detail = await requestText2(detailUrl, request, { referer: searchUrl });
+    const detailDocument = parseHtml2(detail.html, detail.finalUrl || detailUrl, hostDocument);
+    return {
+      code: normalizedCode,
+      detailUrl,
+      ...parseAvWikiProviderIds(detailDocument)
+    };
+  }
+  function fanzaPreviewUrl(fanzaId, index, large = true) {
+    const id = String(fanzaId || "").trim();
+    if (!id || !Number.isInteger(index) || index < 1) return "";
+    const suffix = large ? `jp-${index}.jpg` : `-${index}.jpg`;
+    return `${FANZA_IMAGE_ORIGIN}/digital/video/${encodeURIComponent(id)}/${encodeURIComponent(id)}${suffix}`;
+  }
+  async function fetchFanzaPreviewImages(fanzaId, request = globalThis.GM_xmlhttpRequest) {
+    const id = String(fanzaId || "").trim();
+    if (!id) return [];
+    const urls = [];
+    let consecutiveMisses = 0;
+    for (let index = 1; index <= MAX_PREVIEW_IMAGES; index += 1) {
+      const thumbnail = fanzaPreviewUrl(id, index, false);
+      const exists = await urlExists(thumbnail, request, FANZA_REFERER);
+      if (exists) {
+        urls.push(fanzaPreviewUrl(id, index, true));
+        consecutiveMisses = 0;
+        continue;
+      }
+      consecutiveMisses += 1;
+      if (urls.length && consecutiveMisses >= 2) break;
+      if (!urls.length && index >= 4) break;
+    }
+    return urls;
+  }
+  function parseMgsPreviewImages(document2, baseUrl) {
+    if (!document2) return [];
+    const seen = /* @__PURE__ */ new Set();
+    return [...document2.querySelectorAll("a.sample_image[href], .sample_image[href]")].map((element) => absoluteHttpUrl5(element.getAttribute("href"), baseUrl)).filter((url) => url && !seen.has(url) && seen.add(url));
+  }
+  async function fetchMgsPreviewImages(mgsId, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+    const id = String(mgsId || "").trim();
+    if (!id) return { productUrl: "", imageUrls: [] };
+    const productUrl = `${MGS_ORIGIN}/product/product_detail/${encodeURIComponent(id)}/`;
+    const response = await requestText2(productUrl, request, {
+      referer: `${MGS_ORIGIN}/`,
+      cookie: "adc=1; coc=1",
+      headers: { "Accept-Language": "ja-JP" }
+    });
+    const document2 = parseHtml2(response.html, response.finalUrl || productUrl, hostDocument);
+    return {
+      productUrl,
+      imageUrls: parseMgsPreviewImages(document2, response.finalUrl || productUrl)
+    };
+  }
+  function isOfficialPreviewFallbackEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY, true) !== false;
+  }
+  async function fetchOfficialPreviewFallbackForCode(code, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
+    const info = await fetchAvWikiProductInfo(code, request, hostDocument);
+    if (!info.code) return { code: "", sourceName: "", sourceUrl: "", referer: "", imageUrls: [] };
+    if (info.fanzaId) {
+      try {
+        const imageUrls = await fetchFanzaPreviewImages(info.fanzaId, request);
+        if (imageUrls.length) {
+          return {
+            code: info.code,
+            sourceName: "FANZA",
+            sourceUrl: info.detailUrl,
+            referer: FANZA_REFERER,
+            imageUrls
+          };
+        }
+      } catch (error) {
+        console.warn("[x1080x-ex] FANZA preview fallback failed", {
+          code: info.code,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    if (info.mgsId) {
+      try {
+        const mgs = await fetchMgsPreviewImages(info.mgsId, request, hostDocument);
+        if (mgs.imageUrls.length) {
+          return {
+            code: info.code,
+            sourceName: "MGStage",
+            sourceUrl: mgs.productUrl || info.detailUrl,
+            referer: mgs.productUrl || `${MGS_ORIGIN}/`,
+            imageUrls: mgs.imageUrls
+          };
+        }
+      } catch (error) {
+        console.warn("[x1080x-ex] MGStage preview fallback failed", {
+          code: info.code,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return {
+      code: info.code,
+      sourceName: "",
+      sourceUrl: info.detailUrl,
+      referer: "",
+      imageUrls: []
+    };
+  }
+  function injectOfficialPreviewFallbackSetting(document2 = globalThis.document) {
+    const overlay = document2?.getElementById("x1080x-ex-settings-panel");
+    const form = overlay?.shadowRoot?.querySelector("form") || overlay?.querySelector("form");
+    const master = form?.querySelector('[data-setting="hdblog-preview"]');
+    if (!form || !master) return false;
+    const masterLabel = master.closest("label");
+    const strong = masterLabel?.querySelector("strong");
+    const small = masterLabel?.querySelector("small");
+    if (strong) strong.textContent = "\u663E\u793A\u5927\u9884\u89C8\u56FE";
+    if (small) small.textContent = "\u4F18\u5148\u6309\u756A\u53F7\u641C\u7D22 hdblog\uFF1B\u6CA1\u6709\u53EF\u7528 Preview \u65F6\u4F9D\u6B21\u5C1D\u8BD5 JavFree\uFF0C\u518D\u5C1D\u8BD5\u5B98\u65B9\u540E\u5907\u6E90\u3002";
+    let input = form.querySelector('[data-setting="official-preview-fallback"]');
+    if (!input) {
+      const label = document2.createElement("label");
+      label.style.cssText = "display:flex;align-items:flex-start;gap:9px;margin:-3px 0 13px 24px";
+      label.innerHTML = `
+      <input data-setting="official-preview-fallback" type="checkbox" style="margin-top:3px">
+      <span><strong>\u5B98\u65B9\u540E\u5907\u9884\u89C8\u56FE\uFF08FANZA / MGStage\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u5728 hdblog \u548C JavFree \u90FD\u6CA1\u6709\u53EF\u7528 Preview \u65F6\u542F\u7528\uFF0C\u987A\u5E8F\u4E3A FANZA \u5B98\u65B9\u56FE\u7247 CDN \u2192 MGStage \u5B98\u65B9\u5546\u54C1\u9875\u3002</small></span>`;
+      const javfreeLabel = form.querySelector('[data-setting="javfree-preview-fallback"]')?.closest("label");
+      (javfreeLabel || masterLabel)?.after(label);
+      input = label.querySelector('[data-setting="official-preview-fallback"]');
+    }
+    input.checked = isOfficialPreviewFallbackEnabled();
+    const syncDisabled = () => {
+      input.disabled = !master.checked;
+    };
+    syncDisabled();
+    if (master.dataset.x1080xOfficialFallbackBound !== "1") {
+      master.dataset.x1080xOfficialFallbackBound = "1";
+      master.addEventListener("change", syncDisabled);
+    }
+    if (form.dataset.x1080xOfficialFallbackBound !== "1") {
+      form.dataset.x1080xOfficialFallbackBound = "1";
+      form.addEventListener("submit", () => {
+        if (typeof GM_setValue === "function") {
+          GM_setValue(AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY, input.checked);
+        }
+      }, true);
+    }
+    return true;
+  }
+  function installOfficialPreviewFallbackSetting(document2 = globalThis.document, locationObject = globalThis.location) {
+    if (!document2 || !isAgaghhhHost(locationObject)) return null;
+    if (injectOfficialPreviewFallbackSetting(document2)) return null;
+    const Observer = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
+    if (typeof Observer !== "function" || !document2.body) return null;
+    const observer = new Observer(() => injectOfficialPreviewFallbackSetting(document2));
+    observer.observe(document2.body, { childList: true, subtree: true });
+    return observer;
+  }
+
+  // src/agaghhh-hdblog-preview.js
+  installOfficialPreviewFallbackSetting();
+  var HDBLOG_ORIGIN = "https://javclub.me";
+  var HDBLOG_BLOCKED_KEYWORDS_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
+  var DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
+  var HDBLOG_PREVIEW_TIMEOUT_KEY = "x1080x-ex:hdblog-preview-request-timeout-ms";
+  var HDBLOG_PREVIEW_RETRIES_KEY = "x1080x-ex:hdblog-preview-retry-count";
+  var DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS = 3e4;
+  var DEFAULT_HDBLOG_PREVIEW_RETRIES = 2;
+  var REQUEST_TIMEOUT6 = DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS;
+  var previewLookups = /* @__PURE__ */ new WeakMap();
+  function getHdblogPreviewLoadingSettings() {
+    const read2 = typeof GM_getValue === "function" ? GM_getValue : (_key, fallback) => fallback;
+    const timeoutMs = Number(read2(HDBLOG_PREVIEW_TIMEOUT_KEY, DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS));
+    const retries = Number(read2(HDBLOG_PREVIEW_RETRIES_KEY, DEFAULT_HDBLOG_PREVIEW_RETRIES));
+    return {
+      timeoutMs: Number.isInteger(timeoutMs) && timeoutMs >= 3e3 && timeoutMs <= 12e4 ? timeoutMs : DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS,
+      retryCount: Number.isInteger(retries) && retries >= 0 && retries <= 5 ? retries : DEFAULT_HDBLOG_PREVIEW_RETRIES
+    };
+  }
+  var CONTAINER_ID = "x1080x-ex-agaghhh-hdblog-preview";
+  var PREVIEW_IMAGE_ATTR = "data-x1080x-hdblog-preview-url";
+  var IMAGE_EXTENSION_PATTERN4 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
+  var PREVIEW_BOUNDARY_PATTERN4 = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  function normalizeText6(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+  function absoluteHttpUrl6(value, baseUrl) {
+    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
+    try {
+      const url = new URL(String(value), baseUrl);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function requestText3(url, gmRequest2, referer = "", timeoutMs = REQUEST_TIMEOUT6) {
+    return new Promise((resolve, reject) => {
+      if (typeof gmRequest2 !== "function") {
+        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
+        return;
+      }
+      gmRequest2({
+        method: "GET",
+        url,
+        responseType: "text",
+        timeout: timeoutMs,
+        headers: {
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          ...referer ? { Referer: referer } : {}
+        },
+        onload(response) {
+          if (response.status >= 400 || response.status === 0) {
+            reject(new Error(`\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
+            return;
+          }
+          resolve({
+            html: String(response.responseText ?? response.response ?? ""),
+            finalUrl: response.finalUrl || response.responseURL || url,
+            responseHeaders: response.responseHeaders || ""
+          });
+        },
+        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
+        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
+      });
+    });
+  }
+  function parseHtml3(html, baseUrl, hostDocument = globalThis.document) {
+    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
+    if (typeof Parser !== "function") return null;
+    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
+    const base = parsed.createElement("base");
+    base.href = baseUrl;
+    (parsed.head || parsed.documentElement).prepend(base);
+    return parsed;
+  }
+  function getHdblogBlockedKeywords() {
+    if (typeof GM_getValue === "function" && GM_getValue("x1080x-ex:hdblog-search-filter-enabled", true) === false) return [];
+    const stored = typeof GM_getValue === "function" ? GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY2, null) : null;
+    return parseBlockedKeywords(
+      stored === null || stored === void 0 ? DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 : stored
+    );
+  }
+  function codeTokenMatches3(title, code) {
+    const normalized = normalizeText6(title).toUpperCase();
+    const target = String(code || "").trim().toUpperCase();
+    if (!target) return false;
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`, "i").test(normalized);
+  }
+  function chooseHdblogSearchResult(candidates, code, keywords = getHdblogBlockedKeywords()) {
+    const { blocked, remaining } = filterSearchCandidates(candidates, keywords);
+    if (!remaining.length) return { blocked, remaining, selected: null };
+    if (remaining.length === 1) return { blocked, remaining, selected: remaining[0] };
+    const slug = String(code || "").trim().toLowerCase();
+    const exactSlug = remaining.filter((candidate) => {
+      try {
+        const parts = new URL(candidate.url).pathname.toLowerCase().split("/").filter(Boolean);
+        return parts.at(-1) === slug;
+      } catch {
+        return false;
+      }
+    });
+    if (exactSlug.length === 1) return { blocked, remaining, selected: exactSlug[0] };
+    const exactTitle = remaining.filter((candidate) => codeTokenMatches3(candidate.title, code));
+    if (exactTitle.length === 1) return { blocked, remaining, selected: exactTitle[0] };
+    return { blocked, remaining, selected: null };
+  }
+  function responseHeader(value, name) {
+    const lower = String(name || "").toLowerCase();
+    const line = String(value || "").split(/\r?\n/).find((entry) => {
+      const separator = entry.indexOf(":");
+      return separator > 0 && entry.slice(0, separator).trim().toLowerCase() === lower;
+    });
+    return line ? line.slice(line.indexOf(":") + 1).trim() : "";
+  }
+  function redirectFromHtml(html, baseUrl, hostDocument) {
+    const parsed = parseHtml3(html, baseUrl, hostDocument);
+    const meta = parsed?.querySelector("meta[http-equiv]");
+    if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
+      const content = meta.getAttribute("content") || "";
+      const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
+      const target = absoluteHttpUrl6(match?.[1], baseUrl);
+      if (target) return target;
+    }
+    const scriptMatch = String(html).match(
+      /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
+    );
+    return absoluteHttpUrl6(scriptMatch?.[1], baseUrl);
+  }
+  async function resolveHdblogReferTarget(document2, referUrl, articleUrl, gmRequest2, timeoutMs = REQUEST_TIMEOUT6) {
+    try {
+      const response = await requestText3(referUrl, gmRequest2, articleUrl, timeoutMs);
+      const finalUrl = absoluteHttpUrl6(response.finalUrl, referUrl);
+      if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
+        return finalUrl;
+      }
+      const location2 = absoluteHttpUrl6(responseHeader(response.responseHeaders, "location"), referUrl);
+      if (location2 && !isHdblogReferUrl(location2, referUrl)) return location2;
+      const htmlTarget = redirectFromHtml(response.html, referUrl, document2);
+      return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
+    } catch {
+      return "";
+    }
+  }
+  function previewThumbnailUrl2(document2, image) {
+    const candidates = [
+      image?.currentSrc,
+      image?.getAttribute("src"),
+      image?.getAttribute("data-original"),
+      image?.getAttribute("data-lazy-src"),
+      image?.getAttribute("data-src")
+    ];
+    for (const candidate of candidates) {
+      const url = absoluteHttpUrl6(candidate, document2.baseURI);
+      if (url) return url;
+    }
+    return "";
+  }
+  function wordpressOriginalUrl2(value) {
+    const href = absoluteHttpUrl6(value, HDBLOG_ORIGIN);
+    if (!href) return "";
+    try {
+      const url = new URL(href);
+      if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return "";
+      url.pathname = url.pathname.replace(
+        /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
+        ""
+      );
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
+  function largestSrcsetUrl3(document2, value) {
+    return String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
+      const match = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)(w|x)$/i);
+      const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
+      const amount = match ? Number(match[2]) : order;
+      const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
+      const url = absoluteHttpUrl6(rawUrl, document2.baseURI);
+      return url ? { url, score } : null;
+    }).filter(Boolean).sort((a, b) => b.score - a.score)[0]?.url || "";
+  }
+  function pixhostAssetIdentity(value, baseUrl) {
+    const href = absoluteHttpUrl6(value, baseUrl);
+    if (!href) return "";
+    try {
+      const url = new URL(href);
+      const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+      const isPixhostHost = /^(?:(?:t|img)\d+\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i.test(hostname);
+      if (!isPixhostHost) return "";
+      const match = url.pathname.match(/^\/(?:show|images|thumbs)\/(\d+)\/([^/?#]+)$/i);
+      if (!match) return "";
+      return `pixhost:${match[1]}/${match[2].toLowerCase()}`;
+    } catch {
+      return "";
+    }
+  }
+  function existingPixhostAssets(content) {
+    const identities = /* @__PURE__ */ new Set();
+    if (!content) return identities;
+    const add = (value) => {
+      const identity = pixhostAssetIdentity(value, content.ownerDocument?.baseURI);
+      if (identity) identities.add(identity);
+    };
+    for (const anchor of content.querySelectorAll("a[href]")) add(anchor.getAttribute("href"));
+    for (const image of content.querySelectorAll("img")) {
+      add(image.currentSrc);
+      add(image.getAttribute("src"));
+      add(image.getAttribute("data-original"));
+      add(image.getAttribute("data-lazy-src"));
+      add(image.getAttribute("data-src"));
+    }
+    return identities;
+  }
+  function bestImageUrl(document2, image) {
+    if (!image) return "";
+    const anchorHref = absoluteHttpUrl6(image.closest("a[href]")?.getAttribute("href"), document2.baseURI);
+    const directAnchorHref = anchorHref && !isPixhostShowUrl(anchorHref, document2.baseURI) && IMAGE_EXTENSION_PATTERN4.test(anchorHref) ? anchorHref : "";
+    const candidates = [
+      directAnchorHref,
+      image.getAttribute("data-orig-file"),
+      image.getAttribute("data-original"),
+      image.getAttribute("data-lazy-src"),
+      image.getAttribute("data-src"),
+      image.currentSrc,
+      image.getAttribute("src")
+    ];
+    for (const candidate of candidates) {
+      const url = absoluteHttpUrl6(candidate, document2.baseURI);
+      if (!url) continue;
+      return wordpressOriginalUrl2(url) || url;
+    }
+    const srcset = largestSrcsetUrl3(
+      document2,
+      image.getAttribute("data-srcset") || image.getAttribute("data-lazy-srcset") || image.getAttribute("srcset")
+    );
+    return wordpressOriginalUrl2(srcset) || srcset;
+  }
+  function textNodesUnder5(root) {
+    const view = root.ownerDocument.defaultView;
+    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
+    const walker = root.ownerDocument.createTreeWalker(root, showText);
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
+      node = walker.nextNode();
+    }
+    return nodes;
+  }
+  function isAfter5(reference, node) {
+    return Boolean(reference?.compareDocumentPosition(node) & 4);
+  }
+  function previewRange4(document2) {
+    const article = document2.querySelector(
+      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post, article"
+    );
+    const content = article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article || document2.querySelector("main#genesis-content, main, #content") || document2.body;
+    if (!content) return null;
+    const nodes = textNodesUnder5(content);
+    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText6(node.nodeValue)));
+    if (!marker) return null;
+    const boundary = nodes.find((node) => isAfter5(marker, node) && PREVIEW_BOUNDARY_PATTERN4.test(normalizeText6(node.nodeValue))) || null;
+    return { content, marker, boundary };
+  }
+  function inPreviewRange4(range, node) {
+    if (!range || !isAfter5(range.marker, node)) return false;
+    return !range.boundary || !isAfter5(range.boundary, node);
+  }
+  async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest2, healthDocument = null, timeoutMs = REQUEST_TIMEOUT6) {
+    const range = previewRange4(document2);
+    if (!range) return [];
+    const handledImages = /* @__PURE__ */ new Set();
+    const candidates = [];
+    for (const anchor of [...range.content.querySelectorAll("a[href]")].filter((node) => inPreviewRange4(range, node))) {
+      const image = anchor.querySelector("img");
+      if (image) handledImages.add(image);
+      candidates.push({
+        kind: "anchor",
+        anchor,
+        image,
+        href: absoluteHttpUrl6(anchor.getAttribute("href"), document2.baseURI),
+        thumbUrl: previewThumbnailUrl2(document2, image),
+        values: [
+          image?.getAttribute("src"),
+          image?.getAttribute("data-original"),
+          image?.getAttribute("data-lazy-src"),
+          image?.getAttribute("data-src")
+        ]
+      });
+    }
+    for (const image of [...range.content.querySelectorAll("img")].filter((node) => inPreviewRange4(range, node) && !handledImages.has(node))) {
+      candidates.push({
+        kind: "image",
+        image,
+        directUrl: bestImageUrl(document2, image),
+        values: [
+          image.currentSrc,
+          image.getAttribute("src"),
+          image.getAttribute("data-original"),
+          image.getAttribute("data-lazy-src"),
+          image.getAttribute("data-src")
+        ]
+      });
+    }
+    const resolveCandidates = async (items) => {
+      const urls = [];
+      const seen = /* @__PURE__ */ new Set();
+      const add = (value) => {
+        const url = absoluteHttpUrl6(value, articleUrl);
+        if (!url) return;
+        const key = pixhostAssetIdentity(url, articleUrl) || url;
+        if (seen.has(key)) return;
+        seen.add(key);
+        urls.push(url);
+      };
+      for (const candidate of items) {
+        if (candidate.kind === "image") {
+          add(candidate.directUrl || bestImageUrl(document2, candidate.image));
+          continue;
+        }
+        let target = candidate.href;
+        const image = candidate.image;
+        const thumbnail = candidate.thumbUrl;
+        if (isHdblogReferUrl(target, document2.baseURI)) {
+          target = await resolveHdblogReferTarget(document2, target, articleUrl, gmRequest2, timeoutMs);
+        }
+        const pixhostShowTarget = target && isPixhostShowUrl(target, document2.baseURI);
+        if (pixhostShowTarget) {
+          target = await resolvePixhostShowUrl(document2, target, thumbnail, gmRequest2, timeoutMs);
+          if (!target) continue;
+        }
+        if (target && (IMAGE_EXTENSION_PATTERN4.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
+          add(wordpressOriginalUrl2(target) || target);
+          continue;
+        }
+        if (image) add(bestImageUrl(document2, image));
+      }
+      return urls;
+    };
+    const verify = async (urls) => {
+      if (!healthDocument || !urls.length) return urls;
+      const checked = await filterPixhostUnavailableImageUrls({ imageUrls: urls }, healthDocument, timeoutMs);
+      return checked.imageUrls;
+    };
+    const { standard, fourK } = partitionPreviewCandidates(candidates);
+    if (standard.length) {
+      const standardUrls = await verify(await resolveCandidates(standard));
+      if (standardUrls.length) return standardUrls;
+    }
+    return fourK.length ? verify(await resolveCandidates(fourK)) : [];
+  }
+  function hdblogSearchCodeForThreadCode(code) {
+    const normalized = String(code || "").trim().toUpperCase();
+    const fc2 = normalized.match(/^FC2-(?:PPV-)?(\d{5,9})$/i);
+    if (fc2) return fc2[1];
+    const uncensored = normalized.match(/^[A-Z0-9]{2,12}-(\d{6}[-_]\d{3,4})$/i);
+    return uncensored?.[1] || normalized;
+  }
+  async function fetchHdblogPreviewForCode(code, gmRequest2 = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document, verifyImages = false, options = {}) {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    if (!normalizedCode) return { code: "", articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
+    const searchCode = hdblogSearchCodeForThreadCode(normalizedCode);
+    const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT6;
+    const retryCount = options.retryCount ?? 0;
+    const wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const searchUrl = `${HDBLOG_ORIGIN}/?s=${encodeURIComponent(searchCode)}`;
+    const searchResponse = await requestText3(searchUrl, gmRequest2, `${HDBLOG_ORIGIN}/`, timeoutMs);
+    const searchDocument = parseHtml3(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
+    if (!searchDocument) return { code: normalizedCode, articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
+    const candidates = collectHdblogSearchResults(searchDocument);
+    if (!candidates.length && isHdblogArticleUrl(searchResponse.finalUrl)) {
+      const title = normalizeText6(searchDocument.querySelector("main#genesis-content article.entry h1.entry-title")?.textContent);
+      if (title && codeTokenMatches3(title, searchCode)) {
+        candidates.push({ url: searchResponse.finalUrl, title });
+      }
+    }
+    const selection = chooseHdblogSearchResult(candidates, searchCode, getHdblogBlockedKeywords());
+    if (!selection.selected) {
+      return { code: normalizedCode, articleUrl: "", imageUrls: [], ...selection };
+    }
+    const articleUrl = selection.selected.url;
+    let imageUrls = [];
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      let shouldRetry = false;
+      try {
+        const articleResponse = await requestText3(articleUrl, gmRequest2, searchUrl, timeoutMs);
+        const articleDocument = parseHtml3(
+          articleResponse.html,
+          articleResponse.finalUrl || articleUrl,
+          hostDocument
+        );
+        if (!articleDocument || !previewRange4(articleDocument)) break;
+        imageUrls = await collectHdblogPreviewImageUrls(
+          articleDocument,
+          articleUrl,
+          gmRequest2,
+          verifyImages ? hostDocument : null,
+          timeoutMs
+        );
+        if (imageUrls.length) break;
+        shouldRetry = true;
+      } catch (error) {
+        shouldRetry = true;
+        console.warn("[x1080x-ex] matched JavClub article Preview loading failed", {
+          code: normalizedCode,
+          attempt: attempt + 1,
+          error: error?.message || String(error)
+        });
+      }
+      if (!shouldRetry || attempt >= retryCount) break;
+      const delay = Math.min(500 * (attempt + 1), 2e3);
+      await wait(delay);
+    }
+    return { code: normalizedCode, articleUrl, imageUrls, ...selection };
+  }
+  function threadCode(document2) {
+    return parseThreadTitle(getThreadHeadingText(document2)).code;
+  }
+  function firstPostContent(document2) {
+    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist") || document2.querySelector("#first-post");
+    return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text, .post-content') || firstPost || null;
+  }
+  function isThreadPage(locationObject) {
+    try {
+      const url = new URL(locationObject?.href || "");
+      return /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname) || url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid");
+    } catch {
+      return false;
+    }
+  }
+  function renderAgaghhhHdblogPreview(document2, result) {
+    if (!document2 || !result?.imageUrls?.length || document2.getElementById(CONTAINER_ID)) return null;
+    const content = firstPostContent(document2);
+    if (!content) return null;
+    const existingAssets = existingPixhostAssets(content);
+    const seenResultAssets = /* @__PURE__ */ new Set();
+    const imageUrls = result.imageUrls.filter((value) => {
+      const url = absoluteHttpUrl6(value, document2.baseURI);
+      if (!url) return false;
+      const identity = pixhostAssetIdentity(url, document2.baseURI);
+      const key = identity || url;
+      if (identity && existingAssets.has(identity)) return false;
+      if (seenResultAssets.has(key)) return false;
+      seenResultAssets.add(key);
+      return true;
+    });
+    if (!imageUrls.length) return null;
+    const section = document2.createElement("section");
+    section.id = CONTAINER_ID;
+    section.style.cssText = "clear:both;margin:24px 0 8px;padding:16px 0 0;border-top:1px solid #ddd";
+    const heading = document2.createElement("div");
+    heading.style.cssText = "margin:0 0 12px;font-size:15px;font-weight:700;color:#444";
+    const source = document2.createElement("a");
+    source.href = result.sourceUrl || result.articleUrl || "#";
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    source.textContent = `${result.sourceName || "JavClub"} Preview \xB7 ${result.code}`;
+    source.style.cssText = "color:inherit;text-decoration:none";
+    heading.append(source);
+    section.append(heading);
+    const previewReferer = result.referer || result.articleUrl || result.sourceUrl || "";
+    imageUrls.forEach((url, index) => {
+      const anchor = document2.createElement("a");
+      anchor.href = url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.style.cssText = "display:block;clear:both;margin:14px 0;text-align:center";
+      const image = document2.createElement("img");
+      image.src = url;
+      image.alt = `${result.code} Preview ${index + 1}`;
+      image.loading = index === 0 ? "eager" : "lazy";
+      image.decoding = "async";
+      image.setAttribute(PREVIEW_IMAGE_ATTR, url);
+      if (previewReferer) image.setAttribute("data-x1080x-preview-referer", previewReferer);
+      image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
+      anchor.append(image);
+      makePreviewGestureFriendly(image);
+      section.append(anchor);
+    });
+    content.append(section);
+    section.querySelectorAll("img").forEach((image) => {
+      void preparePreviewForNativeSave(image);
+    });
+    return section;
+  }
+  async function fetchHdblogPreviewWithRetries(code, gmRequest2 = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document, settings = getHdblogPreviewLoadingSettings()) {
+    return fetchHdblogPreviewForCode(
+      code,
+      gmRequest2,
+      hostDocument,
+      true,
+      {
+        timeoutMs: settings.timeoutMs,
+        retryCount: settings.retryCount
+      }
+    );
+  }
+  function pendingAgaghhhHdblogPreview(document2, pageUrl = document2?.location?.href) {
+    const cached = previewLookups.get(document2);
+    if (!cached?.promise || !pageUrl || !cached.key.startsWith(`${pageUrl}::`)) return null;
+    return cached.promise;
+  }
+  async function installAgaghhhHdblogPreview(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    if (!document2 || !isThreadPage(locationObject)) return null;
+    const code = threadCode(document2);
+    if (!code || !firstPostContent(document2)) return null;
+    const pageUrl = document2.location?.href || locationObject?.href || "";
+    const key = `${pageUrl}::${code}`;
+    const section = document2.getElementById(CONTAINER_ID);
+    if (section && section.dataset.x1080xPreviewKey === key) return section;
+    if (section) section.remove();
+    const cached = previewLookups.get(document2);
+    if (cached?.key === key) {
+      if (cached.promise) return cached.promise;
+      return renderAgaghhhHdblogPreview(document2, cached.result);
+    }
+    const task = (async () => {
+      let result = null;
+      try {
+        result = await fetchHdblogPreviewWithRetries(code, gmRequest2, document2);
+      } catch (error) {
+        console.warn("[x1080x-ex] JavClub Preview search/loading failed", {
+          code,
+          error: error?.message || String(error)
+        });
+      }
+      if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
+        try {
+          result = await fetchJavfreePreviewForCode(code, gmRequest2, document2);
+        } catch (error) {
+          console.warn("[x1080x-ex] JavFree preview fallback failed", {
+            code,
+            error: error?.message || String(error)
+          });
+        }
+      }
+      result = await filterPixhostUnavailableImageUrls(result, document2);
+      if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
+        try {
+          result = await fetchOfficialPreviewFallbackForCode(code, gmRequest2, document2);
+        } catch (error) {
+          console.warn("[x1080x-ex] official preview fallback failed", {
+            code,
+            error: error?.message || String(error)
+          });
+        }
+      }
+      result = await filterPixhostUnavailableImageUrls(result, document2);
+      if ((document2.location?.href || locationObject?.href || "") !== pageUrl || threadCode(document2) !== code) return null;
+      previewLookups.set(document2, { key, result, promise: null });
+      const rendered = renderAgaghhhHdblogPreview(document2, result);
+      if (rendered) rendered.dataset.x1080xPreviewKey = key;
+      return rendered;
+    })();
+    previewLookups.set(document2, { key, promise: task, result: null });
+    try {
+      return await task;
+    } finally {
+      if (previewLookups.get(document2)?.promise === task) previewLookups.delete(document2);
+    }
   }
 
   // src/batch-progress-locator.js
@@ -1727,66 +5831,6 @@ ${settings.password}`;
     };
   }
 
-  // src/download-guard.js
-  var AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY = "x1080x-ex:agaghhh-download-guard-enabled";
-  var HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY = "x1080x-ex:hdblog-download-guard-enabled";
-  var activeStates = /* @__PURE__ */ new WeakMap();
-  function isDownloadGuardEnabled(key) {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(key, true) !== false;
-  }
-  function beginDownloadGuard(document2 = globalThis.document, { enabled = true, label = "\u2B07 \u4E0B\u8F7D\u4E2D" } = {}) {
-    const view = document2?.defaultView || globalThis.window;
-    if (!enabled || !document2 || !view?.addEventListener || !view?.removeEventListener) {
-      return () => {
-      };
-    }
-    let state = activeStates.get(document2);
-    if (!state) {
-      state = {
-        count: 0,
-        originalTitle: "",
-        beforeUnload(event) {
-          event.preventDefault();
-          event.returnValue = "";
-          return "";
-        }
-      };
-      activeStates.set(document2, state);
-    }
-    state.count += 1;
-    if (state.count === 1) {
-      state.originalTitle = document2.title || "";
-      document2.title = state.originalTitle ? `${label} \xB7 ${state.originalTitle}` : label;
-      view.addEventListener("beforeunload", state.beforeUnload);
-    }
-    let ended = false;
-    return () => {
-      if (ended) return;
-      ended = true;
-      state.count = Math.max(0, state.count - 1);
-      if (state.count !== 0) return;
-      view.removeEventListener("beforeunload", state.beforeUnload);
-      document2.title = state.originalTitle;
-      activeStates.delete(document2);
-    };
-  }
-
-  // src/preview-gesture.js
-  function makePreviewGestureFriendly(image) {
-    if (!image) return image;
-    image.draggable = false;
-    image.setAttribute("draggable", "false");
-    image.style.setProperty("-webkit-user-drag", "none", "important");
-    const anchor = image.closest?.("a[href]");
-    if (anchor) {
-      anchor.draggable = false;
-      anchor.setAttribute("draggable", "false");
-      anchor.style.setProperty("-webkit-user-drag", "none", "important");
-    }
-    return image;
-  }
-
   // src/history-migration.js
   var GENERIC_HISTORY_TITLES = /^(?:404|notfound|pagenotfound|请先登录|請先登入|登录|登錄|歡迎訪問(?:x1080x)?|欢迎访问(?:x1080x)?|請使用下面地址之一訪問論壇|会员方案与点数储值|會員方案與點數儲值)$/i;
   function isUsableHistoryAlias(value) {
@@ -2130,6 +6174,80 @@ ${settings.password}`;
     return { confirmed: false };
   }
 
+  // src/batch-cf-detection.js
+  var BATCH_CF_SESSION_KEY = "x1080x-ex:batch-cf-session-v1";
+  var BATCH_CF_EVENT_KEY = "x1080x-ex:batch-cf-detected-v1";
+  function isCloudflareChallengePage(document2) {
+    if (!document2) return false;
+    if (document2.querySelector(
+      '#challenge-form, #challenge-stage, #challenge-running, #cf-challenge-running, form[action*="/cdn-cgi/challenge-platform/"], [id^="cf-chl-widget-"]'
+    )) return true;
+    const title = String(document2.title || "").trim();
+    const titleSignals = /just a moment|attention required|one more step|请稍候|請稍候|稍等片刻|安全验证|安全驗證/i.test(title);
+    if (!titleSignals) return false;
+    const body = String(document2.body?.textContent || "").slice(0, 4e3);
+    return /cloudflare|verify (?:you are|that you are) human|checking your browser|checking if the site connection is secure|正在检查|正在檢查|验证您是人类|驗證您是人類|人机验证|人機驗證|请确认您是真人|請確認您是真人/i.test(body) || Boolean(document2.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile'));
+  }
+  function sameBatchThread(activeUrl, currentUrl) {
+    try {
+      const left = new URL(activeUrl);
+      const right = new URL(currentUrl);
+      if (left.host !== right.host || left.pathname.replace(/\/$/, "") !== right.pathname.replace(/\/$/, "")) return false;
+      if (/\/(?:forum|search)\.php$/i.test(left.pathname)) {
+        return left.searchParams.get("tid") === right.searchParams.get("tid");
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function reportBatchCloudflareChallenge(document2, pageUrl, read2 = globalThis.GM_getValue, write = globalThis.GM_setValue, now = Date.now()) {
+    if (typeof read2 !== "function" || typeof write !== "function" || !isCloudflareChallengePage(document2)) return false;
+    const session = read2(BATCH_CF_SESSION_KEY, null);
+    if (!session || !session.id || !Array.isArray(session.urls) || !Number.isFinite(session.updatedAt) || now - session.updatedAt > 12e4 || now < session.updatedAt - 3e4) return false;
+    let current;
+    try {
+      current = new URL(pageUrl);
+    } catch {
+      return false;
+    }
+    if (current.hostname.toLowerCase() !== session.host) return false;
+    const challengePath = /^\/cdn-cgi\/challenge-platform\//i.test(current.pathname);
+    const originalUrl = session.urls.find((url) => sameBatchThread(url, pageUrl)) || challengePath && session.urls.find((url) => sameBatchThread(url, document2.referrer)) || (challengePath ? session.urls.at(-1) : null);
+    if (!originalUrl) return false;
+    write(BATCH_CF_EVENT_KEY, {
+      sessionId: session.id,
+      url: originalUrl,
+      challengeUrl: pageUrl,
+      detectedAt: now
+    });
+    return true;
+  }
+  function watchBatchCloudflareChallenge(document2 = globalThis.document, pageUrl = globalThis.location?.href, read2 = globalThis.GM_getValue, write = globalThis.GM_setValue) {
+    if (!document2 || typeof read2 !== "function" || typeof write !== "function") return;
+    const session = read2(BATCH_CF_SESSION_KEY, null);
+    if (!session?.id || !Array.isArray(session.urls)) return;
+    let done = false;
+    let observer = null;
+    let timeoutId = null;
+    const check = () => {
+      if (done || !reportBatchCloudflareChallenge(document2, pageUrl, read2, write)) return;
+      done = true;
+      observer?.disconnect();
+      if (timeoutId !== null) document2.defaultView?.clearTimeout(timeoutId);
+    };
+    check();
+    if (done) return;
+    const View = document2.defaultView;
+    if (!View?.MutationObserver || !document2.documentElement) return;
+    observer = new View.MutationObserver(check);
+    observer.observe(document2.documentElement, { childList: true, subtree: true });
+    timeoutId = View.setTimeout(() => {
+      done = true;
+      observer.disconnect();
+    }, 15e3);
+  }
+
   // src/modern-header-actions.js
   var MODERN_RESOURCE_ACTIONS_ID = "x1080x-ex-resource-actions";
   var ACTION_ORDER = [
@@ -2250,11 +6368,11 @@ ${settings.password}`;
   }
 
   // src/userscript.js
-  var STORAGE_KEY = "x1080x-ex:domains";
-  var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY = "x1080x-ex:hdblog-expand-preview-images";
+  var STORAGE_KEY2 = "x1080x-ex:domains";
+  var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2 = "x1080x-ex:hdblog-expand-preview-images";
   var AGAGHHH_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:agaghhh-batch-open-enabled";
   var AGAGHHH_DOWNLOAD_ENABLED_KEY = "x1080x-ex:agaghhh-download-enabled";
-  var HDBLOG_BATCH_OPEN_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-enabled";
+  var HDBLOG_BATCH_OPEN_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-open-enabled";
   var AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY = "x1080x-ex:agaghhh-batch-open-interval-min-ms";
   var AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:agaghhh-batch-open-interval-max-ms";
   var AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY = "x1080x-ex:agaghhh-batch-open-history-enabled";
@@ -2273,28 +6391,33 @@ ${settings.password}`;
   var AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:agaghhh-batch-open-unopened-only";
   var AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = "x1080x-ex:agaghhh-batch-progress-locator-enabled";
   var AGAGHHH_BATCH_PROGRESS_MAP_KEY = "x1080x-ex:agaghhh-batch-progress-map";
-  var HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-history-enabled";
-  var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = "x1080x-ex:hdblog-batch-open-history-limit";
-  var HDBLOG_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:hdblog-batch-open-history";
-  var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = "x1080x-ex:hdblog-batch-open-history-color";
-  var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:hdblog-batch-open-unopened-only";
-  var HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = "x1080x-ex:hdblog-batch-progress-locator-enabled";
+  var HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-open-history-enabled";
+  var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2 = "x1080x-ex:hdblog-batch-open-history-limit";
+  var HDBLOG_BATCH_OPEN_HISTORY_KEY2 = "x1080x-ex:hdblog-batch-open-history";
+  var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2 = "x1080x-ex:hdblog-batch-open-history-color";
+  var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2 = "x1080x-ex:hdblog-batch-open-unopened-only";
+  var HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-progress-locator-enabled";
   var HDBLOG_BATCH_PROGRESS_MAP_KEY = "x1080x-ex:hdblog-batch-progress-map";
   var DEFAULT_BATCH_OPEN_HISTORY_LIMIT = 5e3;
   var DEFAULT_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
   var BATCH_OPEN_HISTORY_ATTR = "data-x1080x-batch-opened";
   var BATCH_OPEN_HISTORY_STYLE_ID = "x1080x-ex-batch-open-history-style";
-  var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = "x1080x-ex:hdblog-batch-open-interval-min-ms";
-  var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:hdblog-batch-open-interval-max-ms";
-  var DEFAULT_DOMAINS = "1080xin.com\nagaghhh.cc\nhdblog.me\nfc2cmadb.com";
+  var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2 = "x1080x-ex:hdblog-batch-open-interval-min-ms";
+  var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2 = "x1080x-ex:hdblog-batch-open-interval-max-ms";
+  var DEFAULT_DOMAINS = "1080xin.com\nagaghhh.cc\njavclub.me\nhdblog.me\nfc2cmadb.com";
   var BUTTON_ID = "x1080x-ex-download";
   var BATCH_BUTTON_ID = "x1080x-ex-open-page";
+  var BATCH_SPLIT_ID = "x1080x-ex-batch-split";
+  var BATCH_MODE_TRIGGER_ID = "x1080x-ex-batch-mode-trigger";
+  var BATCH_MODE_MENU_ID = "x1080x-ex-batch-mode-menu";
+  var BATCH_COMPACT_STYLE_ID = "x1080x-ex-batch-compact-controls";
+  var batchMenuDismissInstalled = /* @__PURE__ */ new WeakSet();
   var BATCH_PROGRESS_BUTTON_ID = "x1080x-ex-batch-progress-locator";
   var BATCH_TOOLBAR_ID = "x1080x-ex-open-page-toolbar";
-  var REQUEST_TIMEOUT2 = 6e4;
+  var REQUEST_TIMEOUT7 = 6e4;
   var PIXHOST_PLACEHOLDER_MAX_BYTES = 32 * 1024;
   var PREVIEW_IMAGE_URL_ATTR = "data-x1080x-hdblog-preview-url";
-  var PREVIEW_REFERER_ATTR = "data-x1080x-preview-referer";
+  var PREVIEW_REFERER_ATTR2 = "data-x1080x-preview-referer";
   var DEFAULT_OPEN_TIMING = Object.freeze({
     initialMin: 300,
     initialMax: 800,
@@ -2316,16 +6439,20 @@ ${settings.password}`;
   var batchOpenState = null;
   var batchProgressScanState = null;
   function getConfiguredDomains() {
-    const stored = typeof GM_getValue === "function" ? GM_getValue(STORAGE_KEY, null) : null;
+    const stored = typeof GM_getValue === "function" ? GM_getValue(STORAGE_KEY2, null) : null;
     const domains = stored === null || stored === void 0 ? parseDomainList(DEFAULT_DOMAINS) : parseDomainList(stored);
     const isLegacyDefault = domains.length === 1 && domains[0] === LEGACY_AGAGHHH_DOMAIN || domains.length === 2 && domains.includes(LEGACY_AGAGHHH_DOMAIN) && domains.includes("hdblog.me");
     return [.../* @__PURE__ */ new Set([
       ...isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains,
-      ...getAgaghhhDomains()
+      ...getAgaghhhDomains(),
+      "javclub.me",
+      // Always enable the new site even with legacy custom domain settings.
+      "hdblog.me"
+      // Keep the historical host and saved post IDs compatible.
     ])];
   }
   function saveDomains(domains) {
-    GM_setValue(STORAGE_KEY, domains.join("\n"));
+    GM_setValue(STORAGE_KEY2, domains.join("\n"));
   }
   function registerSettingsMenu() {
     if (window.top !== window.self) return;
@@ -2457,8 +6584,8 @@ ${domains.join("\n")}
     if (isAgaghhhHost(host)) {
       return GM_getValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, true) !== false;
     }
-    if (host === "hdblog.me" || host.endsWith(".hdblog.me")) {
-      return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
+    if (["javclub.me", "hdblog.me"].some((domain) => host === domain || host.endsWith(`.${domain}`))) {
+      return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, true) !== false;
     }
     return true;
   }
@@ -2478,14 +6605,14 @@ ${domains.join("\n")}
         kind: "agaghhh"
       };
     }
-    if (host === "hdblog.me" || host.endsWith(".hdblog.me")) {
+    if (["javclub.me", "hdblog.me"].some((domain) => host === domain || host.endsWith(`.${domain}`))) {
       return {
-        enabledKey: HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY,
-        limitKey: HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
-        historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY,
-        colorKey: HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY,
-        unopenedOnlyKey: HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY,
-        progressLocatorEnabledKey: HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY,
+        enabledKey: HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2,
+        limitKey: HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2,
+        historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY2,
+        colorKey: HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2,
+        unopenedOnlyKey: HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2,
+        progressLocatorEnabledKey: HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2,
         progressMapKey: HDBLOG_BATCH_PROGRESS_MAP_KEY,
         kind: "hdblog"
       };
@@ -2532,7 +6659,7 @@ ${domains.join("\n")}
         const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
         return pathMatch ? `tid:${pathMatch[1]}` : "";
       }
-      const postMatch = url.pathname.match(/^\/(\d+)(?:\/|$)/);
+      const postMatch = url.pathname.match(/^\/(\d+)(?:\/|\.html$)/i);
       if (postMatch) return `post:${postMatch[1]}`;
       return `url:${url.pathname}${url.search}`;
     } catch {
@@ -2753,9 +6880,9 @@ ${domains.join("\n")}
     const target = completed ? nextBatchListPageUrl2(document2) || location.href : location.href;
     return rememberBatchProgressTarget(target);
   }
-  function collectBatchOpenThreads(document2) {
+  function collectBatchOpenThreads(document2, unopenedOnly = isBatchOpenUnopenedOnlyEnabled()) {
     const threads = collectForumThreadLinks(document2);
-    if (!isBatchOpenUnopenedOnlyEnabled()) return threads;
+    if (!unopenedOnly) return threads;
     const history = new Set(readBatchOpenHistory());
     return threads.filter((thread) => !isBatchThreadVisited(thread, history));
   }
@@ -2803,7 +6930,7 @@ ${domains.join("\n")}
     });
     return marked;
   }
-  function isThreadPage() {
+  function isThreadPage2() {
     const url = new URL(location.href);
     return /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname) || url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid") || /(?:thread|viewthread)[-_]\d+/i.test(url.pathname);
   }
@@ -2825,7 +6952,7 @@ ${domains.join("\n")}
     const text = normalizedLabel(element.textContent);
     return /^(?:downloads?(?: links?)?|links?|magnets?(?: links?)?|torrents?(?: links?)?|password|info(?:rmation)?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\s*[:：]?$/i.test(text);
   }
-  function largestSrcsetUrl(document2, value) {
+  function largestSrcsetUrl4(document2, value) {
     const candidates = String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
       const [url, descriptor = ""] = part.split(/\s+/, 2);
       const match = descriptor.match(/^(\d+(?:\.\d+)?)(w|x)$/i);
@@ -2842,7 +6969,7 @@ ${domains.join("\n")}
     }).filter(Boolean).sort((a, b) => b.score - a.score);
     return candidates[0]?.url || "";
   }
-  function directImageHref(document2, anchor) {
+  function directImageHref2(document2, anchor) {
     const href = anchor?.getAttribute("href");
     if (!href) return "";
     try {
@@ -2857,12 +6984,12 @@ ${domains.join("\n")}
     const anchor = image.closest("a[href]");
     const candidates = [
       forcedUrl,
-      directImageHref(document2, anchor),
+      directImageHref2(document2, anchor),
       image.getAttribute("data-original"),
       image.getAttribute("data-lazy-src"),
       image.getAttribute("data-src"),
-      largestSrcsetUrl(document2, image.getAttribute("data-srcset")),
-      largestSrcsetUrl(document2, image.getAttribute("srcset")),
+      largestSrcsetUrl4(document2, image.getAttribute("data-srcset")),
+      largestSrcsetUrl4(document2, image.getAttribute("srcset")),
       image.currentSrc,
       image.getAttribute("src")
     ];
@@ -2902,8 +7029,8 @@ ${domains.join("\n")}
     makePreviewGestureFriendly(image);
     return true;
   }
-  function expandHdblogPreviewImages() {
-    if (!isAllowedHost(location.hostname, ["hdblog.me"])) return 0;
+  function expandHdblogPreviewImages2() {
+    if (!isAllowedHost(location.hostname, ["javclub.me", "hdblog.me"])) return 0;
     const content = document.querySelector(
       "main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content"
     );
@@ -2912,12 +7039,13 @@ ${domains.join("\n")}
     const marker = markers.find((element) => /^preview\s*[:：]?$/i.test(normalizedLabel(element.textContent)));
     if (!marker) return 0;
     const boundary = markers.find((element) => isFollowing(marker, element) && isHdblogPreviewBoundary(element));
-    const isInPreviewRange = (element) => isFollowing(marker, element) && (!boundary || !isFollowing(boundary, element));
+    const related = [...content.querySelectorAll('.yarpp, .yarpp-related, .related-posts, [class*="related-posts"]')].find((element) => isFollowing(marker, element));
+    const isInPreviewRange = (element) => isFollowing(marker, element) && (!boundary || !isFollowing(boundary, element)) && (!related || !isFollowing(related, element)) && !element.closest('.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, [class*="related-posts"]');
     let expanded = 0;
     const handledImages = /* @__PURE__ */ new Set();
     const anchors = [...content.querySelectorAll("a[href]")].filter(isInPreviewRange);
     anchors.forEach((anchor) => {
-      const fullUrl = directImageHref(document, anchor);
+      const fullUrl = directImageHref2(document, anchor);
       if (!fullUrl) return;
       let image = anchor.querySelector("img");
       if (!image) {
@@ -2938,7 +7066,7 @@ ${domains.join("\n")}
       if (!styleHdblogPreviewImage(image, fullUrl)) return;
       const anchor = image.closest("a[href]");
       if (anchor && content.contains(anchor)) {
-        const directUrl = directImageHref(document, anchor);
+        const directUrl = directImageHref2(document, anchor);
         if (directUrl) anchor.href = directUrl;
         anchor.style.setProperty("display", "block", "important");
         anchor.style.setProperty("max-width", "100%", "important");
@@ -2947,18 +7075,18 @@ ${domains.join("\n")}
     });
     return expanded;
   }
-  function readBatchOpenIntervalMs(key, fallback) {
+  function readBatchOpenIntervalMs2(key, fallback) {
     if (typeof GM_getValue !== "function") return fallback;
     const numeric = Number(GM_getValue(key, fallback));
     return Number.isFinite(numeric) && numeric >= 100 && numeric <= 6e5 ? Math.round(numeric) : fallback;
   }
   function batchOpenTiming() {
-    const isHdblog = isAllowedHost(location.hostname, ["hdblog.me"]);
+    const isHdblog = isAllowedHost(location.hostname, ["javclub.me", "hdblog.me"]);
     const timing = isHdblog ? HDBLOG_OPEN_TIMING : DEFAULT_OPEN_TIMING;
-    const minKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY;
-    const maxKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY;
-    const delayMin = readBatchOpenIntervalMs(minKey, timing.delayMin);
-    const delayMax = readBatchOpenIntervalMs(maxKey, timing.delayMax);
+    const minKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2 : AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY;
+    const maxKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2 : AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY;
+    const delayMin = readBatchOpenIntervalMs2(minKey, timing.delayMin);
+    const delayMax = readBatchOpenIntervalMs2(maxKey, timing.delayMax);
     if (delayMax < delayMin) return timing;
     return { ...timing, delayMin, delayMax };
   }
@@ -2985,12 +7113,121 @@ ${domains.join("\n")}
     batchOpenState.finishDelay?.();
     batchOpenState.finishDelay = null;
   }
+  function ensureBatchCompactStyles(document2) {
+    if (document2.getElementById(BATCH_COMPACT_STYLE_ID)) return;
+    const style = document2.createElement("style");
+    style.id = BATCH_COMPACT_STYLE_ID;
+    style.textContent = `
+    #${BATCH_BUTTON_ID}[data-x1080x-compact],
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] {
+      display:inline-flex;align-items:center;justify-content:center;
+      vertical-align:middle;gap:0;
+    }
+    #${BATCH_BUTTON_ID}[data-x1080x-compact] svg,
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] svg {
+      display:block;width:18px;height:18px;flex:none;
+      fill:none;stroke:currentColor;stroke-width:2;
+      stroke-linecap:round;stroke-linejoin:round;
+    }
+    #${BATCH_BUTTON_ID}[data-x1080x-compact]::after {
+      content:attr(data-x1080x-count);font-size:13px;line-height:20px;
+      font-weight:600;font-variant-numeric:tabular-nums;
+      padding-left:5px;white-space:nowrap;
+    }
+    #${BATCH_BUTTON_ID}[data-x1080x-count=""]::after { content:none; }
+    #${BATCH_BUTTON_ID}[data-x1080x-compact] .x1080x-visually-hidden,
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] .x1080x-visually-hidden {
+      position:absolute !important;width:1px !important;height:1px !important;
+      padding:0 !important;margin:-1px !important;overflow:hidden !important;
+      clip:rect(0,0,0,0) !important;white-space:nowrap !important;
+      border:0 !important;
+    }
+  `;
+    (document2.head || document2.documentElement).append(style);
+  }
+  function renderCompactBatchControl(button, kind, label, count = "", tooltip = label) {
+    const doc = button.ownerDocument;
+    ensureBatchCompactStyles(doc);
+    if (button.dataset.x1080xCompact !== kind || !button.querySelector("svg[data-x1080x-icon]")) {
+      const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("data-x1080x-icon", kind);
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      svg.setAttribute("focusable", "false");
+      svg.innerHTML = kind === "batch" ? '<rect x="8" y="4" width="12" height="12" rx="2"/><rect x="4" y="8" width="12" height="12" rx="2"/>' : '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>';
+      const hidden2 = doc.createElement("span");
+      hidden2.className = "x1080x-visually-hidden";
+      hidden2.setAttribute("data-x1080x-label", "");
+      button.replaceChildren(svg, hidden2);
+      button.dataset.x1080xCompact = kind;
+    }
+    const hidden = button.querySelector("[data-x1080x-label]");
+    if (hidden.textContent !== label) hidden.textContent = label;
+    if (button.getAttribute("data-x1080x-count") !== String(count)) {
+      button.setAttribute("data-x1080x-count", String(count));
+    }
+    if (button.title !== tooltip) button.title = tooltip;
+    if (button.getAttribute("aria-label") !== tooltip) button.setAttribute("aria-label", tooltip);
+  }
+  function updateBatchModeMenu(document2) {
+    const menu = document2.getElementById(BATCH_MODE_MENU_ID);
+    if (!menu) return;
+    const threads = collectForumThreadLinks(document2);
+    const history = new Set(readBatchOpenHistory());
+    const unreadCount = threads.filter((thread) => !isBatchThreadVisited(thread, history)).length;
+    const canSkipRead = isBatchOpenHistoryEnabled();
+    const selected = isBatchOpenUnopenedOnlyEnabled();
+    for (const entry of menu.querySelectorAll("button[data-batch-mode]")) {
+      const unreadOnly = entry.dataset.batchMode === "unread";
+      const disabled = unreadOnly && !canSkipRead;
+      entry.disabled = disabled || Boolean(batchOpenState);
+      entry.textContent = `${selected === unreadOnly ? "\u2713 " : ""}${unreadOnly ? "\u4EC5\u6253\u5F00\u672A\u6D4F\u89C8" : "\u6253\u5F00\u672C\u9875\u5168\u90E8"}\uFF08${unreadOnly ? unreadCount : threads.length}\uFF09`;
+      entry.title = disabled ? "\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u5F00\u542F\u300C\u4FDD\u5B58\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u300D" : "\u9009\u62E9\u6B64\u6A21\u5F0F\u5E76\u7ACB\u5373\u5F00\u59CB\u6279\u91CF\u6253\u5F00";
+      entry.setAttribute("aria-checked", String(selected === unreadOnly));
+      entry.style.opacity = disabled ? "0.5" : "1";
+      entry.style.cursor = disabled ? "not-allowed" : "pointer";
+    }
+  }
+  function closeBatchModeMenu(document2) {
+    const menu = document2.getElementById(BATCH_MODE_MENU_ID);
+    const trigger = document2.getElementById(BATCH_MODE_TRIGGER_ID);
+    if (menu) menu.hidden = true;
+    trigger?.setAttribute("aria-expanded", "false");
+  }
+  function setBatchOpenMode(unreadOnly) {
+    const config = batchOpenHistoryConfig();
+    if (!config || typeof GM_setValue !== "function") return false;
+    if (unreadOnly && !isBatchOpenHistoryEnabled()) return false;
+    GM_setValue(config.unopenedOnlyKey, unreadOnly);
+    return true;
+  }
+  function installBatchModeMenuDismiss(document2) {
+    if (batchMenuDismissInstalled.has(document2)) return;
+    batchMenuDismissInstalled.add(document2);
+    document2.addEventListener("click", (event) => {
+      const wrapper = document2.getElementById(BATCH_SPLIT_ID);
+      if (wrapper && !wrapper.contains(event.target)) closeBatchModeMenu(document2);
+    });
+    document2.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeBatchModeMenu(document2);
+    });
+  }
   function setBatchButtonIdle(button, count) {
     const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
     const label = unopenedOnly ? `\u6279\u91CF\u6253\u5F00\u672A\u6D4F\u89C8\uFF08${count}\uFF09` : `\u6279\u91CF\u6253\u5F00\u672C\u9875\uFF08${count}\uFF09`;
-    if (button.textContent !== label) button.textContent = label;
-    button.title = unopenedOnly ? "\u6309\u5217\u8868\u987A\u5E8F\u5728\u540E\u53F0\u9010\u4E2A\u6253\u5F00\u672C\u9875\u672A\u6D4F\u89C8\u4E3B\u9898\uFF08\u4EE5\u811A\u672C\u6D4F\u89C8\u8BB0\u5F55\u4E3A\u51C6\uFF09\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62" : "\u6309\u5217\u8868\u987A\u5E8F\u5728\u540E\u53F0\u9010\u4E2A\u6253\u5F00\u672C\u9875\u4E3B\u9898\uFF1B\u95F4\u9694\u968F\u673A\uFF0C\u5E76\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62";
+    const tooltip = unopenedOnly ? `${label}
+\u5F53\u524D\u6A21\u5F0F\uFF1A\u4EC5\u6253\u5F00\u672A\u6D4F\u89C8\u3002\u6309\u5217\u8868\u987A\u5E8F\u540E\u53F0\u6253\u5F00\uFF0C\u6309\u811A\u672C\u6D4F\u89C8\u8BB0\u5F55\u8DF3\u8FC7\u5DF2\u8BBF\u95EE\u4E3B\u9898\u3002
+\u968F\u673A\u95F4\u9694\u3001\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62\u3002\u65C1\u8FB9\u7684 \u25BE \u53EF\u5207\u6362\u4E3A\u6253\u5F00\u5168\u90E8\u3002` : `${label}
+\u5F53\u524D\u6A21\u5F0F\uFF1A\u6253\u5F00\u672C\u9875\u5168\u90E8\uFF0C\u5305\u62EC\u5DF2\u6709\u6D4F\u89C8\u8BB0\u5F55\u7684\u4E3B\u9898\u3002
+\u6309\u5217\u8868\u987A\u5E8F\u540E\u53F0\u6253\u5F00\uFF0C\u968F\u673A\u95F4\u9694\u3001\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62\u3002\u65C1\u8FB9\u7684 \u25BE \u53EF\u5207\u6362\u4EC5\u672A\u6D4F\u89C8\u3002`;
+    renderCompactBatchControl(button, "batch", label, count, tooltip);
     button.style.background = "#398bd4";
+    const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
+    if (dropdown) {
+      dropdown.disabled = false;
+      dropdown.style.background = "#398bd4";
+    }
+    updateBatchModeMenu(document);
   }
   async function openCurrentPageThreads(button) {
     if (batchOpenState) {
@@ -3005,9 +7242,17 @@ ${domains.join("\n")}
     const state = {
       cancelled: false,
       finishDelay: null,
-      timeoutId: null
+      timeoutId: null,
+      sessionId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      openedUrls: [],
+      previousHistory: new Set(readBatchOpenHistory()),
+      cfChallenge: null
     };
     batchOpenState = state;
+    closeBatchModeMenu(document);
+    const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
+    if (dropdown) dropdown.disabled = true;
+    updateBatchModeMenu(document);
     rememberBatchProgressForCurrentPage(document, false);
     const failures = [];
     let opened = 0;
@@ -3017,12 +7262,63 @@ ${domains.join("\n")}
       label: "\u2197 \u6279\u91CF\u6253\u5F00\u4E2D"
     });
     button.style.background = "#b84b4b";
+    if (dropdown) dropdown.style.background = "#b84b4b";
+    const onCloudflare = (event) => {
+      if (!event || event.sessionId !== state.sessionId || state.cfChallenge) return;
+      state.cfChallenge = event;
+      const historyId = batchOpenHistoryId(event.url);
+      if (historyId && !state.previousHistory.has(historyId)) {
+        const config = batchOpenHistoryConfig();
+        if (config && typeof GM_getValue === "function" && typeof GM_setValue === "function") {
+          const raw = GM_getValue(config.historyKey, []);
+          if (Array.isArray(raw)) {
+            GM_setValue(config.historyKey, raw.filter((entry) => entry !== historyId));
+            applyBatchOpenHistory(document);
+          }
+        }
+      }
+      cancelBatchOpen();
+      renderCompactBatchControl(
+        button,
+        "batch",
+        "\u68C0\u6D4B\u5230 Cloudflare \u9A8C\u8BC1\uFF0C\u5DF2\u505C\u6B62",
+        `${opened}/${threads.length}`,
+        `\u68C0\u6D4B\u5230 Cloudflare \u4EBA\u673A\u9A8C\u8BC1\uFF0C\u5DF2\u505C\u6B62\u7EE7\u7EED\u6253\u5F00\u3002
+\u5DF2\u6253\u5F00 ${opened}/${threads.length} \u4E2A\u4E3B\u9898\uFF0C\u8BF7\u5148\u624B\u52A8\u5B8C\u6210\u9A8C\u8BC1\u3002`
+      );
+      button.style.background = "#b36b22";
+      if (dropdown) dropdown.style.background = "#b36b22";
+    };
+    const checkCloudflare = () => {
+      if (typeof GM_getValue === "function") {
+        onCloudflare(GM_getValue(BATCH_CF_EVENT_KEY, null));
+      }
+    };
+    const listenerId = typeof GM_addValueChangeListener === "function" ? GM_addValueChangeListener(BATCH_CF_EVENT_KEY, (_key, _old, value) => onCloudflare(value)) : null;
     try {
       await waitForBatchDelay(randomDelay(timing.initialMin, timing.initialMax), state);
       for (const [index, thread] of threads.entries()) {
+        checkCloudflare();
         if (state.cancelled) break;
-        button.textContent = `\u505C\u6B62\u540E\u53F0\u6253\u5F00\uFF08${opened}/${threads.length}\uFF09`;
+        renderCompactBatchControl(
+          button,
+          "batch",
+          `\u505C\u6B62\u540E\u53F0\u6253\u5F00\uFF08${opened}/${threads.length}\uFF09`,
+          `${opened}/${threads.length}`,
+          `\u6B63\u5728\u6279\u91CF\u6253\u5F00\uFF1A${opened}/${threads.length}\u3002
+\u5F53\u524D\u6A21\u5F0F\uFF1A${isBatchOpenUnopenedOnlyEnabled() ? "\u4EC5\u6253\u5F00\u672A\u6D4F\u89C8" : "\u6253\u5F00\u672C\u9875\u5168\u90E8"}\u3002
+\u70B9\u51FB\u4E3B\u6309\u94AE\u53EF\u505C\u6B62\u540E\u7EED\u4E3B\u9898\u6253\u5F00\u3002`
+        );
         try {
+          state.openedUrls.push(thread.url);
+          if (typeof GM_setValue === "function") {
+            GM_setValue(BATCH_CF_SESSION_KEY, {
+              id: state.sessionId,
+              host: currentHost(),
+              updatedAt: Date.now(),
+              urls: state.openedUrls.slice(-30)
+            });
+          }
           GM_openInTab(thread.url, {
             active: false,
             insert: false,
@@ -3033,26 +7329,62 @@ ${domains.join("\n")}
         } catch (error) {
           failures.push(`${index + 1}. ${redactDiagnostic(error?.message || error || "\u6253\u5F00\u5931\u8D25")}`);
         }
+        checkCloudflare();
         if (index === threads.length - 1 || state.cancelled) break;
         const completedCount = index + 1;
         const isLongPause = completedCount % timing.pauseEvery === 0;
         const delay = isLongPause ? randomDelay(timing.pauseMin, timing.pauseMax) : randomDelay(timing.delayMin, timing.delayMax);
-        button.textContent = `${isLongPause ? "\u505C\u987F" : "\u7B49\u5F85"} ${Math.ceil(delay / 1e3)} \u79D2\uFF08${opened}/${threads.length}\uFF09`;
+        renderCompactBatchControl(
+          button,
+          "batch",
+          `${isLongPause ? "\u505C\u987F" : "\u7B49\u5F85"} ${Math.ceil(delay / 1e3)} \u79D2\uFF08${opened}/${threads.length}\uFF09`,
+          `${opened}/${threads.length}`,
+          `\u6279\u91CF\u6253\u5F00\u5DF2\u5B8C\u6210 ${opened}/${threads.length}\u3002
+${isLongPause ? "\u5B9A\u671F\u957F\u505C\u987F" : "\u7B49\u5F85\u4E0B\u4E00\u4E3B\u9898"}\uFF1A\u7EA6 ${Math.ceil(delay / 1e3)} \u79D2\u3002
+\u70B9\u51FB\u4E3B\u6309\u94AE\u53EF\u505C\u6B62\u3002`
+        );
         await waitForBatchDelay(delay, state);
+        checkCloudflare();
       }
     } finally {
+      if (listenerId !== null && typeof GM_removeValueChangeListener === "function") {
+        GM_removeValueChangeListener(listenerId);
+      }
+      if (typeof GM_getValue === "function" && typeof GM_setValue === "function" && GM_getValue(BATCH_CF_SESSION_KEY, null)?.id === state.sessionId) {
+        GM_setValue(BATCH_CF_SESSION_KEY, null);
+      }
       endBatchOpenGuard();
       const wasCancelled = state.cancelled;
       const completedPage = !wasCancelled && failures.length === 0 && opened === threads.length;
       rememberBatchProgressForCurrentPage(document, completedPage);
       batchOpenState = null;
-      button.textContent = wasCancelled ? `\u5DF2\u505C\u6B62\uFF08\u5DF2\u6253\u5F00 ${opened}/${threads.length}\uFF09` : failures.length ? `\u5B8C\u6210\uFF08\u6253\u5F00 ${opened}\uFF0C\u5931\u8D25 ${failures.length}\uFF09` : `\u2713 \u5DF2\u6309\u987A\u5E8F\u6253\u5F00 ${opened} \u4E2A\u4E3B\u9898`;
-      button.style.background = failures.length ? "#b36b22" : "#398bd4";
+      if (dropdown) dropdown.disabled = false;
+      updateBatchModeMenu(document);
+      const finalLabel = state.cfChallenge ? `CF \u9A8C\u8BC1\uFF0C\u5DF2\u505C\u6B62\uFF08${opened}/${threads.length}\uFF09` : wasCancelled ? `\u5DF2\u505C\u6B62\uFF08\u5DF2\u6253\u5F00 ${opened}/${threads.length}\uFF09` : failures.length ? `\u5B8C\u6210\uFF08\u6253\u5F00 ${opened}\uFF0C\u5931\u8D25 ${failures.length}\uFF09` : `\u2713 \u5DF2\u6309\u987A\u5E8F\u6253\u5F00 ${opened} \u4E2A\u4E3B\u9898`;
+      renderCompactBatchControl(
+        button,
+        "batch",
+        finalLabel,
+        `${opened}/${threads.length}`,
+        `${finalLabel}
+${state.cfChallenge ? "\u8BF7\u624B\u52A8\u5B8C\u6210 Cloudflare \u9A8C\u8BC1\u3002" : failures.length ? "\u8BF7\u67E5\u770B\u5931\u8D25\u63D0\u793A\u3002" : "\u53EF\u4EE5\u7EE7\u7EED\u4F7F\u7528\u6279\u91CF\u6253\u5F00\u6A21\u5F0F\u83DC\u5355\u3002"}`
+      );
+      button.style.background = failures.length || state.cfChallenge ? "#b36b22" : "#398bd4";
       window.setTimeout(() => {
         if (!batchOpenState) {
           setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
         }
       }, 3e3);
+    }
+    if (state.cfChallenge) {
+      window.alert(
+        `\u6279\u91CF\u6253\u5F00\u5DF2\u81EA\u52A8\u505C\u6B62\uFF1A\u68C0\u6D4B\u5230 Cloudflare \u4EBA\u673A\u9A8C\u8BC1\u3002
+
+\u9A8C\u8BC1\u9875\uFF1A${state.cfChallenge.url}
+\u5DF2\u6253\u5F00 ${opened}/${threads.length} \u4E2A\u4E3B\u9898\u3002
+
+\u8BF7\u5207\u6362\u5230\u9A8C\u8BC1\u6807\u7B7E\u9875\uFF0C\u624B\u52A8\u5B8C\u6210\u9A8C\u8BC1\u540E\uFF0C\u518D\u56DE\u5217\u8868\u91CD\u65B0\u70B9\u51FB\u6279\u91CF\u6253\u5F00\u3002`
+      );
     }
     if (failures.length) {
       window.alert(`\u4EE5\u4E0B\u4E3B\u9898\u6253\u5F00\u5931\u8D25\uFF1A
@@ -3144,7 +7476,7 @@ ${failures.join("\n")}`);
   }
   async function requestBlobWithPageFetch(job) {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT2);
+    const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT7);
     try {
       const response = await window.fetch(job.url, {
         method: "GET",
@@ -3163,7 +7495,7 @@ ${failures.join("\n")}`);
       });
     } catch (error) {
       if (error?.name === "AbortError") {
-        throw new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT2 / 1e3} \u79D2\uFF09`);
+        throw new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT7 / 1e3} \u79D2\uFF09`);
       }
       const details = safeErrorDetails(error);
       console.error("[x1080x-ex] page fetch failed", details);
@@ -3190,7 +7522,7 @@ ${failures.join("\n")}`);
       }
     });
     if (!image) return "";
-    return image.getAttribute(PREVIEW_REFERER_ATTR) || image.closest("section")?.querySelector("a[href]")?.href || "";
+    return image.getAttribute(PREVIEW_REFERER_ATTR2) || image.closest("section")?.querySelector("a[href]")?.href || "";
   }
   function requestBlobWithGmXhrOnce(job, referer) {
     return new Promise((resolve, reject) => {
@@ -3198,7 +7530,7 @@ ${failures.join("\n")}`);
         method: "GET",
         url: job.url,
         responseType: "blob",
-        timeout: REQUEST_TIMEOUT2,
+        timeout: REQUEST_TIMEOUT7,
         // Omitting the header lets the manager supply its default page Referer.
         // An explicit empty value is needed for images marked no-referrer.
         headers: { Referer: referer },
@@ -3211,7 +7543,7 @@ ${failures.join("\n")}`);
             `\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25\uFF1Aerror=${details.error || "unknown_error"}\uFF1Bdetails=${details.details || details.message || "\u65E0\u8BE6\u7EC6\u4FE1\u606F"}`
           ));
         },
-        ontimeout: () => reject(new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT2 / 1e3} \u79D2\uFF09`))
+        ontimeout: () => reject(new Error(`\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT7 / 1e3} \u79D2\uFF09`))
       });
     });
   }
@@ -3405,6 +7737,30 @@ ${failures.join("\n")}`);
   var downloadResetTimers = /* @__PURE__ */ new WeakMap();
   async function downloadAll(button) {
     if (button.disabled || activeDownloadState) return;
+    const pendingPreview = isAgaghhhHost(location) ? pendingAgaghhhHdblogPreview(document) : null;
+    if (pendingPreview) {
+      const downloadPath = location.pathname;
+      activeDownloadState = { button, pathname: downloadPath, text: "", label: "" };
+      button.disabled = true;
+      const endPreparationGuard = beginDownloadGuard(document, {
+        enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY)
+      });
+      try {
+        setDownloadStatus(button, "\u6B63\u5728\u7B49\u5F85 Preview \u52A0\u8F7D\u5B8C\u6210\uFF0C\u518D\u7EDF\u8BA1\u4E0B\u8F7D\u6587\u4EF6\u2026", "\u4E0B\u8F7D\u4E2D \xB7 Preview");
+        await pendingPreview;
+      } catch (error) {
+        console.warn("[x1080x-ex] Preview lookup failed before download snapshot", {
+          error: redactDiagnostic(error?.message || error)
+        });
+      } finally {
+        endPreparationGuard();
+        activeDownloadState = null;
+        button.disabled = false;
+        const visible = document.getElementById(BUTTON_ID);
+        if (visible && location.pathname === downloadPath) visible.disabled = false;
+      }
+      if (location.pathname !== downloadPath) return;
+    }
     const jobs = buildDownloadJobs(document);
     const nativeFiles = collectModernNativeAttachments(document);
     const totalTasks = jobs.length + nativeFiles.length;
@@ -3572,8 +7928,10 @@ ${failures.join("\n")}
   function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
     if (!button || batchProgressScanState) return;
     const historyCount = readBatchOpenHistory().length;
-    button.textContent = "\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6";
-    button.title = historyCount ? `\u8DE8\u9875\u67E5\u627E\u5DF2\u6253\u5F00\u4E0E\u672A\u6253\u5F00\u4E3B\u9898\u76F8\u90BB\u7684\u5206\u9875\uFF08\u73B0\u6709 ${historyCount} \u6761\u811A\u672C\u8BB0\u5F55\uFF09` : "\u8FD8\u6CA1\u6709\u4FDD\u5B58\u7684\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\uFF0C\u6D4F\u89C8\u5668\u81EA\u5DF1\u7684 :visited \u8BB0\u5F55\u4E0D\u80FD\u81EA\u52A8\u8BFB\u53D6";
+    const tooltip = historyCount ? `\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6
+\u8DE8\u9875\u5BFB\u627E\u5DF2\u6D4F\u89C8\u4E0E\u672A\u6D4F\u89C8\u4E3B\u9898\u7684\u76F8\u90BB\u4F4D\u7F6E\uFF0C\u627E\u5230\u540E\u8DF3\u8F6C\u6216\u6EDA\u52A8\u5B9A\u4F4D\u3002
+\u73B0\u6709 ${historyCount} \u6761\u811A\u672C\u8BB0\u5F55\uFF0C\u67E5\u627E\u8FC7\u7A0B\u4E2D\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62\u3002` : "\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\n\u76EE\u524D\u6CA1\u6709\u811A\u672C\u6D4F\u89C8\u8BB0\u5F55\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u5F00\u542F\u201C\u4FDD\u5B58\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u3002\n\u6D4F\u89C8\u5668\u81EA\u5DF1\u7684 :visited \u8BB0\u5F55\u4E0D\u80FD\u81EA\u52A8\u8BFB\u53D6\u3002";
+    renderCompactBatchControl(button, "locator", "\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6", "", tooltip);
     button.style.background = "#6d7d87";
   }
   async function requestBatchListPageHtml(url) {
@@ -3610,7 +7968,13 @@ ${failures.join("\n")}
   async function locateCurrentBatchProgress(button) {
     if (batchProgressScanState) {
       batchProgressScanState.cancelled = true;
-      button.textContent = "\u6B63\u5728\u505C\u6B62\u67E5\u627E\u2026";
+      renderCompactBatchControl(
+        button,
+        "locator",
+        "\u6B63\u5728\u505C\u6B62\u67E5\u627E\u2026",
+        "",
+        "\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\uFF1A\u6B63\u5728\u505C\u6B62\u8DE8\u9875\u67E5\u627E\u2026"
+      );
       return;
     }
     if (!isBatchProgressLocatorEnabled()) return;
@@ -3622,7 +7986,14 @@ ${failures.join("\n")}
     const scan = { cancelled: false };
     batchProgressScanState = scan;
     button.style.background = "#b36b22";
-    button.textContent = "\u6B63\u5728\u67E5\u627E\u5206\u9875\uFF08\u518D\u6B21\u70B9\u51FB\u505C\u6B62\uFF09";
+    renderCompactBatchControl(
+      button,
+      "locator",
+      "\u6B63\u5728\u67E5\u627E\u5206\u9875\uFF08\u518D\u6B21\u70B9\u51FB\u505C\u6B62\uFF09",
+      "",
+      `\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\uFF1A\u6B63\u5728\u8DE8\u9875\u67E5\u627E\uFF08\u5171\u6709 ${historyIds.length} \u6761\u5386\u53F2\u8BB0\u5F55\uFF09\u3002
+\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62\u3002`
+    );
     try {
       const config = batchOpenHistoryConfig();
       const result = await scanBatchProgressPages({
@@ -3637,13 +8008,28 @@ ${failures.join("\n")}
         getScope: batchProgressScopeKey,
         maxPages: 120,
         onProgress: ({ checked, opened, unopened }) => {
-          button.textContent = `\u505C\u6B62\u67E5\u627E \xB7 \u7B2C ${checked} \u9875\uFF08\u5DF2\u5F00 ${opened} / \u672A\u5F00 ${unopened}\uFF09`;
+          renderCompactBatchControl(
+            button,
+            "locator",
+            `\u505C\u6B62\u67E5\u627E \xB7 \u7B2C ${checked} \u9875\uFF08\u5DF2\u5F00 ${opened} / \u672A\u5F00 ${unopened}\uFF09`,
+            "",
+            `\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\uFF1A\u6B63\u5728\u68C0\u67E5\u7B2C ${checked} \u9875\u3002
+\u8BE5\u9875\u5DF2\u6D4F\u89C8 ${opened} \u6761\uFF0C\u672A\u6D4F\u89C8 ${unopened} \u6761\u3002
+\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62\u3002`
+          );
         },
         cancelled: () => scan.cancelled
       });
       if (scan.cancelled || result.status === "cancelled") return;
       if (result.status === "found") {
-        button.textContent = `\u5DF2\u5B9A\u4F4D\u5230\u7B2C ${result.checked} \u9875`;
+        renderCompactBatchControl(
+          button,
+          "locator",
+          `\u5DF2\u5B9A\u4F4D\u5230\u7B2C ${result.checked} \u9875`,
+          "",
+          `\u5DF2\u627E\u5230\u6D4F\u89C8\u8FDB\u5EA6\uFF1A\u7B2C ${result.checked} \u9875\u3002
+\u6B63\u5728\u8DF3\u8F6C\u6216\u6EDA\u52A8\u5230\u672A\u6D4F\u89C8\u4E3B\u9898\u3002`
+        );
         rememberBatchProgressTarget(result.url);
         if (result.url !== location.href) window.location.assign(result.url);
         else {
@@ -3683,7 +8069,7 @@ ${result.pageUrl}`);
       position: "relative",
       zIndex: "20",
       margin: "0 8px 6px 0",
-      padding: "7px 13px",
+      padding: "7px 10px",
       border: "1px solid #5f6f7a",
       borderRadius: "5px",
       color: "#fff",
@@ -3700,9 +8086,14 @@ ${result.pageUrl}`);
     });
     button.addEventListener("click", () => void locateCurrentBatchProgress(button));
     refreshBatchProgressLocatorButton(button);
-    if (prependButton) {
-      const batchButton = document.getElementById(BATCH_BUTTON_ID);
-      if (batchButton?.parentElement === host) batchButton.after(button);
+    const batchWrapper = document.getElementById(BATCH_SPLIT_ID);
+    const isJavclubToolbar = isAllowedHost(location.hostname, ["javclub.me", "hdblog.me"]);
+    if (isJavclubToolbar && batchWrapper?.parentElement === host) {
+      button.style.float = "none";
+      button.style.margin = "0";
+      batchWrapper.after(button);
+    } else if (prependButton) {
+      if (batchWrapper?.parentElement === host) batchWrapper.after(button);
       else host.prepend(button);
     } else {
       host.append(button);
@@ -3711,8 +8102,32 @@ ${result.pageUrl}`);
   function addBatchOpenButton() {
     if (document.getElementById(BATCH_BUTTON_ID)) return;
     const threads = collectForumThreadLinks(document);
+    const isJavclubToolbar = isAllowedHost(location.hostname, ["javclub.me", "hdblog.me"]);
     let prependButton = false;
     let host = document.querySelector("#pgt") || document.querySelector("#threadlist .th") || document.querySelector("#threadlist");
+    if (isJavclubToolbar && document.querySelector(".nav-primary .wrap .genesis-nav-menu")) {
+      const navWrap = document.querySelector(".nav-primary .wrap");
+      host = document.getElementById(BATCH_TOOLBAR_ID);
+      if (!host) {
+        host = document.createElement("div");
+        host.id = BATCH_TOOLBAR_ID;
+        navWrap.append(host);
+      }
+      if (!navWrap.style.position) navWrap.style.position = "relative";
+      Object.assign(host.style, {
+        position: "absolute",
+        right: "14px",
+        top: "50%",
+        transform: "translateY(-50%)",
+        zIndex: "50",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: "8px",
+        whiteSpace: "nowrap"
+      });
+      ensureBatchCompactStyles(document);
+    }
     if (!host && isAgaghhhHost(location) && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) {
       const pagination = document.querySelector(".thread-list .pgt");
       if (pagination) {
@@ -3743,31 +8158,118 @@ ${result.pageUrl}`);
           host.id = BATCH_TOOLBAR_ID;
           Object.assign(host.style, {
             minHeight: "42px",
-            margin: "0 0 16px"
+            margin: "0 0 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: "8px"
           });
           firstArticle.before(host);
         }
       }
     }
     if (!threads.length || !host) return;
+    if (isJavclubToolbar) {
+      Object.assign(host.style, { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" });
+    }
+    const split = document.createElement("div");
+    split.id = BATCH_SPLIT_ID;
+    Object.assign(split.style, {
+      display: "inline-flex",
+      alignItems: "stretch",
+      position: "relative",
+      zIndex: "20",
+      float: isJavclubToolbar ? "none" : "right",
+      margin: isJavclubToolbar ? "0" : prependButton ? "0 0 0 12px" : "0 8px 6px 12px",
+      whiteSpace: "nowrap"
+    });
     const button = document.createElement("button");
     button.id = BATCH_BUTTON_ID;
     button.type = "button";
     Object.assign(button.style, {
-      float: "right",
-      position: "relative",
-      zIndex: "20",
-      margin: "0 8px 6px 12px",
-      padding: "7px 13px",
+      margin: "0",
+      padding: "7px 10px",
       border: "1px solid #2878c8",
-      borderRadius: "5px",
+      borderRadius: "5px 0 0 5px",
       color: "#fff",
       background: "#398bd4",
       cursor: "pointer",
       fontSize: "14px",
       lineHeight: "20px"
     });
-    setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+    const trigger = document.createElement("button");
+    trigger.id = BATCH_MODE_TRIGGER_ID;
+    trigger.type = "button";
+    trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("aria-controls", BATCH_MODE_MENU_ID);
+    trigger.setAttribute("aria-label", "\u9009\u62E9\u6279\u91CF\u6253\u5F00\u6A21\u5F0F");
+    trigger.title = "\u9009\u62E9\u6279\u91CF\u6253\u5F00\u6A21\u5F0F\n\u4EC5\u6253\u5F00\u672A\u6D4F\u89C8\uFF1A\u8DF3\u8FC7\u811A\u672C\u8BB0\u5F55\u4E2D\u5DF2\u8BBF\u95EE\u7684\u4E3B\u9898\u3002\n\u6253\u5F00\u672C\u9875\u5168\u90E8\uFF1A\u5FFD\u7565\u6D4F\u89C8\u5386\u53F2\uFF0C\u9010\u4E2A\u6253\u5F00\u672C\u9875\u5168\u90E8\u4E3B\u9898\u3002\n\u9009\u62E9\u540E\u7ACB\u5373\u5F00\u59CB\u5E76\u8BB0\u4F4F\u6A21\u5F0F\u3002";
+    trigger.textContent = "\u25BE";
+    Object.assign(trigger.style, {
+      padding: "7px 9px",
+      border: "1px solid #2878c8",
+      borderLeft: "0",
+      borderRadius: "0 5px 5px 0",
+      color: "#fff",
+      background: "#398bd4",
+      cursor: "pointer",
+      fontSize: "15px",
+      lineHeight: "20px"
+    });
+    const menu = document.createElement("div");
+    menu.id = BATCH_MODE_MENU_ID;
+    menu.setAttribute("role", "menu");
+    menu.hidden = true;
+    Object.assign(menu.style, {
+      position: "absolute",
+      top: "calc(100% + 5px)",
+      right: "0",
+      minWidth: "228px",
+      padding: "6px",
+      background: "#171d27",
+      border: "1px solid #3b4656",
+      borderRadius: "7px",
+      boxShadow: "0 8px 24px rgba(0,0,0,.35)",
+      zIndex: "9999"
+    });
+    for (const [key, unreadOnly] of [["unread", true], ["all", false]]) {
+      const entry = document.createElement("button");
+      entry.type = "button";
+      entry.dataset.batchMode = key;
+      entry.setAttribute("role", "menuitemradio");
+      Object.assign(entry.style, {
+        display: "block",
+        width: "100%",
+        padding: "9px 11px",
+        border: "0",
+        borderRadius: "4px",
+        color: "#fff",
+        background: "transparent",
+        fontSize: "13px",
+        textAlign: "left",
+        whiteSpace: "nowrap"
+      });
+      entry.addEventListener("mouseenter", () => {
+        if (!entry.disabled) entry.style.background = "#324253";
+      });
+      entry.addEventListener("mouseleave", () => {
+        entry.style.background = "transparent";
+      });
+      entry.addEventListener("click", () => {
+        closeBatchModeMenu(document);
+        if (batchOpenState || !setBatchOpenMode(unreadOnly)) return;
+        setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+        void openCurrentPageThreads(button);
+      });
+      menu.append(entry);
+    }
+    trigger.addEventListener("click", () => {
+      if (batchOpenState) return;
+      updateBatchModeMenu(document);
+      menu.hidden = !menu.hidden;
+      trigger.setAttribute("aria-expanded", String(!menu.hidden));
+    });
     button.addEventListener("mouseenter", () => {
       if (!batchOpenState) button.style.background = "#246eaf";
     });
@@ -3775,12 +8277,11 @@ ${result.pageUrl}`);
       if (!batchOpenState) button.style.background = "#398bd4";
     });
     button.addEventListener("click", () => void openCurrentPageThreads(button));
-    if (prependButton) {
-      button.style.margin = "0 0 0 12px";
-      host.prepend(button);
-    } else {
-      host.append(button);
-    }
+    split.append(button, trigger, menu);
+    if (prependButton) host.prepend(split);
+    else host.append(split);
+    installBatchModeMenuDismiss(document);
+    setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
     addBatchProgressLocatorButton(host, prependButton);
   }
   function observeModernBoard() {
@@ -3790,7 +8291,7 @@ ${result.pageUrl}`);
     let previousUrl = location.href;
     let previousHistoryTitle = "";
     const rememberCurrentThread = () => {
-      if (!isThreadPage() || !isBatchOpenHistoryEnabled()) return;
+      if (!isThreadPage2() || !isBatchOpenHistoryEnabled()) return;
       const title = getThreadHeadingText(document);
       const key = `${location.href}
 ${title}`;
@@ -3801,13 +8302,13 @@ ${title}`;
       if (location.href === previousUrl) return false;
       previousUrl = location.href;
       rememberCurrentThread();
-      if (isThreadPage() && (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
+      if (isThreadPage2() && (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false)) addDownloadButton();
       window.dispatchEvent(new window.Event("x1080x-ex:routechange"));
       return true;
     };
     const refresh = () => {
       timer = null;
-      if (isThreadPage()) {
+      if (isThreadPage2()) {
         rememberCurrentThread();
         if (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
         return;
@@ -3832,7 +8333,7 @@ ${title}`;
         schedule();
         return;
       }
-      if (isThreadPage()) {
+      if (isThreadPage2()) {
         rememberCurrentThread();
         if (typeof GM_getValue !== "function" || GM_getValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, true) !== false) addDownloadButton();
         return;
@@ -3849,3862 +8350,26 @@ ${title}`;
   }
   registerSettingsMenu();
   if (isAllowedHost(location.hostname, getConfiguredDomains())) {
-    const expandHdblogPreview = typeof GM_getValue !== "function" || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
-    if (expandHdblogPreview) expandHdblogPreviewImages();
-    if (isThreadPage()) {
-      if (isAgaghhhHost(location) && isBatchOpenHistoryEnabled()) {
+    watchBatchCloudflareChallenge(document, location.href);
+    if (!isCloudflareChallengePage(document)) {
+      const expandHdblogPreview = typeof GM_getValue !== "function" || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, true) !== false;
+      if (expandHdblogPreview) expandHdblogPreviewImages2();
+      if (isThreadPage2()) {
+        if (isAgaghhhHost(location) && isBatchOpenHistoryEnabled()) {
+          rememberBatchOpenedThread(location.href);
+        }
+        addDownloadButton();
+      }
+      if (isHdblogArticleUrl(location.href) && isBatchOpenHistoryEnabled()) {
         rememberBatchOpenedThread(location.href);
       }
-      addDownloadButton();
-    }
-    if (isBatchOpenPage()) {
-      applyBatchOpenHistory(document);
-      if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
-    }
-    startAutomaticLegacyHistoryMigration();
-    observeModernBoard();
-  }
-
-  // src/clipboard.js
-  async function copyTextToClipboard(document2, value, gmSetClipboard = globalThis.GM_setClipboard) {
-    const text = String(value ?? "").trim();
-    if (!text) throw new Error("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
-    if (typeof gmSetClipboard === "function") {
-      await Promise.resolve(gmSetClipboard(text, "text"));
-      return text;
-    }
-    const clipboard = document2?.defaultView?.navigator?.clipboard;
-    if (clipboard?.writeText) {
-      await clipboard.writeText(text);
-      return text;
-    }
-    if (!document2?.body) throw new Error("\u5F53\u524D\u9875\u9762\u65E0\u6CD5\u8BBF\u95EE\u526A\u5207\u677F\u3002");
-    const textarea = document2.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    Object.assign(textarea.style, {
-      position: "fixed",
-      left: "-9999px",
-      top: "0",
-      opacity: "0"
-    });
-    document2.body.append(textarea);
-    textarea.select();
-    textarea.setSelectionRange(0, textarea.value.length);
-    const copied = typeof document2.execCommand === "function" && document2.execCommand("copy");
-    textarea.remove();
-    if (!copied) throw new Error("\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u81EA\u52A8\u590D\u5236\uFF0C\u8BF7\u624B\u52A8\u590D\u5236\u3002");
-    return text;
-  }
-  async function copyCodeWithButtonFeedback(button, document2, code) {
-    if (!button) return false;
-    const originalText = button.textContent || "\u{1F4CB}";
-    const originalTitle = button.title || "\u590D\u5236\u756A\u53F7\u5230\u526A\u5207\u677F";
-    button.disabled = true;
-    try {
-      const copied = await copyTextToClipboard(document2, code);
-      button.textContent = "\u2713";
-      button.title = `\u5DF2\u590D\u5236\uFF1A${copied}`;
-      return true;
-    } catch (error) {
-      button.textContent = "!";
-      button.title = error?.message || "\u590D\u5236\u756A\u53F7\u5931\u8D25";
-      document2?.defaultView?.alert?.(`\u590D\u5236\u756A\u53F7\u5931\u8D25\uFF1A${error?.message || error}`);
-      return false;
-    } finally {
-      document2?.defaultView?.setTimeout?.(() => {
-        button.disabled = false;
-        button.textContent = originalText;
-        button.title = originalTitle;
-      }, 1200);
-    }
-  }
-
-  // src/preview-native-save.js
-  function preparePreviewForNativeSave(image, request = globalThis.GM_xmlhttpRequest) {
-    const source = image.getAttribute("data-x1080x-hdblog-preview-url");
-    const view = image.ownerDocument.defaultView;
-    const urls = view?.URL;
-    if (!source || typeof request !== "function" || !urls?.createObjectURL) return Promise.resolve(false);
-    return new Promise((resolve) => {
-      let finished = false;
-      const finish = (value) => {
-        if (!finished) {
-          finished = true;
-          resolve(value);
-        }
-      };
-      const referer = image.getAttribute("data-x1080x-preview-referer");
-      try {
-        request({
-          method: "GET",
-          url: source,
-          responseType: "blob",
-          timeout: 3e4,
-          headers: { Accept: "image/*", ...referer ? { Referer: referer } : {} },
-          async onload(response) {
-            try {
-              const blob = response.response;
-              if (finished || response.status < 200 || response.status >= 300 || !blob?.size || typeof blob.arrayBuffer !== "function") return finish(false);
-              const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
-              const text = String.fromCharCode(...bytes);
-              const type = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 ? "image/jpeg" : text.startsWith("\x89PNG\r\n\n") ? "image/png" : /^GIF8[79]a/.test(text) ? "image/gif" : text.startsWith("RIFF") && text.slice(8, 12) === "WEBP" ? "image/webp" : text.slice(4, 8) === "ftyp" && /avif|avis/.test(text.slice(8)) ? "image/avif" : "";
-              if (!type || finished || !image.isConnected) return finish(false);
-              const objectUrl = urls.createObjectURL(new view.Blob([blob], { type }));
-              image.src = objectUrl;
-              const anchor = image.closest("a");
-              if (anchor) anchor.href = objectUrl;
-              view.addEventListener("pagehide", (event) => {
-                if (event.persisted) return;
-                if (image.src === objectUrl) image.src = source;
-                if (anchor?.href === objectUrl) anchor.href = source;
-                urls.revokeObjectURL(objectUrl);
-              });
-              finish(true);
-            } catch {
-              finish(false);
-            }
-          },
-          onerror: () => finish(false),
-          ontimeout: () => finish(false),
-          onabort: () => finish(false)
-        });
-      } catch {
-        finish(false);
+      if (isBatchOpenPage()) {
+        applyBatchOpenHistory(document);
+        if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
       }
-    });
-  }
-
-  // src/hdblog-search.js
-  var STORAGE_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
-  var HDBLOG_SEARCH_FILTER_ENABLED_KEY = "x1080x-ex:hdblog-search-filter-enabled";
-  var HDBLOG_BROWSE_FILTER_ENABLED_KEY = "x1080x-ex:hdblog-browse-filter-enabled";
-  var DEFAULT_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
-  function normalizeKeyword(value) {
-    return String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
-  }
-  function parseBlockedKeywords(value) {
-    const seen = /* @__PURE__ */ new Set();
-    const keywords = [];
-    String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).forEach((entry) => {
-      const normalized = normalizeKeyword(entry);
-      if (!normalized || seen.has(normalized)) return;
-      seen.add(normalized);
-      keywords.push(entry);
-    });
-    return keywords;
-  }
-  function isBlockedTitle(title, keywords) {
-    const normalizedTitle = normalizeKeyword(title);
-    return keywords.some((keyword) => {
-      const normalizedKeyword = normalizeKeyword(keyword);
-      return normalizedKeyword && normalizedTitle.includes(normalizedKeyword);
-    });
-  }
-  function isHdblogUrl(value) {
-    try {
-      const url = new URL(value);
-      const host = url.hostname.toLowerCase().replace(/\.$/, "");
-      return host === "hdblog.me" || host.endsWith(".hdblog.me");
-    } catch {
-      return false;
+      startAutomaticLegacyHistoryMigration();
+      observeModernBoard();
     }
-  }
-  function isHdblogSearchUrl(value) {
-    try {
-      const url = new URL(value);
-      return isHdblogUrl(url.href) && url.searchParams.has("s") && Boolean(url.searchParams.get("s")?.trim());
-    } catch {
-      return false;
-    }
-  }
-  function isHdblogArticleUrl(value) {
-    try {
-      const url = new URL(value);
-      return isHdblogUrl(url.href) && /^\/\d+\/[^/]+\/?$/.test(url.pathname);
-    } catch {
-      return false;
-    }
-  }
-  function filterSearchCandidates(candidates, keywords) {
-    const blocked = [];
-    const remaining = [];
-    for (const candidate of candidates) {
-      (isBlockedTitle(candidate.title, keywords) ? blocked : remaining).push(candidate);
-    }
-    return { blocked, remaining };
-  }
-  function redirectTargetForSearch(candidates) {
-    return candidates.length === 1 ? candidates[0].url : "";
-  }
-  function collectHdblogSearchResults(document2) {
-    const baseUrl = new URL(document2.baseURI);
-    return [...document2.querySelectorAll("main#genesis-content article.entry")].map((article) => {
-      const link = article.querySelector(
-        ".entry-header .entry-title a[href], h2.entry-title a[href], .entry-title a[href]"
-      );
-      if (!link) return null;
-      try {
-        const url = new URL(link.getAttribute("href"), document2.baseURI);
-        if (!/^https?:$/.test(url.protocol) || url.origin !== baseUrl.origin) return null;
-        return {
-          article,
-          link,
-          title: String(link.textContent ?? "").replace(/\s+/g, " ").trim(),
-          url: url.href
-        };
-      } catch {
-        return null;
-      }
-    }).filter(Boolean);
-  }
-  function filterHdblogSearchResults(document2, keywords) {
-    const candidates = collectHdblogSearchResults(document2);
-    const { blocked, remaining } = filterSearchCandidates(candidates, keywords);
-    blocked.forEach(({ article }) => article.remove());
-    return { blocked, remaining };
-  }
-  function getBlockedKeywords() {
-    const stored = typeof GM_getValue === "function" ? GM_getValue(STORAGE_KEY2, null) : null;
-    if (stored === null || stored === void 0) {
-      return parseBlockedKeywords(DEFAULT_BLOCKED_KEYWORDS);
-    }
-    return parseBlockedKeywords(stored);
-  }
-  function isHdblogSearchEnhancementEnabled() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, true) !== false;
-  }
-  function isHdblogBrowseFilterEnabled() {
-    if (typeof GM_getValue !== "function") return false;
-    return GM_getValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY, false) === true;
-  }
-  function applyHdblogSearchEnhancement(windowObject = window) {
-    if (!isHdblogSearchEnhancementEnabled() || !isHdblogSearchUrl(windowObject.location.href)) {
-      return { blocked: [], remaining: [], redirectTarget: "" };
-    }
-    const keywords = getBlockedKeywords();
-    const result = filterHdblogSearchResults(windowObject.document, keywords);
-    const redirectTarget = redirectTargetForSearch(result.remaining);
-    if (redirectTarget && redirectTarget !== windowObject.location.href) {
-      windowObject.location.assign(redirectTarget);
-    }
-    return { ...result, redirectTarget };
-  }
-  function applyHdblogBrowseEnhancement(windowObject = window) {
-    const href = windowObject.location.href;
-    if (!isHdblogBrowseFilterEnabled() || !isHdblogUrl(href) || isHdblogSearchUrl(href) || isHdblogArticleUrl(href)) {
-      return { blocked: [], remaining: [] };
-    }
-    return filterHdblogSearchResults(windowObject.document, getBlockedKeywords());
-  }
-  function installHdblogSearchEnhancement() {
-    if (typeof window === "undefined" || typeof document === "undefined") return;
-    if (isHdblogSearchUrl(window.location.href)) {
-      applyHdblogSearchEnhancement(window);
-      return;
-    }
-    applyHdblogBrowseEnhancement(window);
-  }
-
-  // src/hdblog-preview-variants.js
-  var FOUR_K_PREVIEW_TOKEN_PATTERN = /(?:^|[^a-z0-9])(?:4k(?:\d{2,3}fps)?|2160p|uhd)(?=$|[^a-z0-9])/i;
-  function searchablePreviewValue(value) {
-    const raw = String(value ?? "").trim();
-    if (!raw) return "";
-    try {
-      const url = new URL(raw, "https://example.invalid/");
-      return decodeURIComponent(url.pathname);
-    } catch {
-      try {
-        return decodeURIComponent(raw);
-      } catch {
-        return raw;
-      }
-    }
-  }
-  function isFourKPreviewValue(value) {
-    return FOUR_K_PREVIEW_TOKEN_PATTERN.test(searchablePreviewValue(value));
-  }
-  function isFourKPreviewCandidate(candidate) {
-    if (typeof candidate === "string") return isFourKPreviewValue(candidate);
-    if (!candidate || typeof candidate !== "object") return false;
-    const values = [
-      candidate.href,
-      candidate.pixhostShowUrl,
-      candidate.directUrl,
-      candidate.thumbUrl,
-      ...Array.isArray(candidate.values) ? candidate.values : []
-    ];
-    return values.some(isFourKPreviewValue);
-  }
-  function partitionPreviewCandidates(candidates = []) {
-    const standard = [];
-    const fourK = [];
-    for (const candidate of candidates) {
-      (isFourKPreviewCandidate(candidate) ? fourK : standard).push(candidate);
-    }
-    return { standard, fourK };
-  }
-
-  // src/javfree.js
-  var JAVFREE_ORIGIN = "https://javfree.me";
-  var REQUEST_TIMEOUT3 = 3e4;
-  var HDBLOG_SECTION_ID = "x1080x-ex-hdblog-javfree-preview";
-  var JAVFREE_SETTINGS_PANEL_ID = "x1080x-ex-javfree-settings-panel";
-  var JAVFREE_DOWNLOAD_BUTTON_ID = "x1080x-ex-javfree-preview-download";
-  var JAVFREE_AGAGHHH_SEARCH_BUTTON_ID = "x1080x-ex-javfree-agaghhh-search";
-  var JAVFREE_COPY_CODE_BUTTON_ID = "x1080x-ex-javfree-copy-code";
-  var JAVFREE_PREVIEW_ATTR = "data-x1080x-javfree-preview-url";
-  var PREVIEW_REFERER_ATTR2 = "data-x1080x-preview-referer";
-  var AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:agaghhh-javfree-preview-fallback-enabled";
-  var HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:hdblog-javfree-preview-fallback-enabled";
-  var HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY = "x1080x-ex:hdblog-deleted-javfree-search-enabled";
-  var JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY = "x1080x-ex:javfree-search-auto-redirect-enabled";
-  var JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY = "x1080x-ex:javfree-preview-download-enabled";
-  var JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY = "x1080x-ex:javfree-agaghhh-search-enabled";
-  var JAVFREE_COPY_CODE_ENABLED_KEY = "x1080x-ex:javfree-copy-code-enabled";
-  var IMAGE_EXTENSION_PATTERN2 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
-  var HDBLOG_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
-  function normalizeText(value) {
-    return String(value ?? "").replace(/\s+/g, " ").trim();
-  }
-  function absoluteHttpUrl(value, baseUrl) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
-    try {
-      const url = new URL(String(value), baseUrl);
-      return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function parseHtml(html, baseUrl, hostDocument = globalThis.document) {
-    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
-    if (typeof Parser !== "function") return null;
-    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
-    const base = parsed.createElement("base");
-    base.href = baseUrl;
-    (parsed.head || parsed.documentElement).prepend(base);
-    return parsed;
-  }
-  function requestText(url, request = globalThis.GM_xmlhttpRequest, referer = "") {
-    return new Promise((resolve, reject) => {
-      if (typeof request !== "function") {
-        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
-        return;
-      }
-      request({
-        method: "GET",
-        url,
-        responseType: "text",
-        timeout: REQUEST_TIMEOUT3,
-        headers: {
-          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-          ...referer ? { Referer: referer } : {}
-        },
-        onload(response) {
-          if (response.status < 200 || response.status >= 400) {
-            reject(new Error("\u8BF7\u6C42\u5931\u8D25\uFF08HTTP " + (response.status || 0) + "\uFF09"));
-            return;
-          }
-          resolve({
-            html: String(response.responseText ?? response.response ?? ""),
-            finalUrl: response.finalUrl || response.responseURL || url
-          });
-        },
-        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
-        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
-      });
-    });
-  }
-  function requestImageBlob(url, referer, request = globalThis.GM_xmlhttpRequest) {
-    return new Promise((resolve, reject) => {
-      if (typeof request !== "function") {
-        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
-        return;
-      }
-      request({
-        method: "GET",
-        url,
-        responseType: "blob",
-        timeout: REQUEST_TIMEOUT3,
-        headers: referer ? { Referer: referer } : void 0,
-        onload(response) {
-          if (response.status < 200 || response.status >= 300 || !response.response) {
-            reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\uFF08HTTP " + (response.status || 0) + "\uFF09"));
-            return;
-          }
-          resolve(response.response);
-        },
-        onerror: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25")),
-        ontimeout: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u8D85\u65F6"))
-      });
-    });
-  }
-  function readEnabled(key, fallback = true) {
-    if (typeof GM_getValue !== "function") return fallback;
-    return GM_getValue(key, fallback) !== false;
-  }
-  function isAgaghhhJavfreePreviewFallbackEnabled() {
-    return readEnabled(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, true);
-  }
-  function isHdblogJavfreePreviewFallbackEnabled() {
-    return readEnabled(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, true);
-  }
-  function isHdblogDeletedJavfreeSearchEnabled() {
-    return readEnabled(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, true);
-  }
-  function isJavfreeSearchAutoRedirectEnabled() {
-    return readEnabled(JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY, true);
-  }
-  function isJavfreePreviewDownloadEnabled() {
-    return readEnabled(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, true);
-  }
-  function isJavfreeAgaghhhSearchEnabled() {
-    return readEnabled(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, true);
-  }
-  function isJavfreeCopyCodeEnabled() {
-    return readEnabled(JAVFREE_COPY_CODE_ENABLED_KEY, true);
-  }
-  function isJavfreeHost(locationObject = globalThis.location) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "javfree.me" || hostname.endsWith(".javfree.me");
-  }
-  function isHdblogHost2(locationObject = globalThis.location) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
-  }
-  function extractJavfreeVideoCode(value) {
-    const source = normalizeText(value).toUpperCase();
-    if (!source) return "";
-    const fc2 = source.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
-    if (fc2) return "FC2" + (fc2[1] ? "-PPV" : "") + "-" + fc2[2];
-    const alphanumericPrefix = source.match(
-      /(?:^|[^A-Z0-9])([A-Z][A-Z0-9]{1,11})-(\d{2,8}[A-Z]?)(?:$|[^A-Z0-9])/i
-    );
-    if (alphanumericPrefix) return alphanumericPrefix[1] + "-" + alphanumericPrefix[2];
-    const standard = source.match(
-      /(?:^|[^A-Z0-9])([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)(?:$|[^A-Z0-9])/i
-    );
-    return standard ? standard[1] + "-" + standard[2] : "";
-  }
-  function codeTokenMatches(value, code) {
-    const target = String(code || "").trim().toUpperCase();
-    if (!target) return false;
-    const normalized = normalizeText(value).toUpperCase();
-    const escaped = target.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
-    return new RegExp("(?:^|[^A-Z0-9])" + escaped + "(?:$|[^A-Z0-9])", "i").test(normalized);
-  }
-  function javfreeSearchUrl(code) {
-    const normalized = String(code || "").trim().toUpperCase();
-    return normalized ? JAVFREE_ORIGIN + "/search/" + encodeURIComponent(normalized) : "";
-  }
-  function isJavfreeArticleUrl(value, baseUrl = JAVFREE_ORIGIN) {
-    const href = absoluteHttpUrl(value, baseUrl);
-    if (!href) return false;
-    try {
-      const url = new URL(href);
-      return url.origin === JAVFREE_ORIGIN && /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname);
-    } catch {
-      return false;
-    }
-  }
-  function collectJavfreeSearchResults(document2) {
-    if (!document2) return [];
-    let anchors = [...document2.querySelectorAll(
-      "main#main article .entry-title a[href], main.site-main article .entry-title a[href]"
-    )];
-    if (!anchors.length) anchors = [...document2.querySelectorAll("article .entry-title a[href]")];
-    const seen = /* @__PURE__ */ new Set();
-    return anchors.map((anchor) => {
-      const url = absoluteHttpUrl(anchor.getAttribute("href"), document2.baseURI || JAVFREE_ORIGIN);
-      if (!isJavfreeArticleUrl(url) || seen.has(url)) return null;
-      seen.add(url);
-      return { title: normalizeText(anchor.textContent), url };
-    }).filter(Boolean);
-  }
-  function chooseJavfreeSearchResult(candidates, code = "") {
-    const unique = [...new Map(
-      (candidates || []).filter(Boolean).map((candidate) => [candidate.url, candidate])
-    ).values()];
-    if (unique.length === 1) return unique[0];
-    const normalizedCode = String(code || "").trim().toUpperCase();
-    if (!normalizedCode) return null;
-    const slug = normalizedCode.toLowerCase();
-    const slugMatches = unique.filter((candidate) => {
-      try {
-        return new URL(candidate.url).pathname.split("/").filter(Boolean).at(-1)?.toLowerCase() === slug;
-      } catch {
-        return false;
-      }
-    });
-    if (slugMatches.length === 1) return slugMatches[0];
-    const titleMatches = unique.filter((candidate) => codeTokenMatches(candidate.title, normalizedCode));
-    return titleMatches.length === 1 ? titleMatches[0] : null;
-  }
-  function imageUrlFromElement(document2, image) {
-    const candidates = [
-      image?.getAttribute("data-original"),
-      image?.getAttribute("data-lazy-src"),
-      image?.getAttribute("data-src"),
-      image?.currentSrc,
-      image?.getAttribute("src")
-    ];
-    for (const candidate of candidates) {
-      const url = absoluteHttpUrl(candidate, document2.baseURI || JAVFREE_ORIGIN);
-      if (url) return url;
-    }
-    return "";
-  }
-  function filenameOf(value) {
-    try {
-      return decodeURIComponent(new URL(value).pathname.split("/").pop() || "").toUpperCase();
-    } catch {
-      return "";
-    }
-  }
-  function imageMatchesCode(url, code) {
-    const compactCode = String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const compactFilename = filenameOf(url).replace(/[^A-Z0-9]/g, "");
-    return compactCode && compactFilename.includes(compactCode);
-  }
-  function collectJavfreeArticleImages(document2, code = "") {
-    const content = document2?.querySelector(
-      "main#main article .entry-content, main.site-main article .entry-content, article .entry-content, .entry-content"
-    );
-    if (!content) return { coverUrl: "", previewUrl: "", imageUrls: [] };
-    const all = [...content.querySelectorAll("img")].map((image) => imageUrlFromElement(document2, image)).filter(Boolean);
-    const matching = code ? all.filter((url) => imageMatchesCode(url, code)) : [];
-    const imageUrls = matching.length >= 2 ? matching : all;
-    if (!imageUrls.length) return { coverUrl: "", previewUrl: "", imageUrls: [] };
-    const coverUrl = imageUrls[0] || "";
-    const preferred = imageUrls.find((url, index) => index > 0 && /(?:^|[-_])(?:1080p|2160p|4k(?:\d{2,3}fps)?|preview|sample)(?:[-_.]|$)/i.test(filenameOf(url)));
-    return {
-      coverUrl,
-      previewUrl: preferred || imageUrls[1] || "",
-      imageUrls
-    };
-  }
-  function javfreeCodeFromDocument(document2, locationObject = document2?.location) {
-    const title = document2?.querySelector(
-      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
-    )?.textContent || document2?.title || "";
-    const fromTitle = extractJavfreeVideoCode(title);
-    if (fromTitle) return fromTitle;
-    try {
-      const slug = new URL(locationObject?.href || document2?.baseURI || JAVFREE_ORIGIN).pathname.split("/").filter(Boolean).at(-1) || "";
-      return extractJavfreeVideoCode(slug);
-    } catch {
-      return "";
-    }
-  }
-  function buildJavfreeAgaghhhSearchUrl(code) {
-    const normalized = String(code || "").trim().toUpperCase();
-    if (!normalized) return "";
-    const fc2 = normalized.match(/^FC2[-_ ]*(?:PPV[-_ ]*)?(\d{5,9})$/i);
-    return `${getAgaghhhOrigin()}/search?q=${encodeURIComponent(fc2 ? fc2[1] : normalized)}`;
-  }
-  function openJavfreeAgaghhhSearch(document2, code) {
-    const url = buildJavfreeAgaghhhSearchUrl(code);
-    if (!url) return false;
-    if (typeof GM_openInTab === "function") {
-      try {
-        GM_openInTab(url, { active: true, insert: true, setParent: true });
-        return true;
-      } catch (error) {
-        console.warn("[x1080x-ex] JavFree agaghhh search GM_openInTab failed", {
-          url,
-          error: error?.message || String(error)
-        });
-      }
-    }
-    return Boolean(document2.defaultView?.open?.(url, "_blank"));
-  }
-  function styleJavfreeActionButton(button) {
-    Object.assign(button.style, {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      verticalAlign: "middle",
-      margin: "0 0 4px 8px",
-      padding: "5px 8px",
-      minWidth: "34px",
-      border: "1px solid #2878c8",
-      borderRadius: "5px",
-      color: "#fff",
-      background: "#398bd4",
-      cursor: "pointer",
-      fontSize: "13px",
-      fontWeight: "600",
-      lineHeight: "20px"
-    });
-    button.addEventListener("mouseenter", () => {
-      if (!button.disabled) button.style.background = "#246eaf";
-    });
-    button.addEventListener("mouseleave", () => {
-      if (!button.disabled) button.style.background = "#398bd4";
-    });
-  }
-  function installJavfreeAgaghhhSearchButton(document2, locationObject) {
-    if (!isJavfreeAgaghhhSearchEnabled() || document2.getElementById(JAVFREE_AGAGHHH_SEARCH_BUTTON_ID)) {
-      return null;
-    }
-    let url;
-    try {
-      url = new URL(locationObject?.href || document2.baseURI);
-    } catch {
-      return null;
-    }
-    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
-    const title = document2.querySelector(
-      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
-    );
-    const code = javfreeCodeFromDocument(document2, locationObject);
-    if (!title || !code) return null;
-    const button = document2.createElement("button");
-    button.id = JAVFREE_AGAGHHH_SEARCH_BUTTON_ID;
-    button.type = "button";
-    button.textContent = "\u{1F50D}";
-    button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 x1080x \u641C\u7D22";
-    button.setAttribute("aria-label", "\u5728 x1080x \u641C\u7D22\u5F53\u524D\u756A\u53F7");
-    styleJavfreeActionButton(button);
-    button.addEventListener("click", () => {
-      openJavfreeAgaghhhSearch(document2, javfreeCodeFromDocument(document2, locationObject));
-    });
-    title.append(button);
-    return button;
-  }
-  function installJavfreeCopyCodeButton(document2, locationObject) {
-    if (!isJavfreeCopyCodeEnabled() || document2.getElementById(JAVFREE_COPY_CODE_BUTTON_ID)) {
-      return null;
-    }
-    let url;
-    try {
-      url = new URL(locationObject?.href || document2.baseURI);
-    } catch {
-      return null;
-    }
-    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
-    const title = document2.querySelector(
-      "main#main article h1.entry-title, article h1.entry-title, h1.entry-title"
-    );
-    const code = javfreeCodeFromDocument(document2, locationObject);
-    if (!title || !code) return null;
-    const button = document2.createElement("button");
-    button.id = JAVFREE_COPY_CODE_BUTTON_ID;
-    button.type = "button";
-    button.textContent = "\u{1F4CB}";
-    button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
-    button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
-    styleJavfreeActionButton(button);
-    button.addEventListener("click", () => {
-      void copyCodeWithButtonFeedback(
-        button,
-        document2,
-        javfreeCodeFromDocument(document2, locationObject)
-      );
-    });
-    title.append(button);
-    return button;
-  }
-  async function fetchJavfreePreviewForCode(code, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
-    const normalizedCode = String(code || "").trim().toUpperCase();
-    const empty = {
-      code: normalizedCode,
-      sourceName: "JavFree",
-      sourceUrl: "",
-      articleUrl: "",
-      referer: "",
-      imageUrls: []
-    };
-    if (!normalizedCode) return empty;
-    const searchUrl = javfreeSearchUrl(normalizedCode);
-    const search = await requestText(searchUrl, request, JAVFREE_ORIGIN + "/");
-    let articleUrl = "";
-    let articleHtml = "";
-    let articleFinalUrl = "";
-    if (isJavfreeArticleUrl(search.finalUrl, JAVFREE_ORIGIN)) {
-      articleUrl = search.finalUrl;
-      articleHtml = search.html;
-      articleFinalUrl = search.finalUrl;
-    } else {
-      const searchDocument = parseHtml(search.html, search.finalUrl || searchUrl, hostDocument);
-      const selected = chooseJavfreeSearchResult(
-        collectJavfreeSearchResults(searchDocument),
-        normalizedCode
-      );
-      if (!selected) return { ...empty, sourceUrl: searchUrl };
-      articleUrl = selected.url;
-      const article = await requestText(articleUrl, request, searchUrl);
-      articleHtml = article.html;
-      articleFinalUrl = article.finalUrl || articleUrl;
-    }
-    const articleDocument = parseHtml(articleHtml, articleFinalUrl || articleUrl, hostDocument);
-    const images = collectJavfreeArticleImages(articleDocument, normalizedCode);
-    return {
-      code: normalizedCode,
-      sourceName: "JavFree",
-      sourceUrl: articleUrl,
-      articleUrl,
-      referer: articleUrl,
-      coverUrl: images.coverUrl,
-      imageUrls: images.previewUrl ? [images.previewUrl] : []
-    };
-  }
-  function javfreeUniqueSearchTarget(document2, locationObject = document2?.location) {
-    if (!document2 || !isJavfreeHost(locationObject)) return "";
-    let url;
-    try {
-      url = new URL(locationObject?.href || document2.baseURI);
-    } catch {
-      return "";
-    }
-    if (!/^\/search(?:\/|$)/i.test(url.pathname)) return "";
-    const results = collectJavfreeSearchResults(document2);
-    return results.length === 1 ? results[0].url : "";
-  }
-  function extensionFromBlob(blob, url) {
-    const type = String(blob?.type || "").toLowerCase();
-    if (type.includes("jpeg")) return "jpg";
-    if (type.includes("png")) return "png";
-    if (type.includes("webp")) return "webp";
-    if (type.includes("gif")) return "gif";
-    if (type.includes("avif")) return "avif";
-    try {
-      const match = new URL(url).pathname.match(/\.((?:jpe?g|png|webp|gif|avif))$/i);
-      return match?.[1]?.toLowerCase().replace("jpeg", "jpg") || "jpg";
-    } catch {
-      return "jpg";
-    }
-  }
-  function saveBlob(document2, blob, filename) {
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document2.createElement("a");
-    anchor.hidden = true;
-    anchor.href = objectUrl;
-    anchor.download = filename;
-    document2.body.append(anchor);
-    try {
-      anchor.click();
-    } finally {
-      anchor.remove();
-      document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    }
-  }
-  async function downloadJavfreePreview(button, document2, locationObject, request) {
-    const code = javfreeCodeFromDocument(document2, locationObject);
-    const previewUrl = collectJavfreeArticleImages(document2, code).previewUrl;
-    if (!code || !previewUrl) return;
-    button.disabled = true;
-    button.textContent = "\u4E0B\u8F7D\u4E2D\u2026";
-    try {
-      const blob = await requestImageBlob(previewUrl, locationObject?.href || document2.baseURI, request);
-      saveBlob(document2, blob, code + "." + extensionFromBlob(blob, previewUrl));
-      button.textContent = "\u2713";
-    } catch (error) {
-      button.textContent = "\u5931\u8D25";
-      button.title = error?.message || "Preview \u4E0B\u8F7D\u5931\u8D25";
-    } finally {
-      document2.defaultView?.setTimeout(() => {
-        button.disabled = false;
-        renderDownloadIcon(button);
-        button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
-      }, 2500);
-    }
-  }
-  function installJavfreePreviewDownloadButton(document2, locationObject, request) {
-    if (!isJavfreePreviewDownloadEnabled() || document2.getElementById(JAVFREE_DOWNLOAD_BUTTON_ID)) {
-      return null;
-    }
-    let url;
-    try {
-      url = new URL(locationObject?.href || document2.baseURI);
-    } catch {
-      return null;
-    }
-    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return null;
-    const title = document2.querySelector("main#main article h1.entry-title, article h1.entry-title, h1.entry-title");
-    const code = javfreeCodeFromDocument(document2, locationObject);
-    const previewUrl = collectJavfreeArticleImages(document2, code).previewUrl;
-    if (!title || !code || !previewUrl) return null;
-    const button = document2.createElement("button");
-    button.id = JAVFREE_DOWNLOAD_BUTTON_ID;
-    button.type = "button";
-    renderDownloadIcon(button);
-    button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
-    Object.assign(button.style, {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      verticalAlign: "middle",
-      margin: "0 0 4px 8px",
-      padding: "5px 8px",
-      minWidth: "34px",
-      border: "1px solid #2878c8",
-      borderRadius: "5px",
-      color: "#fff",
-      background: "#398bd4",
-      cursor: "pointer",
-      fontSize: "13px",
-      fontWeight: "600",
-      lineHeight: "20px"
-    });
-    button.addEventListener("click", () => void downloadJavfreePreview(
-      button,
-      document2,
-      locationObject,
-      request
-    ));
-    title.append(button);
-    return button;
-  }
-  function closeJavfreeSettingsPanel(document2) {
-    document2?.getElementById(JAVFREE_SETTINGS_PANEL_ID)?.remove();
-  }
-  function openJavfreeSettingsPanel(document2 = globalThis.document) {
-    if (!document2?.body) return null;
-    closeJavfreeSettingsPanel(document2);
-    const overlay = document2.createElement("div");
-    overlay.id = JAVFREE_SETTINGS_PANEL_ID;
-    Object.assign(overlay.style, {
-      position: "fixed",
-      inset: "0",
-      zIndex: "2147483646",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: "20px",
-      background: "rgba(0,0,0,.42)",
-      boxSizing: "border-box"
-    });
-    const form = document2.createElement("form");
-    Object.assign(form.style, {
-      width: "min(480px, 100%)",
-      padding: "22px",
-      borderRadius: "10px",
-      background: "#fff",
-      color: "#222",
-      boxShadow: "0 18px 60px rgba(0,0,0,.28)",
-      boxSizing: "border-box",
-      font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    });
-    form.innerHTML = `
-    <h2 style="margin:0 0 18px;font-size:20px">JavFree \u8BBE\u7F6E</h2>
-    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
-      <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
-      <span><strong>\u641C\u7D22\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">\u641C\u7D22\u9875\u53EA\u6709 1 \u4E2A\u552F\u4E00\u6587\u7AE0\u7ED3\u679C\u65F6\u81EA\u52A8\u8FDB\u5165\u8BE6\u60C5\u9875\u3002</small></span>
-    </label>
-    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
-      <input data-setting="agaghhh-search" type="checkbox" style="margin-top:3px">
-      <span><strong>x1080x \u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u8BC6\u522B\u5F53\u524D\u756A\u53F7\uFF0C\u5E76\u5728 x1080x \u7AD9\u70B9\u641C\u7D22\u3002</small></span>
-    </label>
-    <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
-      <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
-      <span><strong>\u590D\u5236\u756A\u53F7\u6309\u94AE\uFF08\u{1F4CB}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u6807\u9898\u65C1\u663E\u793A\u590D\u5236\u6309\u94AE\uFF0C\u884C\u4E3A\u4E0E HDblog \u4E00\u81F4\u3002</small></span>
-    </label>
-    <label style="display:flex;align-items:flex-start;gap:9px">
-      <input data-setting="preview-download" type="checkbox" style="margin-top:3px">
-      <span><strong>Preview \u4E0B\u8F7D\u6309\u94AE</strong><small style="display:block;margin-top:2px;color:#666">\u8BE6\u60C5\u9875\u6807\u9898\u65C1\u663E\u793A\u4E0B\u8F7D\u6309\u94AE\uFF0C\u53EA\u4E0B\u8F7D\u5C01\u9762\u540E\u7684 Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D\u3002</small></span>
-    </label>
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
-      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
-      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
-    </div>`;
-    organizeSettingsPanel(form, [
-      {
-        "key": "search",
-        "title": "\u641C\u7D22\u529F\u80FD",
-        "description": "\u81EA\u52A8\u8DF3\u8F6C\u4E0E\u8DE8\u7AD9\u641C\u7D22",
-        "settings": [
-          "search-auto-redirect",
-          "agaghhh-search"
-        ]
-      },
-      {
-        "key": "buttons",
-        "title": "\u6587\u7AE0\u64CD\u4F5C",
-        "description": "\u5FEB\u901F\u590D\u5236\u756A\u53F7\u53CA\u4E0B\u8F7D\u9884\u89C8\u56FE",
-        "settings": [
-          "copy-code",
-          "preview-download"
-        ]
-      }
-    ]);
-    const redirectInput = form.querySelector('[data-setting="search-auto-redirect"]');
-    const agaghhhSearchInput = form.querySelector('[data-setting="agaghhh-search"]');
-    const copyCodeInput = form.querySelector('[data-setting="copy-code"]');
-    const downloadInput = form.querySelector('[data-setting="preview-download"]');
-    redirectInput.checked = isJavfreeSearchAutoRedirectEnabled();
-    agaghhhSearchInput.checked = isJavfreeAgaghhhSearchEnabled();
-    copyCodeInput.checked = isJavfreeCopyCodeEnabled();
-    downloadInput.checked = isJavfreePreviewDownloadEnabled();
-    form.querySelector('[data-action="cancel"]')?.addEventListener(
-      "click",
-      () => closeJavfreeSettingsPanel(document2)
-    );
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) closeJavfreeSettingsPanel(document2);
-    });
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (typeof GM_setValue === "function") {
-        GM_setValue(JAVFREE_SEARCH_AUTO_REDIRECT_ENABLED_KEY, redirectInput.checked);
-        GM_setValue(JAVFREE_AGAGHHH_SEARCH_ENABLED_KEY, agaghhhSearchInput.checked);
-        GM_setValue(JAVFREE_COPY_CODE_ENABLED_KEY, copyCodeInput.checked);
-        GM_setValue(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
-      }
-      closeJavfreeSettingsPanel(document2);
-      document2.defaultView?.location?.reload?.();
-    });
-    overlay.append(form);
-    document2.body.append(overlay);
-    return overlay;
-  }
-  function registerJavfreeSettingsMenu(document2, locationObject) {
-    if (!isJavfreeHost(locationObject) || typeof GM_registerMenuCommand !== "function") return;
-    const view = document2?.defaultView;
-    if (view && view.top !== view) return;
-    GM_registerMenuCommand("\u2699\uFE0F JavFree \u8BBE\u7F6E", () => openJavfreeSettingsPanel(document2));
-  }
-  function installJavfreeEnhancement(document2 = globalThis.document, locationObject = globalThis.location, request = globalThis.GM_xmlhttpRequest) {
-    if (!document2 || !isJavfreeHost(locationObject)) return null;
-    registerJavfreeSettingsMenu(document2, locationObject);
-    if (isJavfreeSearchAutoRedirectEnabled()) {
-      const target = javfreeUniqueSearchTarget(document2, locationObject);
-      if (target && typeof locationObject?.replace === "function") {
-        locationObject.replace(target);
-        return { redirectTarget: target, button: null };
-      }
-    }
-    const downloadButton = installJavfreePreviewDownloadButton(document2, locationObject, request);
-    const copyButton = installJavfreeCopyCodeButton(document2, locationObject);
-    const searchButton = installJavfreeAgaghhhSearchButton(document2, locationObject);
-    return {
-      redirectTarget: "",
-      searchButton,
-      copyButton,
-      button: downloadButton
-    };
-  }
-  function hdblogCodeFromLocation(document2, locationObject) {
-    try {
-      const slug = new URL(locationObject?.href || document2?.baseURI || "").pathname.split("/").filter(Boolean).at(-1) || "";
-      const slugCode = extractJavfreeVideoCode(slug);
-      if (slugCode && !/^ERROR-?404$/i.test(slugCode)) return slugCode;
-    } catch {
-    }
-    const titleCode = extractJavfreeVideoCode(
-      document2?.querySelector("h1.entry-title, #genesis-content h1, h1")?.textContent || ""
-    );
-    return /^ERROR-?404$/i.test(titleCode) ? "" : titleCode;
-  }
-  function isDeletedHdblogArticlePage(document2, locationObject = document2?.location) {
-    if (!document2 || !isHdblogHost2(locationObject)) return false;
-    let url;
-    try {
-      url = new URL(locationObject?.href || document2.baseURI);
-    } catch {
-      return false;
-    }
-    if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return false;
-    const bodyClass = String(document2.body?.className || "");
-    const signalTexts = [
-      document2.title,
-      document2.querySelector("h1, .entry-title, .page-title")?.textContent
-    ].map(normalizeText).filter(Boolean);
-    const has404Signal = /(?:^|\s)(?:error404|error-404|not-found)(?:\s|$)/i.test(bodyClass) || signalTexts.some((text) => /(?:\berror[-\s]?404\b|page\s+not\s+found|not\s+found)/i.test(text) || /^404(?:$|\s|[|:–—])/i.test(text));
-    if (has404Signal) return true;
-    return !document2.querySelector(
-      "main#genesis-content article.entry h1.entry-title, article.entry h1.entry-title"
-    );
-  }
-  function openJavfreeSearchTab(document2, code) {
-    const url = javfreeSearchUrl(code);
-    if (!url) return false;
-    const key = "x1080x-ex:hdblog-javfree-opened:" + (document2?.location?.pathname || code);
-    try {
-      if (document2.defaultView?.sessionStorage?.getItem(key) === "1") return false;
-      document2.defaultView?.sessionStorage?.setItem(key, "1");
-    } catch {
-    }
-    if (typeof GM_openInTab === "function") {
-      try {
-        GM_openInTab(url, { active: true, insert: true, setParent: true });
-        return true;
-      } catch (error) {
-        console.warn("[x1080x-ex] GM_openInTab failed, fallback to window.open", {
-          url,
-          error: error?.message || String(error)
-        });
-      }
-    }
-    const opened = document2.defaultView?.open?.(url, "_blank");
-    return Boolean(opened);
-  }
-  function textNodesUnder(root) {
-    const view = root?.ownerDocument?.defaultView;
-    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
-    const walker = root?.ownerDocument?.createTreeWalker?.(root, showText);
-    if (!walker) return [];
-    const nodes = [];
-    let node = walker.nextNode();
-    while (node) {
-      const parent = node.parentElement;
-      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
-      node = walker.nextNode();
-    }
-    return nodes;
-  }
-  function isAfter(reference, node) {
-    return Boolean(reference?.compareDocumentPosition(node) & 4);
-  }
-  function hdblogPreviewRange(document2) {
-    const content = document2?.querySelector(
-      "main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content"
-    );
-    if (!content) return null;
-    const nodes = textNodesUnder(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
-    if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter(marker, node) && HDBLOG_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))) || null;
-    return { content, marker, boundary };
-  }
-  function inHdblogPreviewRange(range, node) {
-    if (!range || !isAfter(range.marker, node)) return false;
-    return !range.boundary || !isAfter(range.boundary, node);
-  }
-  async function hasUsableHdblogPreview(document2, request) {
-    const range = hdblogPreviewRange(document2);
-    if (!range) return false;
-    if ([...range.content.querySelectorAll(
-      'img[data-x1080x-preview-large="1"], img[data-x1080x-preview-expanded="1"]'
-    )].some((image) => inHdblogPreviewRange(range, image))) {
-      return true;
-    }
-    const anchors = [...range.content.querySelectorAll("a[href]")].filter((anchor) => inHdblogPreviewRange(range, anchor));
-    for (const anchor of anchors) {
-      const href = absoluteHttpUrl(anchor.getAttribute("href"), document2.baseURI);
-      if (!href) continue;
-      if (isPixhostShowUrl(href, document2.baseURI)) {
-        const thumb = imageUrlFromElement(document2, anchor.querySelector("img"));
-        try {
-          if (await resolvePixhostShowUrl(document2, href, thumb, request)) return true;
-        } catch {
-        }
-        continue;
-      }
-      if (IMAGE_EXTENSION_PATTERN2.test(href)) return true;
-    }
-    return [...range.content.querySelectorAll("img")].filter((image) => inHdblogPreviewRange(range, image)).some((image) => {
-      const anchor = image.closest("a[href]");
-      if (anchor && isPixhostShowUrl(anchor.getAttribute("href"), document2.baseURI)) return false;
-      return Boolean(imageUrlFromElement(document2, image));
-    });
-  }
-  function renderHdblogJavfreePreview(document2, result) {
-    if (!document2 || !result?.imageUrls?.length || document2.getElementById(HDBLOG_SECTION_ID)) {
-      return null;
-    }
-    const content = document2.querySelector(
-      "main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content"
-    );
-    if (!content) return null;
-    const url = absoluteHttpUrl(result.imageUrls[0], result.articleUrl || JAVFREE_ORIGIN);
-    if (!url) return null;
-    const section = document2.createElement("section");
-    section.id = HDBLOG_SECTION_ID;
-    section.style.cssText = "clear:both;margin:24px 0 8px;padding:16px 0 0;border-top:1px solid #ddd";
-    const heading = document2.createElement("div");
-    heading.style.cssText = "margin:0 0 12px;font-size:15px;font-weight:700;color:#444";
-    const source = document2.createElement("a");
-    source.href = result.articleUrl || result.sourceUrl || JAVFREE_ORIGIN;
-    source.target = "_blank";
-    source.rel = "noopener noreferrer";
-    source.textContent = "JavFree Preview \xB7 " + (result.code || "");
-    source.style.cssText = "color:inherit;text-decoration:none";
-    heading.append(source);
-    const anchor = document2.createElement("a");
-    anchor.href = url;
-    anchor.target = "_blank";
-    anchor.rel = "noopener noreferrer";
-    anchor.style.cssText = "display:block;clear:both;margin:14px 0;text-align:center";
-    const image = document2.createElement("img");
-    image.src = url;
-    image.alt = ((result.code || "") + " Preview").trim();
-    image.loading = "eager";
-    image.decoding = "async";
-    image.setAttribute(JAVFREE_PREVIEW_ATTR, url);
-    image.setAttribute(
-      PREVIEW_REFERER_ATTR2,
-      result.referer || result.articleUrl || JAVFREE_ORIGIN
-    );
-    image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
-    anchor.append(image);
-    makePreviewGestureFriendly(image);
-    section.append(heading, anchor);
-    content.append(section);
-    return section;
-  }
-  async function installHdblogJavfreeFallback(document2 = globalThis.document, locationObject = globalThis.location, request = globalThis.GM_xmlhttpRequest) {
-    if (!document2 || !isHdblogHost2(locationObject)) return null;
-    const code = hdblogCodeFromLocation(document2, locationObject);
-    if (!code) return null;
-    if (isDeletedHdblogArticlePage(document2, locationObject)) {
-      if (isHdblogDeletedJavfreeSearchEnabled()) openJavfreeSearchTab(document2, code);
-      return null;
-    }
-    if (!isHdblogJavfreePreviewFallbackEnabled()) return null;
-    if (!document2.querySelector(
-      "main#genesis-content article.entry .entry-content, article.entry .entry-content"
-    )) {
-      return null;
-    }
-    try {
-      if (await hasUsableHdblogPreview(document2, request)) return null;
-      return renderHdblogJavfreePreview(
-        document2,
-        await fetchJavfreePreviewForCode(code, request, document2)
-      );
-    } catch (error) {
-      console.warn("[x1080x-ex] JavFree preview fallback failed on hdblog", {
-        code,
-        error: error?.message || String(error)
-      });
-      return null;
-    }
-  }
-
-  // src/hdblog-article.js
-  var HDBLOG_ARTICLE_WIDTH_KEY = "x1080x-ex:hdblog-article-width";
-  var HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY = "x1080x-ex:hdblog-article-layout-enabled";
-  var HDBLOG_SHOW_DOWNLOAD_AREA_KEY = "x1080x-ex:hdblog-show-download-area";
-  var HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY = "x1080x-ex:hdblog-show-image-download-button";
-  var HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY = "x1080x-ex:hdblog-show-cross-search-button";
-  var HDBLOG_SHOW_COPY_CODE_BUTTON_KEY = "x1080x-ex:hdblog-show-copy-code-button";
-  var HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2 = "x1080x-ex:hdblog-expand-preview-images";
-  var HDBLOG_BLOCKED_KEYWORDS_KEY = "x1080x-ex:hdblog-blocked-keywords";
-  var HDBLOG_SEARCH_FILTER_ENABLED_KEY2 = "x1080x-ex:hdblog-search-filter-enabled";
-  var HDBLOG_BROWSE_FILTER_ENABLED_KEY2 = "x1080x-ex:hdblog-browse-filter-enabled";
-  var HDBLOG_BATCH_OPEN_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-open-enabled";
-  var HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2 = "x1080x-ex:hdblog-batch-open-interval-min-ms";
-  var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2 = "x1080x-ex:hdblog-batch-open-interval-max-ms";
-  var HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-open-history-enabled";
-  var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2 = "x1080x-ex:hdblog-batch-open-history-limit";
-  var HDBLOG_BATCH_OPEN_HISTORY_KEY2 = "x1080x-ex:hdblog-batch-open-history";
-  var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2 = "x1080x-ex:hdblog-batch-open-history-color";
-  var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2 = "x1080x-ex:hdblog-batch-open-unopened-only";
-  var HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-progress-locator-enabled";
-  var DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT = 5e3;
-  var DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR = "#bd10e0";
-  var DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS = 800;
-  var DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS = 1600;
-  var DEFAULT_HDBLOG_ARTICLE_WIDTH = 1280;
-  var DEFAULT_HDBLOG_BLOCKED_KEYWORDS = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
-  var HDBLOG_SETTINGS_PANEL_ID2 = "x1080x-ex-hdblog-settings-panel";
-  var DOWNLOAD_HIDDEN_ATTR = "data-x1080x-hdblog-download-hidden";
-  var DOWNLOAD_WRAPPER_ATTR = "data-x1080x-hdblog-download-wrapper";
-  var DOWNLOAD_SECTION_LABEL_PATTERN = /^(?:bt(?:a)?file|katfile|freedl|rapidgator)\s*[:：]?$/i;
-  var PREVIEW_LABEL_PATTERN = /^preview\s*[:：]?$/i;
-  var MIN_HDBLOG_ARTICLE_WIDTH = 600;
-  var MAX_HDBLOG_ARTICLE_WIDTH = 3e3;
-  var LAYOUT_STYLE_ID = "x1080x-ex-hdblog-article-layout";
-  var DOWNLOAD_BUTTON_ID = "x1080x-ex-hdblog-image-download";
-  var SEARCH_BUTTON_ID = "x1080x-ex-hdblog-agaghhh-search";
-  var COPY_BUTTON_ID = "x1080x-ex-hdblog-copy-code";
-  var ARTICLE_BODY_CLASS = "x1080x-hdblog-single";
-  var REQUEST_TIMEOUT4 = 6e4;
-  var PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?)\b/i;
-  var PIXHOST_IMAGE_HOST_PATTERN = /^img\d+\.(?:pixhost\.(?:to|cc)|pixho\.st)$/i;
-  function normalizeText2(value) {
-    return String(value ?? "").replace(/\s+/g, " ").trim();
-  }
-  function isHdblogHost3(locationObject) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
-  }
-  function normalizeHdblogArticleWidth(value, fallback = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
-    const text = String(value ?? "").trim();
-    if (!text) return fallback;
-    const parsed = Number.parseInt(text, 10);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.min(MAX_HDBLOG_ARTICLE_WIDTH, Math.max(MIN_HDBLOG_ARTICLE_WIDTH, parsed));
-  }
-  function articleElement(document2) {
-    return document2?.querySelector(
-      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post"
-    ) || null;
-  }
-  function articleTitleElement(document2) {
-    const article = articleElement(document2);
-    return article?.querySelector(".entry-header .entry-title, h1.entry-title, header h1, h1") || document2?.querySelector("main#genesis-content h1.entry-title, h1.entry-title") || null;
-  }
-  function articleContentElement(document2) {
-    const article = articleElement(document2);
-    return article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || document2?.querySelector("main#genesis-content .entry-content, .entry-content") || null;
-  }
-  function isHdblogArticlePage(document2, locationObject = document2?.location) {
-    if (!document2 || !isHdblogHost3(locationObject)) return false;
-    let url;
-    try {
-      url = new URL(locationObject?.href || document2.baseURI);
-    } catch {
-      return false;
-    }
-    if (url.searchParams.has("s")) return false;
-    const title = articleTitleElement(document2);
-    const content = articleContentElement(document2);
-    if (!title || !content) return false;
-    if (title.matches("a[href]") || title.querySelector("a[href]")) return false;
-    const bodyClass = document2.body?.className || "";
-    return /\bsingle(?:-post)?\b/i.test(bodyClass) || /^\/\d+\/[^/?#]+\/?$/i.test(url.pathname) || Boolean(document2.querySelector("article.entry .entry-meta, article.post .entry-meta"));
-  }
-  function originalHdblogArticleWidth(document2, fallback) {
-    const stored = Number(document2?.body?.dataset?.x1080xHdblogOriginalArticleWidth || 0);
-    if (Number.isFinite(stored) && stored > 0) return stored;
-    const candidates = [
-      articleElement(document2),
-      document2?.querySelector("main#genesis-content, #genesis-content.content")
-    ].filter(Boolean);
-    for (const element of candidates) {
-      const measured = Number(element.getBoundingClientRect?.().width || 0);
-      if (!Number.isFinite(measured) || measured <= 0) continue;
-      const rounded = Math.round(measured * 100) / 100;
-      if (document2.body?.dataset) {
-        document2.body.dataset.x1080xHdblogOriginalArticleWidth = String(rounded);
-      }
-      return rounded;
-    }
-    return fallback;
-  }
-  function applyHdblogArticleLayout(document2, width = DEFAULT_HDBLOG_ARTICLE_WIDTH) {
-    if (!document2?.head || !document2.body) return false;
-    const safeWidth = normalizeHdblogArticleWidth(width);
-    const originalWidth = originalHdblogArticleWidth(document2, safeWidth);
-    document2.body.classList.add(ARTICLE_BODY_CLASS);
-    let style = document2.getElementById(LAYOUT_STYLE_ID);
-    if (!style) {
-      style = document2.createElement("style");
-      style.id = LAYOUT_STYLE_ID;
-      document2.head.append(style);
-    }
-    style.textContent = `
-body.${ARTICLE_BODY_CLASS} {
-  --x1080x-hdblog-article-width: ${safeWidth}px;
-  --x1080x-hdblog-original-article-width: ${originalWidth}px;
-  --x1080x-hdblog-sidebar-width: 300px;
-  --x1080x-hdblog-column-gap: 32px;
-}
-body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
-body.${ARTICLE_BODY_CLASS} article.post > .entry-header {
-  padding-bottom: 14px;
-  margin-bottom: 18px;
-  border-bottom: 1px solid rgba(0, 0, 0, .08);
-}
-body.${ARTICLE_BODY_CLASS} article.entry .entry-title,
-body.${ARTICLE_BODY_CLASS} article.post .entry-title {
-  line-height: 1.4;
-}
-body.${ARTICLE_BODY_CLASS} article.entry .entry-content,
-body.${ARTICLE_BODY_CLASS} article.post .entry-content {
-  line-height: 1.75;
-}
-body.${ARTICLE_BODY_CLASS} .site-header .wrap,
-body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
-body.${ARTICLE_BODY_CLASS} .site-inner,
-body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
-  box-sizing: border-box !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-body.${ARTICLE_BODY_CLASS} article.entry,
-body.${ARTICLE_BODY_CLASS} article.post {
-  width: 100% !important;
-  max-width: none !important;
-  box-sizing: border-box !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-  box-shadow: none !important;
-}
-body.${ARTICLE_BODY_CLASS} article.entry > .entry-header,
-body.${ARTICLE_BODY_CLASS} article.post > .entry-header,
-body.${ARTICLE_BODY_CLASS} article.entry > .entry-content,
-body.${ARTICLE_BODY_CLASS} article.post > .entry-content,
-body.${ARTICLE_BODY_CLASS} article.entry > .entry-footer,
-body.${ARTICLE_BODY_CLASS} article.post > .entry-footer,
-body.${ARTICLE_BODY_CLASS} main#genesis-content > .entry-comments,
-body.${ARTICLE_BODY_CLASS} main#genesis-content > .comment-respond,
-body.${ARTICLE_BODY_CLASS} #genesis-content.content > .entry-comments,
-body.${ARTICLE_BODY_CLASS} #genesis-content.content > .comment-respond {
-  width: min(100%, var(--x1080x-hdblog-original-article-width)) !important;
-  max-width: var(--x1080x-hdblog-original-article-width) !important;
-  box-sizing: border-box !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-body.${ARTICLE_BODY_CLASS} .nav-primary .genesis-nav-menu {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  width: 100% !important;
-  max-width: none !important;
-}
-body.${ARTICLE_BODY_CLASS} main#genesis-content,
-body.${ARTICLE_BODY_CLASS} #genesis-content.content {
-  background: #fff !important;
-  box-sizing: border-box !important;
-}
-@media (min-width: 1100px) {
-  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
-  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
-  body.${ARTICLE_BODY_CLASS} .site-inner,
-  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
-    width: min(
-      calc(var(--x1080x-hdblog-article-width) + var(--x1080x-hdblog-sidebar-width) + var(--x1080x-hdblog-column-gap)),
-      calc(100vw - 40px)
-    ) !important;
-    max-width: none !important;
-  }
-  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
-    display: grid !important;
-    grid-template-columns: minmax(0, var(--x1080x-hdblog-article-width)) var(--x1080x-hdblog-sidebar-width) !important;
-    column-gap: var(--x1080x-hdblog-column-gap) !important;
-    justify-content: center !important;
-    align-items: start !important;
-    position: static !important;
-    float: none !important;
-  }
-  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::before,
-  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap::after {
-    content: none !important;
-    display: none !important;
-  }
-  body.${ARTICLE_BODY_CLASS} main#genesis-content,
-  body.${ARTICLE_BODY_CLASS} #genesis-content.content {
-    grid-column: 1 !important;
-    grid-row: 1 !important;
-    width: 100% !important;
-    max-width: var(--x1080x-hdblog-article-width) !important;
-    min-width: 0 !important;
-    justify-self: stretch !important;
-    align-self: start !important;
-    float: none !important;
-    position: static !important;
-    left: auto !important;
-    right: auto !important;
-    transform: none !important;
-    margin: 0 !important;
-  }
-  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
-  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    grid-column: 2 !important;
-    grid-row: 1 !important;
-    width: 100% !important;
-    max-width: var(--x1080x-hdblog-sidebar-width) !important;
-    min-width: 0 !important;
-    justify-self: stretch !important;
-    align-self: start !important;
-    float: none !important;
-    position: static !important;
-    left: auto !important;
-    right: auto !important;
-    transform: none !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-}
-@media (max-width: 1099px) {
-  body.${ARTICLE_BODY_CLASS} .site-header .wrap,
-  body.${ARTICLE_BODY_CLASS} .nav-primary .wrap,
-  body.${ARTICLE_BODY_CLASS} .site-inner,
-  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
-    width: calc(100vw - 24px) !important;
-    max-width: none !important;
-  }
-  body.${ARTICLE_BODY_CLASS} .content-sidebar-wrap {
-    display: block !important;
-  }
-  body.${ARTICLE_BODY_CLASS} main#genesis-content,
-  body.${ARTICLE_BODY_CLASS} #genesis-content.content,
-  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
-  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    grid-column: auto !important;
-    grid-row: auto !important;
-    width: 100% !important;
-    max-width: none !important;
-    float: none !important;
-    position: static !important;
-    left: auto !important;
-    right: auto !important;
-    transform: none !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-  body.${ARTICLE_BODY_CLASS} .sidebar-primary,
-  body.${ARTICLE_BODY_CLASS} aside.sidebar-primary {
-    margin-top: 28px !important;
-  }
-}
-`;
-    return true;
-  }
-  function clearHdblogArticleLayout(document2) {
-    if (!document2) return false;
-    document2.body?.classList.remove(ARTICLE_BODY_CLASS);
-    if (document2.body?.dataset) delete document2.body.dataset.x1080xHdblogOriginalArticleWidth;
-    document2.getElementById(LAYOUT_STYLE_ID)?.remove();
-    return true;
-  }
-  function extractHdblogVideoCode(value) {
-    const source = normalizeText2(value);
-    if (!source) return "";
-    const uncensored = source.match(/^([A-Z0-9][A-Z0-9.+-]{1,31})\s+(\d{6}[-_]\d{2,4})\b/i);
-    if (uncensored) return `${uncensored[1]} ${uncensored[2]}`;
-    const text = source.toUpperCase();
-    const fc2 = text.match(/\bFC2[\s_-]*(PPV[\s_-]*)?(\d{5,9})\b/i);
-    if (fc2) return `FC2${fc2[1] ? "-PPV" : ""}-${fc2[2]}`;
-    const alphanumericPrefix = text.match(/\b([A-Z][A-Z0-9]{1,11})-(\d{2,8}[A-Z]?)\b/i);
-    const standard = alphanumericPrefix || text.match(/\b([A-Z]{2,12})[\s_-]?(\d{2,8}[A-Z]?)\b/i);
-    if (!standard) return "";
-    const prefix = standard[1];
-    if (["HTTP", "HTTPS", "IMG", "IMAGE", "JPG", "JPEG", "PNG", "WEBP", "ERROR"].includes(prefix)) return "";
-    return `${prefix}-${standard[2]}`;
-  }
-  function extractHdblogArticleCode(document2) {
-    try {
-      const slug = new URL(document2?.location?.href || document2?.baseURI || "").pathname.split("/").filter(Boolean).at(-1) || "";
-      const fromSlug = extractHdblogVideoCode(slug);
-      if (fromSlug) return fromSlug;
-    } catch {
-    }
-    const titleText = normalizeText2(articleTitleElement(document2)?.textContent || document2?.title);
-    const fromTitle = extractHdblogVideoCode(titleText);
-    if (fromTitle) return fromTitle;
-    const content = articleContentElement(document2);
-    if (!content) return "";
-    const text = normalizeText2(content.textContent).slice(0, 5e3);
-    const labelled = text.match(/(?:品番|品號|品号|番号|番號|code)\s*[:：]?\s*([A-Z0-9 _-]{4,30})/i);
-    return extractHdblogVideoCode(labelled?.[1] || text);
-  }
-  function hdblogAgaghhhSearchKeyword(code) {
-    const source = normalizeText2(code);
-    const fc2 = source.match(/^FC2(?:[\s_-]*PPV)?[\s_-]*(\d{5,9})$/i);
-    if (fc2) return fc2[1];
-    const uncensored = source.match(/^[A-Z0-9][A-Z0-9.+-]{1,31}\s+(\d{6}[-_]\d{2,4})$/i);
-    return uncensored?.[1] || source;
-  }
-  function buildAgaghhhSearchUrl(code) {
-    const keyword = hdblogAgaghhhSearchKeyword(code);
-    if (!keyword) return "";
-    return `${getAgaghhhOrigin()}/search?q=${encodeURIComponent(keyword)}`;
-  }
-  function openSearchTab(document2, url) {
-    if (!url) return;
-    if (typeof GM_openInTab === "function") {
-      GM_openInTab(url, { active: true, insert: true, setParent: true });
-      return;
-    }
-    document2.defaultView?.open(url, "_blank", "noopener");
-  }
-  function absoluteHttpUrl2(document2, value) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
-    try {
-      const url = new URL(String(value), document2.baseURI);
-      return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function largestSrcsetUrl2(document2, value) {
-    const candidates = String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
-      const match = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)(w|x)$/i);
-      const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
-      const amount = match ? Number(match[2]) : order;
-      const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
-      const url = absoluteHttpUrl2(document2, rawUrl);
-      return url ? { url, score } : null;
-    }).filter(Boolean).sort((a, b) => b.score - a.score);
-    return candidates[0]?.url || "";
-  }
-  function thumbnailUrl(document2, image) {
-    if (!image) return "";
-    const values = [
-      image.getAttribute("data-orig-file"),
-      image.getAttribute("data-original"),
-      image.getAttribute("data-lazy-src"),
-      image.getAttribute("data-src"),
-      largestSrcsetUrl2(document2, image.getAttribute("data-srcset")),
-      largestSrcsetUrl2(document2, image.getAttribute("data-lazy-srcset")),
-      largestSrcsetUrl2(document2, image.getAttribute("srcset")),
-      image.currentSrc,
-      image.getAttribute("src")
-    ];
-    for (const value of values) {
-      const url = absoluteHttpUrl2(document2, value);
-      if (url) return url;
-    }
-    return "";
-  }
-  function isPixhostImageUrl(value, baseUrl) {
-    try {
-      const url = new URL(value, baseUrl);
-      return PIXHOST_IMAGE_HOST_PATTERN.test(url.hostname) && /^\/images\//i.test(url.pathname);
-    } catch {
-      return false;
-    }
-  }
-  function displayedPixhostImageUrl(document2, image) {
-    if (!image || image.dataset.x1080xPreviewLarge !== "1") return "";
-    const anchorHref = absoluteHttpUrl2(document2, image.closest("a[href]")?.getAttribute("href"));
-    const candidates = [image.currentSrc, image.getAttribute("src"), anchorHref];
-    for (const value of candidates) {
-      const url = absoluteHttpUrl2(document2, value);
-      if (url && isPixhostImageUrl(url, document2.baseURI)) return url;
-    }
-    return "";
-  }
-  function textNodesUnder2(root) {
-    const view = root.ownerDocument.defaultView;
-    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
-    const walker = root.ownerDocument.createTreeWalker(root, showText);
-    const nodes = [];
-    let node = walker.nextNode();
-    while (node) {
-      const parent = node.parentElement;
-      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
-      node = walker.nextNode();
-    }
-    return nodes;
-  }
-  function lowestCommonAncestorWithin(first, second, limit) {
-    if (!first || !second || !limit) return null;
-    const ancestors = /* @__PURE__ */ new Set();
-    let current = first.parentNode;
-    while (current) {
-      ancestors.add(current);
-      if (current === limit) break;
-      current = current.parentNode;
-    }
-    current = second.parentNode;
-    while (current) {
-      if (ancestors.has(current)) return current;
-      if (current === limit) break;
-      current = current.parentNode;
-    }
-    return null;
-  }
-  function directChildContaining(ancestor, node) {
-    let current = node;
-    while (current && current.parentNode !== ancestor) current = current.parentNode;
-    return current?.parentNode === ancestor ? current : null;
-  }
-  function markDownloadAreaNode(document2, node) {
-    if (!node) return false;
-    if (node.nodeType === 1) {
-      node.setAttribute(DOWNLOAD_HIDDEN_ATTR, "1");
-      node.style.setProperty("display", "none", "important");
-      return true;
-    }
-    if (node.nodeType === 3 && normalizeText2(node.nodeValue)) {
-      const wrapper = document2.createElement("span");
-      wrapper.setAttribute(DOWNLOAD_HIDDEN_ATTR, "1");
-      wrapper.setAttribute(DOWNLOAD_WRAPPER_ATTR, "1");
-      wrapper.style.setProperty("display", "none", "important");
-      node.parentNode?.insertBefore(wrapper, node);
-      wrapper.append(node);
-      return true;
-    }
-    return false;
-  }
-  function clearHdblogDownloadAreaMarkers(document2) {
-    if (!document2) return;
-    [...document2.querySelectorAll(`[${DOWNLOAD_HIDDEN_ATTR}="1"]`)].forEach((element) => {
-      if (element.getAttribute(DOWNLOAD_WRAPPER_ATTR) === "1") {
-        element.replaceWith(...element.childNodes);
-        return;
-      }
-      element.style.removeProperty("display");
-      element.removeAttribute(DOWNLOAD_HIDDEN_ATTR);
-    });
-  }
-  function applyHdblogDownloadAreaVisibility(document2, visible = true) {
-    if (!document2) return 0;
-    clearHdblogDownloadAreaMarkers(document2);
-    if (visible) return 0;
-    const content = articleContentElement(document2);
-    if (!content) return 0;
-    const nodes = textNodesUnder2(content);
-    const start = nodes.find((node) => DOWNLOAD_SECTION_LABEL_PATTERN.test(normalizeText2(node.nodeValue)));
-    if (!start) return 0;
-    const preview = nodes.find((node) => isAfter2(start, node) && PREVIEW_LABEL_PATTERN.test(normalizeText2(node.nodeValue)));
-    if (!preview) return 0;
-    const common = lowestCommonAncestorWithin(start, preview, content);
-    if (!common) return 0;
-    const first = directChildContaining(common, start);
-    const stop = directChildContaining(common, preview);
-    if (!first || !stop || first === stop) return 0;
-    let hidden = 0;
-    let current = first;
-    while (current && current !== stop) {
-      const next = current.nextSibling;
-      if (markDownloadAreaNode(document2, current)) hidden += 1;
-      current = next;
-    }
-    return hidden;
-  }
-  function isAfter2(reference, node) {
-    return Boolean(reference?.compareDocumentPosition(node) & 4);
-  }
-  function previewRange(content) {
-    const nodes = textNodesUnder2(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText2(node.nodeValue)));
-    if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter2(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText2(node.nodeValue))) || null;
-    return { marker, boundary };
-  }
-  function inPreviewRange(range, node) {
-    if (!range || !isAfter2(range.marker, node)) return false;
-    return !range.boundary || !isAfter2(range.boundary, node);
-  }
-  function collectHdblogPixhostPreviewImages(document2) {
-    const content = articleContentElement(document2);
-    if (!content) return [];
-    const range = previewRange(content);
-    const seen = /* @__PURE__ */ new Set();
-    const candidates = [];
-    if (range) {
-      candidates.push(
-        ...[...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange(range, anchor)).map((anchor) => {
-          const image = anchor.querySelector("img");
-          if (!image) return null;
-          const href = absoluteHttpUrl2(document2, anchor.getAttribute("href"));
-          const pixhostShowUrl = isPixhostShowUrl(href, document2.baseURI) ? href : "";
-          const directUrl = displayedPixhostImageUrl(document2, image);
-          if (!pixhostShowUrl && !directUrl) return null;
-          return {
-            image,
-            pixhostShowUrl,
-            thumbUrl: thumbnailUrl(document2, image),
-            directUrl,
-            referer: document2.baseURI
-          };
-        }).filter(Boolean)
-      );
-    }
-    candidates.push(
-      ...[...content.querySelectorAll("img[" + JAVFREE_PREVIEW_ATTR + "]")].map((image) => {
-        const directUrl = absoluteHttpUrl2(document2, image.getAttribute(JAVFREE_PREVIEW_ATTR));
-        if (!directUrl) return null;
-        return {
-          image,
-          pixhostShowUrl: "",
-          thumbUrl: directUrl,
-          directUrl,
-          referer: image.getAttribute(PREVIEW_REFERER_ATTR2) || "https://javfree.me/"
-        };
-      }).filter(Boolean)
-    );
-    return candidates.filter((candidate) => {
-      const key = candidate.pixhostShowUrl || candidate.directUrl;
-      return !seen.has(key) && seen.add(key);
-    }).slice(0, 24);
-  }
-  function hdblogImageFilename(code, index, total, extension = "jpg") {
-    const safeCode = normalizeText2(code).replace(/[<>:"/\\|?*]/g, "-");
-    const safeExtension = String(extension || "jpg").replace(/^\./, "").toLowerCase();
-    const suffix = total > 1 ? `-${index + 1}` : "";
-    return `${safeCode}${suffix}.${safeExtension || "jpg"}`;
-  }
-  function extensionFromUrl(value) {
-    try {
-      const match = new URL(value).pathname.match(/\.((?:jpe?g|png|webp|gif|avif))$/i);
-      return match?.[1]?.toLowerCase().replace("jpeg", "jpg") || "";
-    } catch {
-      return "";
-    }
-  }
-  function extensionFromBlob2(blob, url) {
-    const type = String(blob?.type || "").toLowerCase();
-    if (type.includes("jpeg")) return "jpg";
-    if (type.includes("png")) return "png";
-    if (type.includes("webp")) return "webp";
-    if (type.includes("gif")) return "gif";
-    if (type.includes("avif")) return "avif";
-    return extensionFromUrl(url) || "jpg";
-  }
-  function requestImageBlob2(url, referer, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    return new Promise((resolve, reject) => {
-      if (typeof gmRequest2 !== "function") {
-        reject(new Error("\u5F53\u524D\u6CB9\u7334\u73AF\u5883\u4E0D\u652F\u6301 GM_xmlhttpRequest\u3002"));
-        return;
-      }
-      gmRequest2({
-        method: "GET",
-        url,
-        responseType: "blob",
-        timeout: REQUEST_TIMEOUT4,
-        headers: referer ? { Referer: referer } : void 0,
-        onload: (response) => {
-          if (response.status < 200 || response.status >= 300 || !response.response) {
-            reject(new Error(`\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
-            return;
-          }
-          resolve(response.response);
-        },
-        onerror: () => reject(new Error("\u56FE\u7247\u8BF7\u6C42\u5931\u8D25\u3002")),
-        ontimeout: () => reject(new Error(`\u56FE\u7247\u8BF7\u6C42\u8D85\u65F6\uFF08${REQUEST_TIMEOUT4 / 1e3} \u79D2\uFF09\u3002`))
-      });
-    });
-  }
-  function saveBlob2(document2, blob, name) {
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document2.createElement("a");
-    anchor.hidden = true;
-    anchor.download = name;
-    anchor.href = objectUrl;
-    document2.body.append(anchor);
-    try {
-      anchor.click();
-    } finally {
-      anchor.remove();
-      document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    }
-  }
-  async function resolveCandidateUrl(document2, candidate, gmRequest2) {
-    const displayed = displayedPixhostImageUrl(document2, candidate.image);
-    if (displayed) return displayed;
-    if (!candidate.pixhostShowUrl) return candidate.directUrl;
-    return resolvePixhostShowUrl(
-      document2,
-      candidate.pixhostShowUrl,
-      candidate.thumbUrl,
-      gmRequest2
-    );
-  }
-  async function downloadHdblogArticleImages(button, document2, locationObject, gmRequest2, initialCandidates = []) {
-    const view = document2.defaultView;
-    const resetButton = (delay = 3e3) => {
-      view?.setTimeout(() => {
-        renderDownloadIcon(button);
-        button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
-      }, delay);
-    };
-    const showStatus = (text, detail = "") => {
-      button.disabled = false;
-      button.textContent = text;
-      if (detail) button.title = detail;
-      resetButton();
-    };
-    const code = extractHdblogArticleCode(document2);
-    if (!code) {
-      showStatus("\u672A\u8BC6\u522B\u756A\u53F7", "\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\uFF0C\u672A\u5F00\u59CB\u4E0B\u8F7D\u3002");
-      return;
-    }
-    const liveCandidates = collectHdblogPixhostPreviewImages(document2);
-    const candidateMap = /* @__PURE__ */ new Map();
-    [...initialCandidates, ...liveCandidates].forEach((candidate) => {
-      const key = candidate?.pixhostShowUrl || candidate?.directUrl || candidate?.thumbUrl;
-      if (key && !candidateMap.has(key)) candidateMap.set(key, candidate);
-    });
-    const candidates = [...candidateMap.values()];
-    if (!candidates.length) {
-      showStatus("\u65E0 Preview", "Preview \u533A\u6CA1\u6709\u627E\u5230 Pixhost show \u56FE\u7247\u3002");
-      return;
-    }
-    const { standard, fourK } = partitionPreviewCandidates(candidates);
-    const phases = standard.length ? [
-      { candidates: standard, label: "\u666E\u901A Preview", fallback: false },
-      ...fourK.length ? [{ candidates: fourK, label: "4K Preview", fallback: true }] : []
-    ] : [{ candidates: fourK, label: "4K Preview", fallback: false }];
-    const endDownloadGuard = beginDownloadGuard(document2, {
-      enabled: isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY)
-    });
-    button.disabled = true;
-    const failures = [];
-    let skipped = 0;
-    let downloaded = 0;
-    let usedFourKFallback = false;
-    try {
-      for (const [phaseIndex, phase] of phases.entries()) {
-        const hasFallbackPhase = phaseIndex < phases.length - 1;
-        button.textContent = phase.fallback ? "\u56DE\u9000\u89E3\u6790 4K Preview\u2026" : "\u89E3\u6790 Preview\u2026";
-        const phaseFailures = [];
-        let phaseSkipped = 0;
-        const resolved = [];
-        const seen = /* @__PURE__ */ new Set();
-        for (const candidate of phase.candidates) {
-          try {
-            const url = await resolveCandidateUrl(document2, candidate, gmRequest2);
-            if (!url) {
-              if (candidate.pixhostShowUrl) phaseSkipped += 1;
-              continue;
-            }
-            if (!seen.has(url)) {
-              seen.add(url);
-              resolved.push({ url, candidate });
-            }
-          } catch (error) {
-            phaseFailures.push(error?.message || "Pixhost \u5927\u56FE\u5730\u5740\u89E3\u6790\u5931\u8D25");
-          }
-        }
-        if (!resolved.length) {
-          if (hasFallbackPhase) continue;
-          skipped += phaseSkipped;
-          failures.push(...phaseFailures);
-          break;
-        }
-        let phaseDownloaded = 0;
-        const downloadFailures = [];
-        let downloadSkipped = 0;
-        for (const [index, item] of resolved.entries()) {
-          const { url, candidate } = item;
-          button.textContent = phase.fallback ? `4K \u56DE\u9000\u4E0B\u8F7D ${index + 1}/${resolved.length}` : `\u4E0B\u8F7D ${index + 1}/${resolved.length}`;
-          try {
-            const blob = await requestImageBlob2(
-              url,
-              candidate?.referer || locationObject?.href,
-              gmRequest2
-            );
-            const extension = extensionFromBlob2(blob, url);
-            saveBlob2(
-              document2,
-              blob,
-              hdblogImageFilename(code, downloaded + phaseDownloaded, resolved.length, extension)
-            );
-            phaseDownloaded += 1;
-          } catch (error) {
-            const message = error?.message || "\u4E0B\u8F7D\u5931\u8D25";
-            const unavailable = Boolean(candidate?.pixhostShowUrl) && /HTTP\s+(?:404|410)\b/i.test(message);
-            if (unavailable) {
-              downloadSkipped += 1;
-              continue;
-            }
-            downloadFailures.push(`${index + 1}. ${message}`);
-          }
-        }
-        if (phaseDownloaded > 0) {
-          downloaded += phaseDownloaded;
-          skipped += phaseSkipped + downloadSkipped;
-          failures.push(...phaseFailures, ...downloadFailures);
-          usedFourKFallback = phase.fallback;
-          break;
-        }
-        if (hasFallbackPhase) continue;
-        skipped += phaseSkipped + downloadSkipped;
-        failures.push(...phaseFailures, ...downloadFailures);
-        break;
-      }
-      if (!downloaded && isHdblogJavfreePreviewFallbackEnabled()) {
-        try {
-          button.textContent = "\u5C1D\u8BD5 JavFree Preview\u2026";
-          const javfree = await fetchJavfreePreviewForCode(code, gmRequest2, document2);
-          const javfreeUrl = javfree.imageUrls?.[0] || "";
-          if (javfreeUrl) {
-            const blob = await requestImageBlob2(
-              javfreeUrl,
-              javfree.referer || javfree.articleUrl || "https://javfree.me/",
-              gmRequest2
-            );
-            const extension = extensionFromBlob2(blob, javfreeUrl);
-            saveBlob2(document2, blob, hdblogImageFilename(code, 0, 1, extension));
-            downloaded = 1;
-            failures.length = 0;
-            skipped = 0;
-          }
-        } catch (error) {
-          failures.push("JavFree\uFF1A" + (error?.message || "Preview \u4E0B\u8F7D\u5931\u8D25"));
-        }
-      }
-      if (!downloaded && !failures.length) {
-        if (skipped) {
-          showStatus("\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview", "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002");
-          return;
-        }
-        showStatus("\u65E0\u53EF\u4E0B\u8F7D Preview", "HDblog \u4E0E JavFree \u90FD\u6CA1\u6709\u53EF\u4E0B\u8F7D\u7684 Preview\u3002");
-        return;
-      }
-    } catch (error) {
-      failures.push(error?.message || "\u4E0B\u8F7D\u5931\u8D25");
-    } finally {
-      if (button.disabled) {
-        button.disabled = false;
-        button.textContent = failures.length ? `\u5B8C\u6210\uFF08\u5931\u8D25 ${failures.length}\uFF09` : skipped ? downloaded ? `\u2713 \u5B8C\u6210\uFF08\u8DF3\u8FC7 ${skipped}\uFF09` : "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
-        if (failures.length) button.title = failures.join("\uFF1B");
-        else if (usedFourKFallback) button.title = "\u666E\u901A Preview \u4E0D\u53EF\u7528\uFF0C\u5DF2\u81EA\u52A8\u56DE\u9000\u4E0B\u8F7D 4K Preview\u3002";
-        else if (skipped) button.title = "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002";
-        resetButton();
-      }
-      endDownloadGuard();
-    }
-  }
-  function articleActions(document2) {
-    let actions = document2.getElementById("x1080x-ex-hdblog-actions");
-    if (actions) return actions;
-    const title = articleTitleElement(document2);
-    const header = title?.closest(".entry-header, header") || title?.parentElement;
-    if (!header) return null;
-    const meta = header.querySelector(".entry-meta");
-    const row = document2.createElement("div");
-    row.style.cssText = "display:flex;align-items:center;flex-wrap:wrap;gap:8px;width:100%";
-    if (meta) {
-      meta.before(row);
-      meta.style.margin = "0";
-      row.append(meta);
-    } else header.append(row);
-    actions = document2.createElement("span");
-    actions.id = "x1080x-ex-hdblog-actions";
-    actions.style.cssText = "display:inline-flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end";
-    row.append(actions);
-    return actions;
-  }
-  function installDownloadButton(document2, locationObject, gmRequest2) {
-    if (document2.getElementById(DOWNLOAD_BUTTON_ID)) return;
-    const title = articleTitleElement(document2);
-    if (!title) return;
-    const initialCandidates = collectHdblogPixhostPreviewImages(document2);
-    const button = document2.createElement("button");
-    button.id = DOWNLOAD_BUTTON_ID;
-    button.type = "button";
-    renderDownloadIcon(button);
-    button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
-    button.setAttribute("aria-label", "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE");
-    Object.assign(button.style, {
-      display: "inline-flex",
-      alignItems: "center",
-      verticalAlign: "middle",
-      margin: "0 0 4px 8px",
-      padding: "5px 8px",
-      minWidth: "34px",
-      justifyContent: "center",
-      border: "1px solid #2878c8",
-      borderRadius: "5px",
-      color: "#fff",
-      background: "#398bd4",
-      cursor: "pointer",
-      fontSize: "13px",
-      fontWeight: "600",
-      lineHeight: "20px"
-    });
-    button.addEventListener("mouseenter", () => {
-      if (!button.disabled) button.style.background = "#246eaf";
-    });
-    button.addEventListener("mouseleave", () => {
-      if (!button.disabled) button.style.background = "#398bd4";
-    });
-    button.addEventListener("click", () => void downloadHdblogArticleImages(
-      button,
-      document2,
-      locationObject,
-      gmRequest2,
-      initialCandidates
-    ));
-    button.style.margin = "0";
-    articleActions(document2)?.append(button);
-  }
-  function installAgaghhhSearchButton(document2) {
-    if (document2.getElementById(SEARCH_BUTTON_ID)) return;
-    const title = articleTitleElement(document2);
-    if (!title) return;
-    const searchButton = document2.createElement("button");
-    searchButton.id = SEARCH_BUTTON_ID;
-    searchButton.type = "button";
-    searchButton.textContent = "\u{1F50D}";
-    searchButton.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 x1080x \u641C\u7D22";
-    searchButton.setAttribute("aria-label", "\u5728 x1080x \u641C\u7D22\u5F53\u524D\u756A\u53F7");
-    Object.assign(searchButton.style, {
-      display: "inline-flex",
-      alignItems: "center",
-      verticalAlign: "middle",
-      margin: "0 0 4px 8px",
-      padding: "5px 8px",
-      minWidth: "34px",
-      justifyContent: "center",
-      border: "1px solid #2878c8",
-      borderRadius: "5px",
-      color: "#fff",
-      background: "#398bd4",
-      cursor: "pointer",
-      fontSize: "13px",
-      fontWeight: "600",
-      lineHeight: "20px"
-    });
-    searchButton.addEventListener("mouseenter", () => {
-      searchButton.style.background = "#246eaf";
-    });
-    searchButton.addEventListener("mouseleave", () => {
-      searchButton.style.background = "#398bd4";
-    });
-    searchButton.addEventListener("click", () => {
-      const url = buildAgaghhhSearchUrl(extractHdblogArticleCode(document2));
-      if (!url) {
-        document2.defaultView?.alert("\u6CA1\u6709\u8BC6\u522B\u5230\u5F71\u7247\u756A\u53F7\u3002");
-        return;
-      }
-      openSearchTab(document2, url);
-    });
-    searchButton.style.margin = "0";
-    articleActions(document2)?.append(searchButton);
-  }
-  function installCopyCodeButton(document2) {
-    if (document2.getElementById(COPY_BUTTON_ID)) return;
-    const code = extractHdblogArticleCode(document2);
-    if (!code) return;
-    const title = articleTitleElement(document2);
-    if (!title) return;
-    const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID);
-    const searchButton = document2.getElementById(SEARCH_BUTTON_ID);
-    const button = document2.createElement("button");
-    button.id = COPY_BUTTON_ID;
-    button.type = "button";
-    button.textContent = "\u{1F4CB}";
-    button.title = "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F";
-    button.setAttribute("aria-label", "\u590D\u5236\u5F53\u524D\u756A\u53F7\u5230\u526A\u5207\u677F");
-    Object.assign(button.style, {
-      display: "inline-flex",
-      alignItems: "center",
-      verticalAlign: "middle",
-      margin: "0 0 4px 8px",
-      padding: "5px 8px",
-      minWidth: "34px",
-      justifyContent: "center",
-      border: "1px solid #2878c8",
-      borderRadius: "5px",
-      color: "#fff",
-      background: "#398bd4",
-      cursor: "pointer",
-      fontSize: "13px",
-      fontWeight: "600",
-      lineHeight: "20px"
-    });
-    button.addEventListener("mouseenter", () => {
-      if (!button.disabled) button.style.background = "#246eaf";
-    });
-    button.addEventListener("mouseleave", () => {
-      if (!button.disabled) button.style.background = "#398bd4";
-    });
-    button.addEventListener("click", () => {
-      void copyCodeWithButtonFeedback(button, document2, extractHdblogArticleCode(document2));
-    });
-    button.style.margin = "0";
-    if (downloadButton) downloadButton.insertAdjacentElement("afterend", button);
-    else if (searchButton) searchButton.insertAdjacentElement("beforebegin", button);
-    else articleActions(document2)?.append(button);
-  }
-  function rawStoredWidth() {
-    if (typeof GM_getValue !== "function") return "";
-    const value = GM_getValue(HDBLOG_ARTICLE_WIDTH_KEY, "");
-    return value === null || value === void 0 ? "" : String(value).trim();
-  }
-  function readStoredWidth() {
-    const stored = rawStoredWidth();
-    return stored ? normalizeHdblogArticleWidth(stored, DEFAULT_HDBLOG_ARTICLE_WIDTH) : null;
-  }
-  function isHdblogArticleLayoutEnabled() {
-    if (typeof GM_getValue !== "function") return Boolean(rawStoredWidth());
-    const stored = GM_getValue(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY, null);
-    if (stored === null || stored === void 0) return Boolean(rawStoredWidth());
-    return stored !== false;
-  }
-  function readDownloadAreaVisible() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, true) !== false;
-  }
-  function readImageDownloadButtonVisible() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, true) !== false;
-  }
-  function isHdblogCrossSearchEnabled() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, true) !== false;
-  }
-  function isHdblogCopyCodeEnabled() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, true) !== false;
-  }
-  function isHdblogSearchFilterEnabled() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY2, true) !== false;
-  }
-  function isHdblogBrowseFilterEnabled2() {
-    if (typeof GM_getValue !== "function") return false;
-    return GM_getValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY2, false) === true;
-  }
-  function isHdblogBatchOpenEnabled() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, true) !== false;
-  }
-  function readBatchOpenIntervalMs2(key, fallback) {
-    if (typeof GM_getValue !== "function") return fallback;
-    const numeric = Number(GM_getValue(key, fallback));
-    return Number.isFinite(numeric) && numeric >= 100 && numeric <= 6e5 ? Math.round(numeric) : fallback;
-  }
-  function getHdblogBatchOpenInterval() {
-    const delayMin = readBatchOpenIntervalMs2(
-      HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2,
-      DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS
-    );
-    const delayMax = readBatchOpenIntervalMs2(
-      HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2,
-      DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS
-    );
-    if (delayMax < delayMin) {
-      return {
-        delayMin: DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS,
-        delayMax: DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS
-      };
-    }
-    return { delayMin, delayMax };
-  }
-  function isHdblogBatchOpenHistoryEnabled() {
-    if (typeof GM_getValue !== "function") return false;
-    return GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2, false) === true;
-  }
-  function isHdblogBatchOpenUnopenedOnlyEnabled() {
-    if (typeof GM_getValue !== "function") return false;
-    return GM_getValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2, false) === true;
-  }
-  function isHdblogBatchProgressLocatorEnabled() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2, true) !== false;
-  }
-  function getHdblogBatchOpenHistoryLimit() {
-    if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
-    const numeric = Number(GM_getValue(
-      HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2,
-      DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT
-    ));
-    return Number.isInteger(numeric) && numeric >= 1 && numeric <= 5e4 ? numeric : DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_LIMIT;
-  }
-  function getHdblogBatchOpenHistoryColor() {
-    if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
-    const value = String(GM_getValue(
-      HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2,
-      DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR
-    ) || "").trim();
-    return /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
-  }
-  function isHdblogPreviewExpansionEnabled() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, true) !== false;
-  }
-  function readBlockedKeywordsText() {
-    if (typeof GM_getValue !== "function") return DEFAULT_HDBLOG_BLOCKED_KEYWORDS;
-    const stored = GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY, null);
-    return stored === null || stored === void 0 ? DEFAULT_HDBLOG_BLOCKED_KEYWORDS : String(stored);
-  }
-  function normalizeBlockedKeywordsText(value) {
-    const seen = /* @__PURE__ */ new Set();
-    return String(value ?? "").split(/[\r\n,;，；]+/).map((entry) => entry.trim()).filter(Boolean).filter((entry) => {
-      const key = entry.normalize("NFKC").toLocaleLowerCase();
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).join("\n");
-  }
-  function closeHdblogSettingsPanel(document2) {
-    document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID2)?.remove();
-  }
-  function openHdblogSettingsPanel(document2 = globalThis.document) {
-    if (!document2?.body) return null;
-    closeHdblogSettingsPanel(document2);
-    const overlay = document2.createElement("div");
-    overlay.id = HDBLOG_SETTINGS_PANEL_ID2;
-    Object.assign(overlay.style, {
-      position: "fixed",
-      inset: "0",
-      zIndex: "2147483646",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      padding: "20px",
-      background: "rgba(0,0,0,.42)",
-      boxSizing: "border-box"
-    });
-    const panel = document2.createElement("form");
-    Object.assign(panel.style, {
-      width: "min(560px, 100%)",
-      maxHeight: "calc(100vh - 40px)",
-      overflow: "auto",
-      padding: "22px",
-      borderRadius: "10px",
-      background: "#fff",
-      color: "#222",
-      boxShadow: "0 18px 60px rgba(0,0,0,.28)",
-      boxSizing: "border-box",
-      font: '14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    });
-    panel.innerHTML = `
-    <h2 style="margin:0 0 18px;font-size:20px">HDBLOG \u8BBE\u7F6E</h2>
-    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
-      <div style="font-weight:700;margin-bottom:10px">\u6587\u7AE0\u5E03\u5C40</div>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
-        <input data-setting="layout-enabled" type="checkbox">
-        \u542F\u7528\u6587\u7AE0\u5BBD\u5EA6\u589E\u5F3A
-      </label>
-      <label data-width-row style="display:block;margin-left:24px">
-        <span style="display:block;font-weight:600;margin-bottom:6px">\u6587\u7AE0\u4E3B\u5185\u5BB9\u533A\u5BBD\u5EA6\uFF08px\uFF09</span>
-        <input data-setting="width" type="number" min="${MIN_HDBLOG_ARTICLE_WIDTH}" max="${MAX_HDBLOG_ARTICLE_WIDTH}" step="1"
-          placeholder="${DEFAULT_HDBLOG_ARTICLE_WIDTH}"
-          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
-        <small style="display:block;margin-top:5px;color:#666">\u5173\u95ED\u5F00\u5173\u65F6\u5B8C\u5168\u4F7F\u7528\u7F51\u7AD9\u539F\u59CB\u5E03\u5C40\uFF1B\u5F00\u542F\u540E\u53EA\u6269\u5C55\u767D\u8272\u4E3B\u5185\u5BB9\u533A\u57DF\u3002</small>
-      </label>
-    </div>
-    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
-      <div style="font-weight:700;margin-bottom:10px">\u6587\u7AE0\u9875\u529F\u80FD</div>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
-        <input data-setting="show-downloads" type="checkbox">
-        \u663E\u793A Btfile / katfile / Freedl / Rapidgator \u7F51\u76D8\u4E0B\u8F7D\u533A\u57DF
-      </label>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
-        <input data-setting="show-image-download" type="checkbox">
-        \u663E\u793A\u6587\u7AE0\u4FE1\u606F\u680F\u53F3\u4FA7\u7684\u56FE\u7247\u4E0B\u8F7D\u6309\u94AE
-      </label>
-      <label data-download-guard-row style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
-        <input data-setting="download-guard" type="checkbox" style="margin-top:3px">
-        <span>\u4E0B\u8F7D\u65F6\u6807\u8BB0\u6807\u7B7E\u9875\u5E76\u5728\u5173\u95ED\u65F6\u63D0\u9192<small style="display:block;margin-top:2px;color:#666">\u4EC5\u4E0B\u8F7D\u8FDB\u884C\u4E2D\u751F\u6548\uFF0C\u5B8C\u6210\u540E\u81EA\u52A8\u6062\u590D\u6807\u7B7E\u6807\u9898\u5E76\u89E3\u9664\u5173\u95ED\u63D0\u793A\u3002</small></span>
-      </label>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
-        <input data-setting="cross-search" type="checkbox">
-        \u663E\u793A\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF0C\u641C\u7D22 x1080x\uFF09
-      </label>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
-        <input data-setting="copy-code" type="checkbox">
-        \u663E\u793A\u590D\u5236\u756A\u53F7\u6309\u94AE\uFF08\u{1F4CB}\uFF09
-      </label>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
-        <input data-setting="expand-preview" type="checkbox">
-        \u81EA\u52A8\u5C55\u5F00 Preview \u5927\u56FE\uFF08\u542B Pixhost / refer \u89E3\u6790\uFF09
-      </label>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin:0 0 10px 24px">
-        <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
-        <span>JavFree Preview \u540E\u5907\u6E90<small style="display:block;margin-top:2px;color:#666">\u5F53\u524D\u6587\u7AE0\u6CA1\u6709\u53EF\u7528 Preview \u6216 Pixhost \u5DF2\u5931\u6548\u65F6\uFF0C\u6309\u756A\u53F7\u4ECE javfree.me \u8865\u5145\u7B2C 2 \u5F20 Preview\u3002</small></span>
-      </label>
-      <label style="display:flex;align-items:flex-start;gap:9px">
-        <input data-setting="deleted-javfree-search" type="checkbox" style="margin-top:3px">
-        <span>\u5DF2\u5220\u9664\u6587\u7AE0\u81EA\u52A8\u641C\u7D22 JavFree<small style="display:block;margin-top:2px;color:#666">\u8BBF\u95EE HDblog \u5DF2\u5220\u9664\u7684\u5386\u53F2\u6587\u7AE0\u65F6\uFF0C\u81EA\u52A8\u65B0\u5F00\u6807\u7B7E\u641C\u7D22\u540C\u756A\u53F7\u7684 javfree.me\u3002</small></span>
-      </label>
-    </div>
-    <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
-      <div style="font-weight:700;margin-bottom:10px">\u641C\u7D22 / \u5217\u8868\u9875\u529F\u80FD</div>
-      <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
-        <input data-setting="batch-open" type="checkbox">
-        \u663E\u793A\u201C\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\u201D\u6309\u94AE
-      </label>
-      <div data-batch-open-interval-row style="margin:0 0 10px 24px">
-        <span style="display:block;font-weight:600;margin-bottom:6px">\u4E3B\u9898\u6253\u5F00\u95F4\u9694\uFF08\u79D2\uFF09</span>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <input data-setting="batch-open-interval-min" type="number" min="0.1" max="600" step="0.1" aria-label="\u6700\u5C0F\u95F4\u9694"
-            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
-          <span>\u2014</span>
-          <input data-setting="batch-open-interval-max" type="number" min="0.1" max="600" step="0.1" aria-label="\u6700\u5927\u95F4\u9694"
-            style="width:88px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
-          <button type="button" data-action="reset-batch-open-interval" style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">\u6062\u590D\u9ED8\u8BA4</button>
-        </div>
-        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u4E2A\u4E3B\u9898\u5728\u8BE5\u8303\u56F4\u5185\u968F\u673A\u7B49\u5F85\uFF1B\u9ED8\u8BA4 0.8\u20131.6 \u79D2\u3002\u5B9A\u671F\u957F\u505C\u987F\u89C4\u5219\u4FDD\u6301\u4E0D\u53D8\u3002</small>
-      </div>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
-        <input data-setting="batch-open-history" type="checkbox" style="margin-top:3px">
-        <span><strong>\u4FDD\u5B58\u6279\u91CF\u6253\u5F00\u8BB0\u5F55</strong><small style="display:block;margin-top:2px;color:#666">\u8BB0\u5F55\u811A\u672C\u6279\u91CF\u6253\u5F00\u8FC7\u7684\u6587\u7AE0\u5E76\u6301\u4E45\u6807\u8BB0\uFF1B\u624B\u52A8\u8BBF\u95EE\u8FC7\u7684\u94FE\u63A5\u4E5F\u4F7F\u7528\u76F8\u540C\u989C\u8272\u663E\u793A\u3002</small></span>
-      </label>
-      <div data-batch-open-history-row style="margin:0 0 13px 24px">
-        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
-          <input data-setting="batch-open-unopened-only" type="checkbox" style="margin-top:3px">
-          <span><strong>\u53EA\u6253\u5F00\u672A\u6253\u5F00\u7684\u4E3B\u9898</strong><small style="display:block;margin-top:2px;color:#666">\u6279\u91CF\u6253\u5F00\u65F6\u8DF3\u8FC7\u5DF2\u7ECF\u4FDD\u5B58\u5728\u201C\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u201D\u4E2D\u7684\u6587\u7AE0\u3002</small></span>
-        </label>
-        <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
-          <input data-setting="batch-progress-locator" type="checkbox" style="margin-top:3px">
-          <span><strong>\u663E\u793A\u201C\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u201D\u6309\u94AE</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u6279\u91CF\u6253\u5F00\u6309\u94AE\u65C1\u663E\u793A\u5165\u53E3\uFF0C\u8DF3\u5230\u5DF2\u6253\u5F00\u8BB0\u5F55\u4E0E\u672A\u6253\u5F00\u6587\u7AE0\u76F8\u90BB\u7684\u5206\u9875\u4F4D\u7F6E\u3002</small></span>
-        </label>
-        <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-weight:600">\u6700\u591A\u4FDD\u5B58</span>
-          <input data-setting="batch-open-history-limit" type="number" min="1" max="50000" step="1" aria-label="\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u4FDD\u5B58\u6761\u6570"
-            style="width:100px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
-          <span>\u6761</span>
-        </label>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <span style="font-weight:600">\u8BBF\u95EE\u6807\u8BB0\u989C\u8272</span>
-          <input data-setting="batch-open-history-color" type="color" aria-label="\u8BBF\u95EE\u6807\u8BB0\u989C\u8272"
-            style="width:44px;height:32px;padding:2px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer">
-          <button type="button" data-action="reset-batch-open-history-color"
-            style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">\u8FD8\u539F\u9ED8\u8BA4\u7D2B\u8272</button>
-        </div>
-        <small style="display:block;margin-top:5px;color:#666">\u9ED8\u8BA4 5000 \u6761\uFF0C\u9ED8\u8BA4\u989C\u8272 #bd10e0\uFF1B\u8D85\u8FC7\u4E0A\u9650\u81EA\u52A8\u5220\u9664\u6700\u65E7\u8BB0\u5F55\u3002</small>
-      </div>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
-        <input data-setting="search-filter" type="checkbox" style="margin-top:3px">
-        <span><strong>\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u4E0E\u5355\u7ED3\u679C\u81EA\u52A8\u8DF3\u8F6C</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u4F5C\u7528\u4E8E hdblog \u641C\u7D22\u7ED3\u679C\u9875\u3002</small></span>
-      </label>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
-        <input data-setting="browse-filter" type="checkbox" style="margin-top:3px">
-        <span><strong>\u6B63\u5E38\u6D4F\u89C8\u5173\u952E\u8BCD\u5C4F\u853D</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u9996\u9875\u3001\u5206\u7C7B\u3001\u6807\u7B7E\u548C\u5206\u9875\u7B49\u6587\u7AE0\u5217\u8868\u4E2D\u6309\u76F8\u540C\u5173\u952E\u8BCD\u9690\u85CF\u4E3B\u9898\uFF1B\u4E0D\u5F71\u54CD\u6587\u7AE0\u8BE6\u60C5\u9875\u3002</small></span>
-      </label>
-      <label data-keywords-row style="display:block;margin-left:24px">
-        <span style="display:block;font-weight:600;margin-bottom:6px">\u5C4F\u853D\u5173\u952E\u8BCD\uFF08\u641C\u7D22 / \u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF09</span>
-        <textarea data-setting="keywords" rows="5" placeholder="\u7559\u7A7A = \u4E0D\u5C4F\u853D"
-          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px;resize:vertical"></textarea>
-        <small style="display:block;margin-top:5px;color:#666">\u6BCF\u884C\u4E00\u4E2A\uFF0C\u4E5F\u53EF\u7528\u9017\u53F7\u6216\u5206\u53F7\u5206\u9694\uFF1B\u641C\u7D22\u4E0E\u6B63\u5E38\u6D4F\u89C8\u5171\u7528\uFF0C\u8BE5\u89C4\u5219\u4E5F\u4F9B x1080x \u7684 hdblog Preview \u641C\u7D22\u590D\u7528\u3002</small>
-      </label>
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px">
-      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
-      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
-    </div>`;
-    organizeSettingsPanel(panel, [
-      {
-        "key": "layout",
-        "title": "\u6587\u7AE0\u5E03\u5C40",
-        "description": "\u4E3B\u5185\u5BB9\u533A\u663E\u793A\u5BBD\u5EA6\u4E0E\u9875\u9762\u5E03\u5C40",
-        "settings": [
-          "layout-enabled",
-          "width"
-        ]
-      },
-      {
-        "key": "download",
-        "title": "\u4E0B\u8F7D\u4E0E\u6309\u94AE",
-        "description": "\u4E0B\u8F7D\u533A\u57DF\u3001\u56FE\u7247\u4E0B\u8F7D\u548C\u5E38\u7528\u64CD\u4F5C",
-        "settings": [
-          "show-downloads",
-          "show-image-download",
-          "download-guard",
-          "cross-search",
-          "copy-code"
-        ]
-      },
-      {
-        "key": "preview",
-        "title": "\u9884\u89C8\u4E0E\u4FEE\u590D",
-        "description": "\u56FE\u7247\u5C55\u5F00\u4E0E\u5931\u6548\u6587\u7AE0\u7684\u540E\u5907\u641C\u7D22",
-        "settings": [
-          "expand-preview",
-          "javfree-preview-fallback",
-          "deleted-javfree-search"
-        ]
-      },
-      {
-        "key": "batch",
-        "title": "\u6279\u91CF\u6253\u5F00",
-        "description": "\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u4E3B\u9898\u4E0E\u65F6\u95F4\u95F4\u9694",
-        "settings": [
-          "batch-open",
-          "batch-open-interval-min"
-        ]
-      },
-      {
-        "key": "history",
-        "title": "\u6D4F\u89C8\u8BB0\u5F55",
-        "description": "\u4FDD\u5B58\u5DF2\u8BBF\u95EE\u7684\u4E3B\u9898\u3001\u8FDB\u5EA6\u5B9A\u4F4D\u548C\u989C\u8272\u6807\u8BB0",
-        "settings": [
-          "batch-open-history",
-          "batch-open-unopened-only"
-        ]
-      },
-      {
-        "key": "filter",
-        "title": "\u5173\u952E\u8BCD\u8FC7\u6EE4",
-        "description": "\u641C\u7D22\u9875\u548C\u666E\u901A\u5217\u8868\u9875\u7684\u5173\u952E\u8BCD\u5C4F\u853D",
-        "settings": [
-          "search-filter",
-          "browse-filter",
-          "keywords"
-        ]
-      }
-    ]);
-    const layoutInput = panel.querySelector('[data-setting="layout-enabled"]');
-    const widthInput = panel.querySelector('[data-setting="width"]');
-    const downloadsInput = panel.querySelector('[data-setting="show-downloads"]');
-    const imageDownloadInput = panel.querySelector('[data-setting="show-image-download"]');
-    const downloadGuardInput = panel.querySelector('[data-setting="download-guard"]');
-    const crossSearchInput = panel.querySelector('[data-setting="cross-search"]');
-    const copyCodeInput = panel.querySelector('[data-setting="copy-code"]');
-    const previewInput = panel.querySelector('[data-setting="expand-preview"]');
-    const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
-    const deletedJavfreeSearchInput = panel.querySelector('[data-setting="deleted-javfree-search"]');
-    const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
-    const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
-    const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
-    const batchIntervalResetButton = panel.querySelector('[data-action="reset-batch-open-interval"]');
-    const batchHistoryInput = panel.querySelector('[data-setting="batch-open-history"]');
-    const batchUnopenedOnlyInput = panel.querySelector('[data-setting="batch-open-unopened-only"]');
-    const batchProgressLocatorInput = panel.querySelector('[data-setting="batch-progress-locator"]');
-    const batchHistoryLimitInput = panel.querySelector('[data-setting="batch-open-history-limit"]');
-    const batchHistoryColorInput = panel.querySelector('[data-setting="batch-open-history-color"]');
-    const batchHistoryColorResetButton = panel.querySelector('[data-action="reset-batch-open-history-color"]');
-    const searchFilterInput = panel.querySelector('[data-setting="search-filter"]');
-    const browseFilterInput = panel.querySelector('[data-setting="browse-filter"]');
-    const keywordsInput = panel.querySelector('[data-setting="keywords"]');
-    layoutInput.checked = isHdblogArticleLayoutEnabled();
-    widthInput.value = rawStoredWidth() || String(DEFAULT_HDBLOG_ARTICLE_WIDTH);
-    downloadsInput.checked = readDownloadAreaVisible();
-    imageDownloadInput.checked = readImageDownloadButtonVisible();
-    downloadGuardInput.checked = isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY);
-    crossSearchInput.checked = isHdblogCrossSearchEnabled();
-    copyCodeInput.checked = isHdblogCopyCodeEnabled();
-    previewInput.checked = isHdblogPreviewExpansionEnabled();
-    javfreePreviewInput.checked = isHdblogJavfreePreviewFallbackEnabled();
-    deletedJavfreeSearchInput.checked = isHdblogDeletedJavfreeSearchEnabled();
-    batchOpenInput.checked = isHdblogBatchOpenEnabled();
-    const batchInterval = getHdblogBatchOpenInterval();
-    batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
-    batchIntervalMaxInput.value = String(batchInterval.delayMax / 1e3);
-    batchHistoryInput.checked = isHdblogBatchOpenHistoryEnabled();
-    batchUnopenedOnlyInput.checked = isHdblogBatchOpenUnopenedOnlyEnabled();
-    batchProgressLocatorInput.checked = isHdblogBatchProgressLocatorEnabled();
-    batchHistoryLimitInput.value = String(getHdblogBatchOpenHistoryLimit());
-    batchHistoryColorInput.value = getHdblogBatchOpenHistoryColor();
-    searchFilterInput.checked = isHdblogSearchFilterEnabled();
-    browseFilterInput.checked = isHdblogBrowseFilterEnabled2();
-    keywordsInput.value = readBlockedKeywordsText();
-    const syncDependentFields = () => {
-      widthInput.disabled = !layoutInput.checked;
-      downloadGuardInput.disabled = !imageDownloadInput.checked;
-      keywordsInput.disabled = !searchFilterInput.checked && !browseFilterInput.checked;
-      javfreePreviewInput.disabled = !previewInput.checked;
-      const batchIntervalDisabled = !batchOpenInput.checked;
-      batchIntervalMinInput.disabled = batchIntervalDisabled;
-      batchIntervalMaxInput.disabled = batchIntervalDisabled;
-      batchIntervalResetButton.disabled = batchIntervalDisabled;
-      batchHistoryInput.disabled = batchIntervalDisabled;
-      batchUnopenedOnlyInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
-      batchProgressLocatorInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
-      batchHistoryLimitInput.disabled = batchIntervalDisabled || !batchHistoryInput.checked;
-    };
-    syncDependentFields();
-    layoutInput.addEventListener("change", syncDependentFields);
-    imageDownloadInput.addEventListener("change", syncDependentFields);
-    searchFilterInput.addEventListener("change", syncDependentFields);
-    browseFilterInput.addEventListener("change", syncDependentFields);
-    previewInput.addEventListener("change", syncDependentFields);
-    batchOpenInput.addEventListener("change", syncDependentFields);
-    batchHistoryInput.addEventListener("change", syncDependentFields);
-    batchIntervalResetButton.addEventListener("click", () => {
-      batchIntervalMinInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MIN_MS / 1e3);
-      batchIntervalMaxInput.value = String(DEFAULT_HDBLOG_BATCH_OPEN_INTERVAL_MAX_MS / 1e3);
-      batchIntervalResetButton.blur();
-    });
-    batchHistoryColorResetButton.addEventListener("click", () => {
-      batchHistoryColorInput.value = DEFAULT_HDBLOG_BATCH_OPEN_HISTORY_COLOR;
-      batchHistoryColorResetButton.blur();
-    });
-    panel.querySelector('[data-action="cancel"]')?.addEventListener("click", () => closeHdblogSettingsPanel(document2));
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) closeHdblogSettingsPanel(document2);
-    });
-    panel.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const widthText = widthInput.value.trim();
-      let numeric = DEFAULT_HDBLOG_ARTICLE_WIDTH;
-      if (widthText) {
-        numeric = Number.parseInt(widthText, 10);
-        if (!Number.isFinite(numeric) || numeric < MIN_HDBLOG_ARTICLE_WIDTH || numeric > MAX_HDBLOG_ARTICLE_WIDTH) {
-          document2.defaultView?.alert(`\u8BF7\u8F93\u5165 ${MIN_HDBLOG_ARTICLE_WIDTH}-${MAX_HDBLOG_ARTICLE_WIDTH} \u4E4B\u95F4\u7684\u6574\u6570\u3002`);
-          widthInput.focus();
-          return;
-        }
-      }
-      const batchIntervalMinSeconds = Number(batchIntervalMinInput.value);
-      const batchIntervalMaxSeconds = Number(batchIntervalMaxInput.value);
-      if (!Number.isFinite(batchIntervalMinSeconds) || !Number.isFinite(batchIntervalMaxSeconds) || batchIntervalMinSeconds < 0.1 || batchIntervalMaxSeconds > 600 || batchIntervalMaxSeconds < batchIntervalMinSeconds) {
-        document2.defaultView?.alert("\u6279\u91CF\u6253\u5F00\u4E3B\u9898\u95F4\u9694\u8BF7\u8F93\u5165 0.1\u2013600 \u79D2\uFF0C\u4E14\u6700\u5927\u95F4\u9694\u4E0D\u80FD\u5C0F\u4E8E\u6700\u5C0F\u95F4\u9694\u3002");
-        batchIntervalMinInput.focus();
-        return;
-      }
-      const batchHistoryLimit = Number(batchHistoryLimitInput.value);
-      if (!Number.isInteger(batchHistoryLimit) || batchHistoryLimit < 1 || batchHistoryLimit > 5e4) {
-        document2.defaultView?.alert("\u6279\u91CF\u6253\u5F00\u8BB0\u5F55\u4FDD\u5B58\u6761\u6570\u8BF7\u8F93\u5165 1\u201350000 \u7684\u6574\u6570\u3002");
-        batchHistoryLimitInput.focus();
-        return;
-      }
-      const batchIntervalMinMs = Math.round(batchIntervalMinSeconds * 1e3);
-      const batchIntervalMaxMs = Math.round(batchIntervalMaxSeconds * 1e3);
-      if (typeof GM_setValue === "function") {
-        GM_setValue(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY, layoutInput.checked);
-        GM_setValue(HDBLOG_ARTICLE_WIDTH_KEY, numeric);
-        GM_setValue(HDBLOG_SHOW_DOWNLOAD_AREA_KEY, downloadsInput.checked);
-        GM_setValue(HDBLOG_SHOW_IMAGE_DOWNLOAD_BUTTON_KEY, imageDownloadInput.checked);
-        GM_setValue(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
-        GM_setValue(HDBLOG_SHOW_CROSS_SEARCH_BUTTON_KEY, crossSearchInput.checked);
-        GM_setValue(HDBLOG_SHOW_COPY_CODE_BUTTON_KEY, copyCodeInput.checked);
-        GM_setValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, previewInput.checked);
-        GM_setValue(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
-        GM_setValue(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, deletedJavfreeSearchInput.checked);
-        GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY2, batchOpenInput.checked);
-        GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY2, batchIntervalMinMs);
-        GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY2, batchIntervalMaxMs);
-        GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2, batchHistoryInput.checked);
-        GM_setValue(HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2, batchUnopenedOnlyInput.checked);
-        GM_setValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2, batchProgressLocatorInput.checked);
-        GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2, batchHistoryLimit);
-        GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2, batchHistoryColorInput.value);
-        if (typeof GM_getValue === "function") {
-          const existingHistory = GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_KEY2, []);
-          if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
-            GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_KEY2, existingHistory.slice(-batchHistoryLimit));
-          }
-        }
-        GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY2, searchFilterInput.checked);
-        GM_setValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY2, browseFilterInput.checked);
-        GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
-      }
-      closeHdblogSettingsPanel(document2);
-      const view = document2.defaultView;
-      if (view?.location?.reload) view.location.reload();
-    });
-    overlay.append(panel);
-    document2.body.append(overlay);
-    return overlay;
-  }
-  function registerHdblogSettingsMenu(document2, locationObject) {
-    if (!isHdblogHost3(locationObject) || typeof GM_registerMenuCommand !== "function") return;
-    const view = document2?.defaultView;
-    if (view && view.top !== view) return;
-    GM_registerMenuCommand("\u2699\uFE0F hdblog \u8BBE\u7F6E", () => openHdblogSettingsPanel(document2));
-  }
-  function installHdblogArticleEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    if (!document2) return;
-    registerHdblogSettingsMenu(document2, locationObject);
-    if (!isHdblogArticlePage(document2, locationObject)) return;
-    const storedWidth = readStoredWidth();
-    if (isHdblogArticleLayoutEnabled()) {
-      applyHdblogArticleLayout(document2, storedWidth || DEFAULT_HDBLOG_ARTICLE_WIDTH);
-    } else {
-      clearHdblogArticleLayout(document2);
-    }
-    applyHdblogDownloadAreaVisibility(document2, readDownloadAreaVisible());
-    if (readImageDownloadButtonVisible()) installDownloadButton(document2, locationObject, gmRequest2);
-    else document2.getElementById(DOWNLOAD_BUTTON_ID)?.remove();
-    if (isHdblogCrossSearchEnabled()) installAgaghhhSearchButton(document2);
-    else document2.getElementById(SEARCH_BUTTON_ID)?.remove();
-    if (isHdblogCopyCodeEnabled()) installCopyCodeButton(document2);
-    else document2.getElementById(COPY_BUTTON_ID)?.remove();
-  }
-
-  // src/hdblog-preview.js
-  var IMAGE_EXTENSION_PATTERN3 = /\.(?:jpe?g|png|webp|gif|avif)$/i;
-  var PREVIEW_BOUNDARY_PATTERN2 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
-  var PREVIEW_VIEWPORT_WIDTH = "min(var(--x1080x-hdblog-article-width, 100%), calc(100vw - 40px))";
-  function normalizeText3(value) {
-    return String(value ?? "").replace(/\s+/g, " ").trim();
-  }
-  function isHdblogHost4(locationObject) {
-    const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return hostname === "hdblog.me" || hostname.endsWith(".hdblog.me");
-  }
-  function absoluteHttpUrl3(document2, value) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(value)) return "";
-    try {
-      const url = new URL(value, document2.baseURI);
-      return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function pixhostShowHref(document2, anchor) {
-    const href = absoluteHttpUrl3(document2, anchor?.getAttribute("href"));
-    return href && isPixhostShowUrl(href, document2.baseURI) ? href : "";
-  }
-  function directImageHref2(document2, anchor) {
-    const href = absoluteHttpUrl3(document2, anchor?.getAttribute("href"));
-    if (!href || isPixhostShowUrl(href, document2.baseURI)) return "";
-    try {
-      return IMAGE_EXTENSION_PATTERN3.test(new URL(href).pathname) ? href : "";
-    } catch {
-      return "";
-    }
-  }
-  function wordpressOriginalUrl(document2, value) {
-    const href = absoluteHttpUrl3(document2, value);
-    if (!href) return "";
-    try {
-      const url = new URL(href);
-      if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return "";
-      const originalPath = url.pathname.replace(
-        /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
-        ""
-      );
-      if (originalPath === url.pathname) return "";
-      url.pathname = originalPath;
-      return url.href;
-    } catch {
-      return "";
-    }
-  }
-  function largestSrcsetUrl3(document2, value) {
-    const candidates = String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
-      const match = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)(w|x)$/i);
-      const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
-      const amount = match ? Number(match[2]) : order;
-      const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
-      const url = absoluteHttpUrl3(document2, rawUrl);
-      return url ? { url, score } : null;
-    }).filter(Boolean).sort((a, b) => b.score - a.score);
-    return candidates[0]?.url || "";
-  }
-  function previewThumbnailUrl(document2, image) {
-    const candidates = [
-      image?.currentSrc,
-      image?.getAttribute("src"),
-      image?.getAttribute("data-original"),
-      image?.getAttribute("data-lazy-src"),
-      image?.getAttribute("data-src")
-    ];
-    for (const candidate of candidates) {
-      const url = absoluteHttpUrl3(document2, candidate);
-      if (url) return url;
-    }
-    return "";
-  }
-  function bestPreviewImageUrl(document2, image) {
-    const anchor = image.closest("a[href]");
-    if (pixhostShowHref(document2, anchor)) return "";
-    const rawCandidates = [
-      directImageHref2(document2, anchor),
-      image.getAttribute("data-orig-file"),
-      image.getAttribute("data-original"),
-      image.getAttribute("data-lazy-src"),
-      image.getAttribute("data-src"),
-      image.currentSrc,
-      image.getAttribute("src")
-    ];
-    for (const candidate of rawCandidates) {
-      const direct = absoluteHttpUrl3(document2, candidate);
-      if (!direct) continue;
-      const original = wordpressOriginalUrl(document2, direct);
-      if (original) return original;
-      if (candidate === rawCandidates[0] || candidate === image.getAttribute("data-orig-file")) {
-        return direct;
-      }
-    }
-    const srcsetCandidates = [
-      image.getAttribute("data-srcset"),
-      image.getAttribute("data-lazy-srcset"),
-      image.getAttribute("srcset")
-    ];
-    for (const value of srcsetCandidates) {
-      const url = largestSrcsetUrl3(document2, value);
-      if (url) return wordpressOriginalUrl(document2, url) || url;
-    }
-    for (const candidate of rawCandidates) {
-      const url = absoluteHttpUrl3(document2, candidate);
-      if (url) return url;
-    }
-    return "";
-  }
-  function textNodesUnder3(root) {
-    const view = root.ownerDocument.defaultView;
-    const walker = root.ownerDocument.createTreeWalker(root, view.NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    let node = walker.nextNode();
-    while (node) {
-      const parent = node.parentElement;
-      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
-      node = walker.nextNode();
-    }
-    return nodes;
-  }
-  function findPreviewMarker(root) {
-    return textNodesUnder3(root).find((node) => /^preview\s*[:：]?$/i.test(normalizeText3(node.nodeValue))) || null;
-  }
-  function isAfter3(reference, node) {
-    return Boolean(reference.compareDocumentPosition(node) & 4);
-  }
-  function findBoundary(root, marker) {
-    return textNodesUnder3(root).find((node) => {
-      if (!isAfter3(marker, node)) return false;
-      const text = normalizeText3(node.nodeValue);
-      return text && PREVIEW_BOUNDARY_PATTERN2.test(text);
-    }) || null;
-  }
-  function inPreviewRange2(marker, boundary, node) {
-    if (!isAfter3(marker, node)) return false;
-    return !boundary || !isAfter3(boundary, node);
-  }
-  function findArticleContent(document2) {
-    const article = document2.querySelector(
-      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post, article"
-    );
-    if (article) {
-      return article.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article;
-    }
-    return document2.querySelector("main#genesis-content, main, #content") || document2.body;
-  }
-  function revealPreviewOverflow(image) {
-    const document2 = image.ownerDocument;
-    const view = document2.defaultView;
-    let ancestor = image.parentElement;
-    while (ancestor && ancestor !== document2.body && ancestor !== document2.documentElement) {
-      try {
-        const computed = view?.getComputedStyle?.(ancestor);
-        if (computed?.overflow === "hidden" || computed?.overflow === "clip") {
-          ancestor.style.setProperty("overflow", "visible", "important");
-        }
-        if (computed?.overflowX === "hidden" || computed?.overflowX === "clip") {
-          ancestor.style.setProperty("overflow-x", "visible", "important");
-        }
-      } catch {
-      }
-      ancestor = ancestor.parentElement;
-    }
-  }
-  function styleViewportBleed(element) {
-    element.style.setProperty("display", "block", "important");
-    element.style.setProperty("float", "none", "important");
-    element.style.setProperty("clear", "both", "important");
-    element.style.setProperty("box-sizing", "border-box", "important");
-    element.style.setProperty("position", "relative", "important");
-    element.style.setProperty("left", "50%", "important");
-    element.style.setProperty("transform", "translateX(-50%)", "important");
-    element.style.setProperty("width", PREVIEW_VIEWPORT_WIDTH, "important");
-    element.style.setProperty("max-width", "none", "important");
-    element.style.setProperty("margin", "14px 0", "important");
-    element.style.setProperty("overflow", "visible", "important");
-  }
-  function styleExpandedImage(image, fullUrl) {
-    if (!fullUrl) return false;
-    if (image.dataset.x1080xPreviewLarge === "1" && image.src === fullUrl) {
-      makePreviewGestureFriendly(image);
-      return false;
-    }
-    image.src = fullUrl;
-    [
-      "srcset",
-      "sizes",
-      "width",
-      "height",
-      "data-original",
-      "data-lazy-src",
-      "data-src",
-      "data-srcset",
-      "data-lazy-srcset"
-    ].forEach((attribute) => image.removeAttribute(attribute));
-    image.loading = "eager";
-    image.decoding = "async";
-    image.dataset.x1080xPreviewLarge = "1";
-    image.dataset.x1080xPreviewExpanded = "1";
-    revealPreviewOverflow(image);
-    image.style.setProperty("display", "block", "important");
-    image.style.setProperty("float", "none", "important");
-    image.style.setProperty("clear", "both", "important");
-    image.style.setProperty("width", "auto", "important");
-    image.style.setProperty("height", "auto", "important");
-    image.style.setProperty("max-height", "none", "important");
-    image.style.setProperty("object-fit", "contain", "important");
-    const anchor = image.closest("a[href]");
-    if (anchor) {
-      anchor.href = fullUrl;
-      styleViewportBleed(anchor);
-      anchor.style.setProperty("text-align", "center", "important");
-      image.style.setProperty("max-width", "100%", "important");
-      image.style.setProperty("position", "static", "important");
-      image.style.setProperty("left", "auto", "important");
-      image.style.setProperty("transform", "none", "important");
-      image.style.setProperty("margin", "0 auto", "important");
-    } else {
-      image.style.setProperty("max-width", PREVIEW_VIEWPORT_WIDTH, "important");
-      image.style.setProperty("position", "relative", "important");
-      image.style.setProperty("left", "50%", "important");
-      image.style.setProperty("transform", "translateX(-50%)", "important");
-      image.style.setProperty("margin", "14px 0", "important");
-    }
-    makePreviewGestureFriendly(image);
-    return true;
-  }
-  function previewRange2(document2, locationObject) {
-    if (!document2 || !isHdblogHost4(locationObject)) return null;
-    const content = findArticleContent(document2);
-    if (!content) return null;
-    const marker = findPreviewMarker(content);
-    if (!marker) return null;
-    return { content, marker, boundary: findBoundary(content, marker) };
-  }
-  function expandHdblogPreviewImages2(document2, locationObject = document2?.location) {
-    const range = previewRange2(document2, locationObject);
-    if (!range) return 0;
-    const { content, marker, boundary } = range;
-    let expanded = 0;
-    const handled = /* @__PURE__ */ new Set();
-    [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange2(marker, boundary, anchor)).forEach((anchor) => {
-      if (pixhostShowHref(document2, anchor)) return;
-      const fullUrl = directImageHref2(document2, anchor);
-      if (!fullUrl) return;
-      let image = anchor.querySelector("img");
-      if (!image) {
-        image = document2.createElement("img");
-        image.alt = normalizeText3(anchor.textContent) || "Preview";
-        anchor.replaceChildren(image);
-      }
-      if (styleExpandedImage(image, wordpressOriginalUrl(document2, fullUrl) || fullUrl)) {
-        handled.add(image);
-        expanded += 1;
-      }
-    });
-    [...content.querySelectorAll("img")].filter((image) => inPreviewRange2(marker, boundary, image) && !handled.has(image)).forEach((image) => {
-      if (styleExpandedImage(image, bestPreviewImageUrl(document2, image))) expanded += 1;
-    });
-    return expanded;
-  }
-  async function expandHdblogPixhostPreviewImages(document2, locationObject = document2?.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    const range = previewRange2(document2, locationObject);
-    if (!range) return 0;
-    const { content, marker, boundary } = range;
-    const anchors = [...content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange2(marker, boundary, anchor)).map((anchor) => ({ anchor, showUrl: pixhostShowHref(document2, anchor) })).filter(({ showUrl }) => showUrl);
-    const results = await Promise.all(anchors.map(async ({ anchor, showUrl }) => {
-      let image = anchor.querySelector("img");
-      const thumbnailUrl2 = previewThumbnailUrl(document2, image);
-      const fullUrl = await resolvePixhostShowUrl(document2, showUrl, thumbnailUrl2, gmRequest2);
-      if (!fullUrl) return false;
-      if (!image) {
-        image = document2.createElement("img");
-        image.alt = normalizeText3(anchor.textContent) || "Preview";
-        anchor.replaceChildren(image);
-      }
-      return styleExpandedImage(image, fullUrl);
-    }));
-    return results.filter(Boolean).length;
-  }
-  function installHdblogPreviewImages(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isHdblogHost4(locationObject) || !isHdblogPreviewExpansionEnabled()) return;
-    const run = () => {
-      if (!isHdblogPreviewExpansionEnabled()) return;
-      expandHdblogPreviewImages2(document2, locationObject);
-      void expandHdblogPixhostPreviewImages(document2, locationObject);
-    };
-    run();
-    const view = document2.defaultView;
-    if (!view) return;
-    view.setTimeout(run, 400);
-    view.setTimeout(run, 1400);
-  }
-
-  // src/hdblog-refer.js
-  var REQUEST_TIMEOUT5 = 3e4;
-  var PREVIEW_BOUNDARY_PATTERN3 = /^(?:downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
-  var resolutionCache2 = /* @__PURE__ */ new Map();
-  function normalizeText4(value) {
-    return String(value ?? "").replace(/\s+/g, " ").trim();
-  }
-  function isHdblogHostname(hostname) {
-    const host = String(hostname ?? "").toLowerCase().replace(/\.$/, "");
-    return host === "hdblog.me" || host.endsWith(".hdblog.me");
-  }
-  function absoluteHttpUrl4(value, baseUrl) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
-    try {
-      const url = new URL(String(value), baseUrl);
-      return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function isHdblogReferUrl(value, baseUrl = "https://hdblog.me/") {
-    const href = absoluteHttpUrl4(value, baseUrl);
-    if (!href) return false;
-    try {
-      const url = new URL(href);
-      return isHdblogHostname(url.hostname) && /^\/refer\/[^?#]+/i.test(url.pathname);
-    } catch {
-      return false;
-    }
-  }
-  function responseHeadersMap(value) {
-    const headers = /* @__PURE__ */ new Map();
-    String(value ?? "").split(/\r?\n/).forEach((line) => {
-      const separator = line.indexOf(":");
-      if (separator <= 0) return;
-      headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
-    });
-    return headers;
-  }
-  function htmlRedirectTarget(document2, html, baseUrl) {
-    if (!document2 || !html) return "";
-    try {
-      const parsed = document2.implementation.createHTMLDocument("hdblog-refer");
-      parsed.documentElement.innerHTML = String(html);
-      const meta = parsed.querySelector("meta[http-equiv]");
-      if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
-        const content = meta.getAttribute("content") || "";
-        const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
-        const target = absoluteHttpUrl4(match?.[1], baseUrl);
-        if (target) return target;
-      }
-    } catch {
-    }
-    const scriptMatch = String(html).match(
-      /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
-    );
-    return absoluteHttpUrl4(scriptMatch?.[1], baseUrl);
-  }
-  function targetFromResponse(document2, response, referUrl) {
-    const finalUrl = absoluteHttpUrl4(
-      response?.finalUrl || response?.responseURL,
-      referUrl
-    );
-    if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
-      return finalUrl;
-    }
-    const location2 = responseHeadersMap(response?.responseHeaders).get("location");
-    const locationUrl = absoluteHttpUrl4(location2, referUrl);
-    if (locationUrl && !isHdblogReferUrl(locationUrl, referUrl)) return locationUrl;
-    const html = String(response?.responseText ?? response?.response ?? "");
-    const htmlTarget = htmlRedirectTarget(document2, html, referUrl);
-    return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
-  }
-  function requestReferTarget(document2, referUrl, gmRequest2, referer) {
-    return new Promise((resolve, reject) => {
-      if (typeof gmRequest2 !== "function") {
-        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
-        return;
-      }
-      gmRequest2({
-        method: "GET",
-        url: referUrl,
-        responseType: "text",
-        timeout: REQUEST_TIMEOUT5,
-        headers: {
-          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-          ...referer ? { Referer: referer } : {}
-        },
-        onload(response) {
-          if (response.status >= 400 || response.status === 0) {
-            reject(new Error(`hdblog refer \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
-            return;
-          }
-          const target = targetFromResponse(document2, response, referUrl);
-          if (!target) {
-            reject(new Error("hdblog refer \u6CA1\u6709\u8FD4\u56DE\u53EF\u8BC6\u522B\u7684\u8DF3\u8F6C\u5730\u5740"));
-            return;
-          }
-          resolve(target);
-        },
-        onerror: () => reject(new Error("hdblog refer \u8BF7\u6C42\u53D1\u751F\u7F51\u7EDC\u9519\u8BEF")),
-        ontimeout: () => reject(new Error("hdblog refer \u8BF7\u6C42\u8D85\u65F6"))
-      });
-    });
-  }
-  function resolveHdblogReferUrl(document2, referUrl, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    const absoluteReferUrl = absoluteHttpUrl4(referUrl, document2?.baseURI || "https://hdblog.me/");
-    if (!absoluteReferUrl || !isHdblogReferUrl(absoluteReferUrl, document2?.baseURI)) {
-      return Promise.resolve("");
-    }
-    if (resolutionCache2.has(absoluteReferUrl)) return resolutionCache2.get(absoluteReferUrl);
-    const promise = requestReferTarget(
-      document2,
-      absoluteReferUrl,
-      gmRequest2,
-      document2?.location?.href
-    ).catch(() => "");
-    resolutionCache2.set(absoluteReferUrl, promise);
-    return promise;
-  }
-  function textNodesUnder4(root) {
-    const view = root.ownerDocument.defaultView;
-    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
-    const walker = root.ownerDocument.createTreeWalker(root, showText);
-    const nodes = [];
-    let node = walker.nextNode();
-    while (node) {
-      const parent = node.parentElement;
-      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
-      node = walker.nextNode();
-    }
-    return nodes;
-  }
-  function isAfter4(reference, node) {
-    return Boolean(reference?.compareDocumentPosition(node) & 4);
-  }
-  function findArticleContent2(document2) {
-    const article = document2.querySelector(
-      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post, article"
-    );
-    if (article) {
-      return article.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article;
-    }
-    return document2.querySelector("main#genesis-content, main, #content") || document2.body;
-  }
-  function previewRange3(document2, locationObject) {
-    if (!document2 || !isHdblogHostname(locationObject?.hostname)) return null;
-    const content = findArticleContent2(document2);
-    if (!content) return null;
-    const nodes = textNodesUnder4(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText4(node.nodeValue)));
-    if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter4(marker, node) && PREVIEW_BOUNDARY_PATTERN3.test(normalizeText4(node.nodeValue))) || null;
-    return { content, marker, boundary };
-  }
-  function inPreviewRange3(range, node) {
-    if (!range || !isAfter4(range.marker, node)) return false;
-    return !range.boundary || !isAfter4(range.boundary, node);
-  }
-  async function resolveHdblogPreviewReferLinks(document2, locationObject = document2?.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    const range = previewRange3(document2, locationObject);
-    if (!range) return 0;
-    const anchors = [...range.content.querySelectorAll("a[href]")].filter((anchor) => inPreviewRange3(range, anchor)).map((anchor) => ({
-      anchor,
-      referUrl: absoluteHttpUrl4(anchor.getAttribute("href"), document2.baseURI)
-    })).filter(({ referUrl }) => isHdblogReferUrl(referUrl, document2.baseURI));
-    if (!anchors.length) return 0;
-    const results = await Promise.all(anchors.map(async ({ anchor, referUrl }) => {
-      const target = await resolveHdblogReferUrl(document2, referUrl, gmRequest2);
-      if (!target) return false;
-      anchor.dataset.x1080xHdblogReferUrl = referUrl;
-      anchor.href = target;
-      return true;
-    }));
-    const resolved = results.filter(Boolean).length;
-    if (resolved) {
-      expandHdblogPreviewImages2(document2, locationObject);
-      await expandHdblogPixhostPreviewImages(document2, locationObject, gmRequest2);
-    }
-    return resolved;
-  }
-  function installHdblogReferResolver(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    if (!document2 || !isHdblogHostname(locationObject?.hostname) || !isHdblogPreviewExpansionEnabled()) return;
-    const run = () => {
-      if (!isHdblogPreviewExpansionEnabled()) return;
-      void resolveHdblogPreviewReferLinks(document2, locationObject, gmRequest2);
-    };
-    run();
-    const view = document2.defaultView;
-    if (!view) return;
-    view.setTimeout(run, 500);
-    view.setTimeout(run, 1500);
-  }
-
-  // src/preview-image-health.js
-  var PIXHOST_IMAGE_HOST = /^(?:img\d+|t\d+)\.(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
-  var IMAGE_CHECK_TIMEOUT = 8e3;
-  function isPixhostAssetUrl2(value) {
-    try {
-      const url = new URL(value);
-      return /^https?:$/.test(url.protocol) && PIXHOST_IMAGE_HOST.test(url.hostname) && /^\/(?:images|thumbs)\//i.test(url.pathname);
-    } catch {
-      return false;
-    }
-  }
-  function isPixhostRemovedPlaceholder(value, width, height) {
-    if (!isPixhostAssetUrl2(value)) return false;
-    return width >= 240 && width <= 285 && height >= 110 && height <= 155 && width / height >= 1.7 && width / height <= 2.35;
-  }
-  function checkPixhostPreviewImage(value, document2, timeout = IMAGE_CHECK_TIMEOUT) {
-    if (!isPixhostAssetUrl2(value)) return Promise.resolve(true);
-    const ImageConstructor = document2?.defaultView?.Image;
-    if (typeof ImageConstructor !== "function") return Promise.resolve(true);
-    return new Promise((resolve) => {
-      const image = new ImageConstructor();
-      let settled = false;
-      let timer;
-      const finish = (valid) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        image.onload = null;
-        image.onerror = null;
-        resolve(valid);
-      };
-      image.onload = () => finish(
-        image.naturalWidth > 0 && image.naturalHeight > 0 && !isPixhostRemovedPlaceholder(value, image.naturalWidth, image.naturalHeight)
-      );
-      image.onerror = () => finish(false);
-      timer = setTimeout(() => finish(false), timeout);
-      image.src = value;
-      if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
-        image.onload();
-      }
-    });
-  }
-  async function filterPixhostUnavailableImageUrls(result, document2) {
-    if (!result?.imageUrls?.length) return result;
-    const valid = await Promise.all(result.imageUrls.map(
-      (url) => checkPixhostPreviewImage(url, document2)
-    ));
-    if (valid.every(Boolean)) return result;
-    const imageUrls = result.imageUrls.filter((_url, index) => valid[index]);
-    console.warn("[x1080x-ex] Pixhost unavailable Preview skipped", {
-      code: result.code,
-      skipped: result.imageUrls.length - imageUrls.length
-    });
-    return { ...result, imageUrls };
-  }
-
-  // src/agaghhh-preview-official.js
-  var AV_WIKI_ORIGIN = "https://av-wiki.net";
-  var FANZA_IMAGE_ORIGIN = "https://pics.dmm.co.jp";
-  var FANZA_REFERER = "https://www.dmm.co.jp/";
-  var MGS_ORIGIN = "https://www.mgstage.com";
-  var REQUEST_TIMEOUT6 = 3e4;
-  var MAX_PREVIEW_IMAGES = 20;
-  var AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY = "x1080x-ex:agaghhh-official-preview-fallback-enabled";
-  function normalizeText5(value) {
-    return String(value ?? "").replace(/\s+/g, " ").trim();
-  }
-  function absoluteHttpUrl5(value, baseUrl) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
-    try {
-      const url = new URL(String(value), baseUrl);
-      return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function gmRequest(details, request = globalThis.GM_xmlhttpRequest) {
-    return new Promise((resolve, reject) => {
-      if (typeof request !== "function") {
-        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
-        return;
-      }
-      request({
-        timeout: REQUEST_TIMEOUT6,
-        ...details,
-        onload: resolve,
-        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
-        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
-      });
-    });
-  }
-  async function requestText2(url, request, options = {}) {
-    const response = await gmRequest({
-      method: "GET",
-      url,
-      responseType: "text",
-      headers: {
-        Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-        ...options.referer ? { Referer: options.referer } : {},
-        ...options.headers || {}
-      },
-      ...options.cookie ? { cookie: options.cookie } : {}
-    }, request);
-    if (response.status < 200 || response.status >= 400) {
-      throw new Error(`\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`);
-    }
-    return {
-      html: String(response.responseText ?? response.response ?? ""),
-      finalUrl: response.finalUrl || response.responseURL || url
-    };
-  }
-  async function urlExists(url, request, referer = "") {
-    try {
-      const response = await gmRequest({
-        method: "HEAD",
-        url,
-        responseType: "text",
-        headers: referer ? { Referer: referer } : void 0
-      }, request);
-      return response.status >= 200 && response.status < 400;
-    } catch {
-      return false;
-    }
-  }
-  function parseHtml2(html, baseUrl, hostDocument = globalThis.document) {
-    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
-    if (typeof Parser !== "function") return null;
-    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
-    const base = parsed.createElement("base");
-    base.href = baseUrl;
-    (parsed.head || parsed.documentElement).prepend(base);
-    return parsed;
-  }
-  function codeTokenMatches2(text, code) {
-    const target = String(code || "").trim().toUpperCase();
-    if (!target) return false;
-    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`, "i").test(normalizeText5(text).toUpperCase());
-  }
-  function findAvWikiResultUrl(document2, code) {
-    if (!document2 || !code) return "";
-    const exactPath = `/${String(code).toLowerCase()}/`;
-    const anchors = [...document2.querySelectorAll("a[href]")];
-    for (const anchor of anchors) {
-      const url = absoluteHttpUrl5(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
-      if (!url) continue;
-      try {
-        const parsed = new URL(url);
-        if (parsed.origin === AV_WIKI_ORIGIN && parsed.pathname.toLowerCase() === exactPath) return parsed.href;
-      } catch {
-      }
-    }
-    for (const anchor of anchors) {
-      const article = anchor.closest("article");
-      if (!codeTokenMatches2(article?.textContent || anchor.textContent, code)) continue;
-      const url = absoluteHttpUrl5(anchor.getAttribute("href"), AV_WIKI_ORIGIN);
-      if (!url) continue;
-      try {
-        const parsed = new URL(url);
-        if (parsed.origin === AV_WIKI_ORIGIN && parsed.pathname !== "/") return parsed.href;
-      } catch {
-      }
-    }
-    return "";
-  }
-  function cleanProviderId(value) {
-    return normalizeText5(value).replace(/^(?:MGS|FANZA)\s*品番\s*[:：]?\s*/i, "").split(/\s+/, 1)[0].replace(/[，,;；]+$/u, "").trim();
-  }
-  function labeledValue(document2, labelPattern) {
-    if (!document2) return "";
-    for (const row of document2.querySelectorAll("tr")) {
-      const cells = [...row.querySelectorAll(":scope > th, :scope > td")];
-      if (cells.length < 2) continue;
-      if (labelPattern.test(normalizeText5(cells[0].textContent))) {
-        return cleanProviderId(cells[1].textContent);
-      }
-    }
-    for (const term of document2.querySelectorAll("dt")) {
-      if (!labelPattern.test(normalizeText5(term.textContent))) continue;
-      return cleanProviderId(term.nextElementSibling?.textContent || "");
-    }
-    const lines = String(document2.body?.innerText || document2.body?.textContent || "").replace(/\r/g, "").split("\n").map((line) => normalizeText5(line)).filter(Boolean);
-    for (let index = 0; index < lines.length; index += 1) {
-      if (!labelPattern.test(lines[index])) continue;
-      const inline = lines[index].replace(labelPattern, "").replace(/^\s*[:：]\s*/, "");
-      if (inline) return cleanProviderId(inline);
-      return cleanProviderId(lines[index + 1] || "");
-    }
-    return "";
-  }
-  function parseAvWikiProviderIds(document2) {
-    return {
-      fanzaId: labeledValue(document2, /^FANZA\s*品番\s*[:：]?/i),
-      mgsId: labeledValue(document2, /^MGS\s*品番\s*[:：]?/i)
-    };
-  }
-  async function fetchAvWikiProductInfo(code, request, hostDocument) {
-    const normalizedCode = String(code || "").trim().toUpperCase();
-    if (!normalizedCode) return { code: "", detailUrl: "", fanzaId: "", mgsId: "" };
-    const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
-    const search = await requestText2(searchUrl, request, { referer: `${AV_WIKI_ORIGIN}/` });
-    const searchDocument = parseHtml2(search.html, search.finalUrl || searchUrl, hostDocument);
-    const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
-    const detail = await requestText2(detailUrl, request, { referer: searchUrl });
-    const detailDocument = parseHtml2(detail.html, detail.finalUrl || detailUrl, hostDocument);
-    return {
-      code: normalizedCode,
-      detailUrl,
-      ...parseAvWikiProviderIds(detailDocument)
-    };
-  }
-  function fanzaPreviewUrl(fanzaId, index, large = true) {
-    const id = String(fanzaId || "").trim();
-    if (!id || !Number.isInteger(index) || index < 1) return "";
-    const suffix = large ? `jp-${index}.jpg` : `-${index}.jpg`;
-    return `${FANZA_IMAGE_ORIGIN}/digital/video/${encodeURIComponent(id)}/${encodeURIComponent(id)}${suffix}`;
-  }
-  async function fetchFanzaPreviewImages(fanzaId, request = globalThis.GM_xmlhttpRequest) {
-    const id = String(fanzaId || "").trim();
-    if (!id) return [];
-    const urls = [];
-    let consecutiveMisses = 0;
-    for (let index = 1; index <= MAX_PREVIEW_IMAGES; index += 1) {
-      const thumbnail = fanzaPreviewUrl(id, index, false);
-      const exists = await urlExists(thumbnail, request, FANZA_REFERER);
-      if (exists) {
-        urls.push(fanzaPreviewUrl(id, index, true));
-        consecutiveMisses = 0;
-        continue;
-      }
-      consecutiveMisses += 1;
-      if (urls.length && consecutiveMisses >= 2) break;
-      if (!urls.length && index >= 4) break;
-    }
-    return urls;
-  }
-  function parseMgsPreviewImages(document2, baseUrl) {
-    if (!document2) return [];
-    const seen = /* @__PURE__ */ new Set();
-    return [...document2.querySelectorAll("a.sample_image[href], .sample_image[href]")].map((element) => absoluteHttpUrl5(element.getAttribute("href"), baseUrl)).filter((url) => url && !seen.has(url) && seen.add(url));
-  }
-  async function fetchMgsPreviewImages(mgsId, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
-    const id = String(mgsId || "").trim();
-    if (!id) return { productUrl: "", imageUrls: [] };
-    const productUrl = `${MGS_ORIGIN}/product/product_detail/${encodeURIComponent(id)}/`;
-    const response = await requestText2(productUrl, request, {
-      referer: `${MGS_ORIGIN}/`,
-      cookie: "adc=1; coc=1",
-      headers: { "Accept-Language": "ja-JP" }
-    });
-    const document2 = parseHtml2(response.html, response.finalUrl || productUrl, hostDocument);
-    return {
-      productUrl,
-      imageUrls: parseMgsPreviewImages(document2, response.finalUrl || productUrl)
-    };
-  }
-  function isOfficialPreviewFallbackEnabled() {
-    if (typeof GM_getValue !== "function") return true;
-    return GM_getValue(AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY, true) !== false;
-  }
-  async function fetchOfficialPreviewFallbackForCode(code, request = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document) {
-    const info = await fetchAvWikiProductInfo(code, request, hostDocument);
-    if (!info.code) return { code: "", sourceName: "", sourceUrl: "", referer: "", imageUrls: [] };
-    if (info.fanzaId) {
-      try {
-        const imageUrls = await fetchFanzaPreviewImages(info.fanzaId, request);
-        if (imageUrls.length) {
-          return {
-            code: info.code,
-            sourceName: "FANZA",
-            sourceUrl: info.detailUrl,
-            referer: FANZA_REFERER,
-            imageUrls
-          };
-        }
-      } catch (error) {
-        console.warn("[x1080x-ex] FANZA preview fallback failed", {
-          code: info.code,
-          error: error?.message || String(error)
-        });
-      }
-    }
-    if (info.mgsId) {
-      try {
-        const mgs = await fetchMgsPreviewImages(info.mgsId, request, hostDocument);
-        if (mgs.imageUrls.length) {
-          return {
-            code: info.code,
-            sourceName: "MGStage",
-            sourceUrl: mgs.productUrl || info.detailUrl,
-            referer: mgs.productUrl || `${MGS_ORIGIN}/`,
-            imageUrls: mgs.imageUrls
-          };
-        }
-      } catch (error) {
-        console.warn("[x1080x-ex] MGStage preview fallback failed", {
-          code: info.code,
-          error: error?.message || String(error)
-        });
-      }
-    }
-    return {
-      code: info.code,
-      sourceName: "",
-      sourceUrl: info.detailUrl,
-      referer: "",
-      imageUrls: []
-    };
-  }
-  function injectOfficialPreviewFallbackSetting(document2 = globalThis.document) {
-    const overlay = document2?.getElementById("x1080x-ex-settings-panel");
-    const form = overlay?.shadowRoot?.querySelector("form") || overlay?.querySelector("form");
-    const master = form?.querySelector('[data-setting="hdblog-preview"]');
-    if (!form || !master) return false;
-    const masterLabel = master.closest("label");
-    const strong = masterLabel?.querySelector("strong");
-    const small = masterLabel?.querySelector("small");
-    if (strong) strong.textContent = "\u663E\u793A\u5927\u9884\u89C8\u56FE";
-    if (small) small.textContent = "\u4F18\u5148\u6309\u756A\u53F7\u641C\u7D22 hdblog\uFF1B\u6CA1\u6709\u53EF\u7528 Preview \u65F6\u4F9D\u6B21\u5C1D\u8BD5 JavFree\uFF0C\u518D\u5C1D\u8BD5\u5B98\u65B9\u540E\u5907\u6E90\u3002";
-    let input = form.querySelector('[data-setting="official-preview-fallback"]');
-    if (!input) {
-      const label = document2.createElement("label");
-      label.style.cssText = "display:flex;align-items:flex-start;gap:9px;margin:-3px 0 13px 24px";
-      label.innerHTML = `
-      <input data-setting="official-preview-fallback" type="checkbox" style="margin-top:3px">
-      <span><strong>\u5B98\u65B9\u540E\u5907\u9884\u89C8\u56FE\uFF08FANZA / MGStage\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u4EC5\u5728 hdblog \u548C JavFree \u90FD\u6CA1\u6709\u53EF\u7528 Preview \u65F6\u542F\u7528\uFF0C\u987A\u5E8F\u4E3A FANZA \u5B98\u65B9\u56FE\u7247 CDN \u2192 MGStage \u5B98\u65B9\u5546\u54C1\u9875\u3002</small></span>`;
-      const javfreeLabel = form.querySelector('[data-setting="javfree-preview-fallback"]')?.closest("label");
-      (javfreeLabel || masterLabel)?.after(label);
-      input = label.querySelector('[data-setting="official-preview-fallback"]');
-    }
-    input.checked = isOfficialPreviewFallbackEnabled();
-    const syncDisabled = () => {
-      input.disabled = !master.checked;
-    };
-    syncDisabled();
-    if (master.dataset.x1080xOfficialFallbackBound !== "1") {
-      master.dataset.x1080xOfficialFallbackBound = "1";
-      master.addEventListener("change", syncDisabled);
-    }
-    if (form.dataset.x1080xOfficialFallbackBound !== "1") {
-      form.dataset.x1080xOfficialFallbackBound = "1";
-      form.addEventListener("submit", () => {
-        if (typeof GM_setValue === "function") {
-          GM_setValue(AGAGHHH_OFFICIAL_PREVIEW_FALLBACK_ENABLED_KEY, input.checked);
-        }
-      }, true);
-    }
-    return true;
-  }
-  function installOfficialPreviewFallbackSetting(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isAgaghhhHost(locationObject)) return null;
-    if (injectOfficialPreviewFallbackSetting(document2)) return null;
-    const Observer = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
-    if (typeof Observer !== "function" || !document2.body) return null;
-    const observer = new Observer(() => injectOfficialPreviewFallbackSetting(document2));
-    observer.observe(document2.body, { childList: true, subtree: true });
-    return observer;
-  }
-
-  // src/agaghhh-hdblog-preview.js
-  installOfficialPreviewFallbackSetting();
-  var HDBLOG_ORIGIN = "https://hdblog.me";
-  var HDBLOG_BLOCKED_KEYWORDS_KEY2 = "x1080x-ex:hdblog-blocked-keywords";
-  var DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 = "\u30E2\u30B6\u30A4\u30AF\u7834\u58CA";
-  var REQUEST_TIMEOUT7 = 3e4;
-  var CONTAINER_ID = "x1080x-ex-agaghhh-hdblog-preview";
-  var PREVIEW_IMAGE_ATTR = "data-x1080x-hdblog-preview-url";
-  var IMAGE_EXTENSION_PATTERN4 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
-  var PREVIEW_BOUNDARY_PATTERN4 = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
-  function normalizeText6(value) {
-    return String(value ?? "").replace(/\s+/g, " ").trim();
-  }
-  function absoluteHttpUrl6(value, baseUrl) {
-    if (!value || /^(?:data:|blob:|javascript:)/i.test(String(value))) return "";
-    try {
-      const url = new URL(String(value), baseUrl);
-      return /^https?:$/.test(url.protocol) ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-  function requestText3(url, gmRequest2, referer = "") {
-    return new Promise((resolve, reject) => {
-      if (typeof gmRequest2 !== "function") {
-        reject(new Error("\u5F53\u524D userscript \u7BA1\u7406\u5668\u4E0D\u652F\u6301 GM_xmlhttpRequest"));
-        return;
-      }
-      gmRequest2({
-        method: "GET",
-        url,
-        responseType: "text",
-        timeout: REQUEST_TIMEOUT7,
-        headers: {
-          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-          ...referer ? { Referer: referer } : {}
-        },
-        onload(response) {
-          if (response.status >= 400 || response.status === 0) {
-            reject(new Error(`\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status || 0}\uFF09`));
-            return;
-          }
-          resolve({
-            html: String(response.responseText ?? response.response ?? ""),
-            finalUrl: response.finalUrl || response.responseURL || url,
-            responseHeaders: response.responseHeaders || ""
-          });
-        },
-        onerror: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25")),
-        ontimeout: () => reject(new Error("\u7F51\u7EDC\u8BF7\u6C42\u8D85\u65F6"))
-      });
-    });
-  }
-  function parseHtml3(html, baseUrl, hostDocument = globalThis.document) {
-    const Parser = hostDocument?.defaultView?.DOMParser || globalThis.DOMParser;
-    if (typeof Parser !== "function") return null;
-    const parsed = new Parser().parseFromString(String(html || ""), "text/html");
-    const base = parsed.createElement("base");
-    base.href = baseUrl;
-    (parsed.head || parsed.documentElement).prepend(base);
-    return parsed;
-  }
-  function getHdblogBlockedKeywords() {
-    if (typeof GM_getValue === "function" && GM_getValue("x1080x-ex:hdblog-search-filter-enabled", true) === false) return [];
-    const stored = typeof GM_getValue === "function" ? GM_getValue(HDBLOG_BLOCKED_KEYWORDS_KEY2, null) : null;
-    return parseBlockedKeywords(
-      stored === null || stored === void 0 ? DEFAULT_HDBLOG_BLOCKED_KEYWORDS2 : stored
-    );
-  }
-  function codeTokenMatches3(title, code) {
-    const normalized = normalizeText6(title).toUpperCase();
-    const target = String(code || "").trim().toUpperCase();
-    if (!target) return false;
-    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?:$|[^A-Z0-9])`, "i").test(normalized);
-  }
-  function chooseHdblogSearchResult(candidates, code, keywords = getHdblogBlockedKeywords()) {
-    const { blocked, remaining } = filterSearchCandidates(candidates, keywords);
-    if (!remaining.length) return { blocked, remaining, selected: null };
-    if (remaining.length === 1) return { blocked, remaining, selected: remaining[0] };
-    const slug = String(code || "").trim().toLowerCase();
-    const exactSlug = remaining.filter((candidate) => {
-      try {
-        const parts = new URL(candidate.url).pathname.toLowerCase().split("/").filter(Boolean);
-        return parts.at(-1) === slug;
-      } catch {
-        return false;
-      }
-    });
-    if (exactSlug.length === 1) return { blocked, remaining, selected: exactSlug[0] };
-    const exactTitle = remaining.filter((candidate) => codeTokenMatches3(candidate.title, code));
-    if (exactTitle.length === 1) return { blocked, remaining, selected: exactTitle[0] };
-    return { blocked, remaining, selected: null };
-  }
-  function responseHeader(value, name) {
-    const lower = String(name || "").toLowerCase();
-    const line = String(value || "").split(/\r?\n/).find((entry) => {
-      const separator = entry.indexOf(":");
-      return separator > 0 && entry.slice(0, separator).trim().toLowerCase() === lower;
-    });
-    return line ? line.slice(line.indexOf(":") + 1).trim() : "";
-  }
-  function redirectFromHtml(html, baseUrl, hostDocument) {
-    const parsed = parseHtml3(html, baseUrl, hostDocument);
-    const meta = parsed?.querySelector("meta[http-equiv]");
-    if (meta && /^refresh$/i.test(meta.getAttribute("http-equiv") || "")) {
-      const content = meta.getAttribute("content") || "";
-      const match = content.match(/(?:^|;)\s*url\s*=\s*["']?([^"']+)\s*$/i);
-      const target = absoluteHttpUrl6(match?.[1], baseUrl);
-      if (target) return target;
-    }
-    const scriptMatch = String(html).match(
-      /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i
-    );
-    return absoluteHttpUrl6(scriptMatch?.[1], baseUrl);
-  }
-  async function resolveHdblogReferTarget(document2, referUrl, articleUrl, gmRequest2) {
-    try {
-      const response = await requestText3(referUrl, gmRequest2, articleUrl);
-      const finalUrl = absoluteHttpUrl6(response.finalUrl, referUrl);
-      if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
-        return finalUrl;
-      }
-      const location2 = absoluteHttpUrl6(responseHeader(response.responseHeaders, "location"), referUrl);
-      if (location2 && !isHdblogReferUrl(location2, referUrl)) return location2;
-      const htmlTarget = redirectFromHtml(response.html, referUrl, document2);
-      return htmlTarget && !isHdblogReferUrl(htmlTarget, referUrl) ? htmlTarget : "";
-    } catch {
-      return "";
-    }
-  }
-  function previewThumbnailUrl2(document2, image) {
-    const candidates = [
-      image?.currentSrc,
-      image?.getAttribute("src"),
-      image?.getAttribute("data-original"),
-      image?.getAttribute("data-lazy-src"),
-      image?.getAttribute("data-src")
-    ];
-    for (const candidate of candidates) {
-      const url = absoluteHttpUrl6(candidate, document2.baseURI);
-      if (url) return url;
-    }
-    return "";
-  }
-  function wordpressOriginalUrl2(value) {
-    const href = absoluteHttpUrl6(value, HDBLOG_ORIGIN);
-    if (!href) return "";
-    try {
-      const url = new URL(href);
-      if (!/(?:\/wp-content\/uploads\/|\/uploads\/)/i.test(url.pathname)) return "";
-      url.pathname = url.pathname.replace(
-        /-\d{2,5}x\d{2,5}(?=\.(?:jpe?g|png|webp|gif|avif)$)/i,
-        ""
-      );
-      return url.href;
-    } catch {
-      return "";
-    }
-  }
-  function largestSrcsetUrl4(document2, value) {
-    return String(value ?? "").split(",").map((part) => part.trim()).filter(Boolean).map((part, order) => {
-      const match = part.match(/^(.*?)\s+(\d+(?:\.\d+)?)(w|x)$/i);
-      const rawUrl = match ? match[1] : part.split(/\s+/, 1)[0];
-      const amount = match ? Number(match[2]) : order;
-      const score = match?.[3]?.toLowerCase() === "x" ? amount * 1e5 : amount;
-      const url = absoluteHttpUrl6(rawUrl, document2.baseURI);
-      return url ? { url, score } : null;
-    }).filter(Boolean).sort((a, b) => b.score - a.score)[0]?.url || "";
-  }
-  function pixhostAssetIdentity(value, baseUrl) {
-    const href = absoluteHttpUrl6(value, baseUrl);
-    if (!href) return "";
-    try {
-      const url = new URL(href);
-      const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
-      const isPixhostHost = /^(?:(?:t|img)\d+\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i.test(hostname);
-      if (!isPixhostHost) return "";
-      const match = url.pathname.match(/^\/(?:show|images|thumbs)\/(\d+)\/([^/?#]+)$/i);
-      if (!match) return "";
-      return `pixhost:${match[1]}/${match[2].toLowerCase()}`;
-    } catch {
-      return "";
-    }
-  }
-  function existingPixhostAssets(content) {
-    const identities = /* @__PURE__ */ new Set();
-    if (!content) return identities;
-    const add = (value) => {
-      const identity = pixhostAssetIdentity(value, content.ownerDocument?.baseURI);
-      if (identity) identities.add(identity);
-    };
-    for (const anchor of content.querySelectorAll("a[href]")) add(anchor.getAttribute("href"));
-    for (const image of content.querySelectorAll("img")) {
-      add(image.currentSrc);
-      add(image.getAttribute("src"));
-      add(image.getAttribute("data-original"));
-      add(image.getAttribute("data-lazy-src"));
-      add(image.getAttribute("data-src"));
-    }
-    return identities;
-  }
-  function bestImageUrl(document2, image) {
-    if (!image) return "";
-    const anchorHref = absoluteHttpUrl6(image.closest("a[href]")?.getAttribute("href"), document2.baseURI);
-    const directAnchorHref = anchorHref && !isPixhostShowUrl(anchorHref, document2.baseURI) && IMAGE_EXTENSION_PATTERN4.test(anchorHref) ? anchorHref : "";
-    const candidates = [
-      directAnchorHref,
-      image.getAttribute("data-orig-file"),
-      image.getAttribute("data-original"),
-      image.getAttribute("data-lazy-src"),
-      image.getAttribute("data-src"),
-      image.currentSrc,
-      image.getAttribute("src")
-    ];
-    for (const candidate of candidates) {
-      const url = absoluteHttpUrl6(candidate, document2.baseURI);
-      if (!url) continue;
-      return wordpressOriginalUrl2(url) || url;
-    }
-    const srcset = largestSrcsetUrl4(
-      document2,
-      image.getAttribute("data-srcset") || image.getAttribute("data-lazy-srcset") || image.getAttribute("srcset")
-    );
-    return wordpressOriginalUrl2(srcset) || srcset;
-  }
-  function textNodesUnder5(root) {
-    const view = root.ownerDocument.defaultView;
-    const showText = view?.NodeFilter?.SHOW_TEXT ?? 4;
-    const walker = root.ownerDocument.createTreeWalker(root, showText);
-    const nodes = [];
-    let node = walker.nextNode();
-    while (node) {
-      const parent = node.parentElement;
-      if (parent && !parent.closest("script, style, noscript, textarea")) nodes.push(node);
-      node = walker.nextNode();
-    }
-    return nodes;
-  }
-  function isAfter5(reference, node) {
-    return Boolean(reference?.compareDocumentPosition(node) & 4);
-  }
-  function previewRange4(document2) {
-    const article = document2.querySelector(
-      "main#genesis-content article.entry, main#genesis-content article, article.entry, article.post, article"
-    );
-    const content = article?.querySelector(".entry-content, .post-content, .post-entry, .entry-body") || article || document2.querySelector("main#genesis-content, main, #content") || document2.body;
-    if (!content) return null;
-    const nodes = textNodesUnder5(content);
-    const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText6(node.nodeValue)));
-    if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter5(marker, node) && PREVIEW_BOUNDARY_PATTERN4.test(normalizeText6(node.nodeValue))) || null;
-    return { content, marker, boundary };
-  }
-  function inPreviewRange4(range, node) {
-    if (!range || !isAfter5(range.marker, node)) return false;
-    return !range.boundary || !isAfter5(range.boundary, node);
-  }
-  async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest2, healthDocument = null) {
-    const range = previewRange4(document2);
-    if (!range) return [];
-    const handledImages = /* @__PURE__ */ new Set();
-    const candidates = [];
-    for (const anchor of [...range.content.querySelectorAll("a[href]")].filter((node) => inPreviewRange4(range, node))) {
-      const image = anchor.querySelector("img");
-      if (image) handledImages.add(image);
-      candidates.push({
-        kind: "anchor",
-        anchor,
-        image,
-        href: absoluteHttpUrl6(anchor.getAttribute("href"), document2.baseURI),
-        thumbUrl: previewThumbnailUrl2(document2, image),
-        values: [
-          image?.getAttribute("src"),
-          image?.getAttribute("data-original"),
-          image?.getAttribute("data-lazy-src"),
-          image?.getAttribute("data-src")
-        ]
-      });
-    }
-    for (const image of [...range.content.querySelectorAll("img")].filter((node) => inPreviewRange4(range, node) && !handledImages.has(node))) {
-      candidates.push({
-        kind: "image",
-        image,
-        directUrl: bestImageUrl(document2, image),
-        values: [
-          image.currentSrc,
-          image.getAttribute("src"),
-          image.getAttribute("data-original"),
-          image.getAttribute("data-lazy-src"),
-          image.getAttribute("data-src")
-        ]
-      });
-    }
-    const resolveCandidates = async (items) => {
-      const urls = [];
-      const seen = /* @__PURE__ */ new Set();
-      const add = (value) => {
-        const url = absoluteHttpUrl6(value, articleUrl);
-        if (!url) return;
-        const key = pixhostAssetIdentity(url, articleUrl) || url;
-        if (seen.has(key)) return;
-        seen.add(key);
-        urls.push(url);
-      };
-      for (const candidate of items) {
-        if (candidate.kind === "image") {
-          add(candidate.directUrl || bestImageUrl(document2, candidate.image));
-          continue;
-        }
-        let target = candidate.href;
-        const image = candidate.image;
-        const thumbnail = candidate.thumbUrl;
-        if (isHdblogReferUrl(target, document2.baseURI)) {
-          target = await resolveHdblogReferTarget(document2, target, articleUrl, gmRequest2);
-        }
-        const pixhostShowTarget = target && isPixhostShowUrl(target, document2.baseURI);
-        if (pixhostShowTarget) {
-          target = await resolvePixhostShowUrl(document2, target, thumbnail, gmRequest2);
-          if (!target) continue;
-        }
-        if (target && (IMAGE_EXTENSION_PATTERN4.test(target) || /^https?:\/\/img\d+\./i.test(target))) {
-          add(wordpressOriginalUrl2(target) || target);
-          continue;
-        }
-        if (image) add(bestImageUrl(document2, image));
-      }
-      return urls;
-    };
-    const verify = async (urls) => {
-      if (!healthDocument || !urls.length) return urls;
-      const checked = await filterPixhostUnavailableImageUrls({ imageUrls: urls }, healthDocument);
-      return checked.imageUrls;
-    };
-    const { standard, fourK } = partitionPreviewCandidates(candidates);
-    if (standard.length) {
-      const standardUrls = await verify(await resolveCandidates(standard));
-      if (standardUrls.length) return standardUrls;
-    }
-    return fourK.length ? verify(await resolveCandidates(fourK)) : [];
-  }
-  function hdblogSearchCodeForThreadCode(code) {
-    const normalized = String(code || "").trim().toUpperCase();
-    const fc2 = normalized.match(/^FC2-(?:PPV-)?(\d{5,9})$/i);
-    if (fc2) return fc2[1];
-    const uncensored = normalized.match(/^[A-Z0-9]{2,12}-(\d{6}[-_]\d{3,4})$/i);
-    return uncensored?.[1] || normalized;
-  }
-  async function fetchHdblogPreviewForCode(code, gmRequest2 = globalThis.GM_xmlhttpRequest, hostDocument = globalThis.document, verifyImages = false) {
-    const normalizedCode = String(code || "").trim().toUpperCase();
-    if (!normalizedCode) return { code: "", articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
-    const searchCode = hdblogSearchCodeForThreadCode(normalizedCode);
-    const searchUrl = `${HDBLOG_ORIGIN}/?s=${encodeURIComponent(searchCode)}`;
-    const searchResponse = await requestText3(searchUrl, gmRequest2, `${HDBLOG_ORIGIN}/`);
-    const searchDocument = parseHtml3(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
-    if (!searchDocument) return { code: normalizedCode, articleUrl: "", imageUrls: [], blocked: [], remaining: [] };
-    const candidates = collectHdblogSearchResults(searchDocument);
-    const selection = chooseHdblogSearchResult(candidates, searchCode, getHdblogBlockedKeywords());
-    if (!selection.selected) {
-      return { code: normalizedCode, articleUrl: "", imageUrls: [], ...selection };
-    }
-    const articleUrl = selection.selected.url;
-    const articleResponse = await requestText3(articleUrl, gmRequest2, searchUrl);
-    const articleDocument = parseHtml3(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
-    const imageUrls = articleDocument ? await collectHdblogPreviewImageUrls(
-      articleDocument,
-      articleUrl,
-      gmRequest2,
-      verifyImages ? hostDocument : null
-    ) : [];
-    return { code: normalizedCode, articleUrl, imageUrls, ...selection };
-  }
-  function threadCode(document2) {
-    return parseThreadTitle(getThreadHeadingText(document2)).code;
-  }
-  function firstPostContent(document2) {
-    const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist") || document2.querySelector("#first-post");
-    return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text') || firstPost || null;
-  }
-  function isThreadPage2(locationObject) {
-    try {
-      const url = new URL(locationObject?.href || "");
-      return /^\/resources\/[a-z0-9]+\/?$/i.test(url.pathname) || url.searchParams.get("mod") === "viewthread" && url.searchParams.has("tid");
-    } catch {
-      return false;
-    }
-  }
-  function renderAgaghhhHdblogPreview(document2, result) {
-    if (!document2 || !result?.imageUrls?.length || document2.getElementById(CONTAINER_ID)) return null;
-    const content = firstPostContent(document2);
-    if (!content) return null;
-    const existingAssets = existingPixhostAssets(content);
-    const seenResultAssets = /* @__PURE__ */ new Set();
-    const imageUrls = result.imageUrls.filter((value) => {
-      const url = absoluteHttpUrl6(value, document2.baseURI);
-      if (!url) return false;
-      const identity = pixhostAssetIdentity(url, document2.baseURI);
-      const key = identity || url;
-      if (identity && existingAssets.has(identity)) return false;
-      if (seenResultAssets.has(key)) return false;
-      seenResultAssets.add(key);
-      return true;
-    });
-    if (!imageUrls.length) return null;
-    const section = document2.createElement("section");
-    section.id = CONTAINER_ID;
-    section.style.cssText = "clear:both;margin:24px 0 8px;padding:16px 0 0;border-top:1px solid #ddd";
-    const heading = document2.createElement("div");
-    heading.style.cssText = "margin:0 0 12px;font-size:15px;font-weight:700;color:#444";
-    const source = document2.createElement("a");
-    source.href = result.sourceUrl || result.articleUrl || "#";
-    source.target = "_blank";
-    source.rel = "noopener noreferrer";
-    source.textContent = `${result.sourceName || "HDblog"} Preview \xB7 ${result.code}`;
-    source.style.cssText = "color:inherit;text-decoration:none";
-    heading.append(source);
-    section.append(heading);
-    const previewReferer = result.referer || result.articleUrl || result.sourceUrl || "";
-    imageUrls.forEach((url, index) => {
-      const anchor = document2.createElement("a");
-      anchor.href = url;
-      anchor.target = "_blank";
-      anchor.rel = "noopener noreferrer";
-      anchor.style.cssText = "display:block;clear:both;margin:14px 0;text-align:center";
-      const image = document2.createElement("img");
-      image.src = url;
-      image.alt = `${result.code} Preview ${index + 1}`;
-      image.loading = index === 0 ? "eager" : "lazy";
-      image.decoding = "async";
-      image.setAttribute(PREVIEW_IMAGE_ATTR, url);
-      if (previewReferer) image.setAttribute("data-x1080x-preview-referer", previewReferer);
-      image.style.cssText = "display:block;width:auto;height:auto;max-width:100%;margin:0 auto;object-fit:contain";
-      anchor.append(image);
-      makePreviewGestureFriendly(image);
-      section.append(anchor);
-    });
-    content.append(section);
-    section.querySelectorAll("img").forEach((image) => {
-      void preparePreviewForNativeSave(image);
-    });
-    return section;
-  }
-  async function installAgaghhhHdblogPreview(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    if (!document2 || !isThreadPage2(locationObject) || document2.getElementById(CONTAINER_ID)) return null;
-    const code = threadCode(document2);
-    if (!code) return null;
-    let result = null;
-    try {
-      result = await fetchHdblogPreviewForCode(code, gmRequest2, document2, true);
-    } catch (error) {
-      console.warn("[x1080x-ex] hdblog preview lookup failed", {
-        code,
-        error: error?.message || String(error)
-      });
-    }
-    if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
-      try {
-        result = await fetchJavfreePreviewForCode(code, gmRequest2, document2);
-      } catch (error) {
-        console.warn("[x1080x-ex] JavFree preview fallback failed", {
-          code,
-          error: error?.message || String(error)
-        });
-      }
-    }
-    result = await filterPixhostUnavailableImageUrls(result, document2);
-    if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
-      try {
-        result = await fetchOfficialPreviewFallbackForCode(code, gmRequest2, document2);
-      } catch (error) {
-        console.warn("[x1080x-ex] official preview fallback failed", {
-          code,
-          error: error?.message || String(error)
-        });
-      }
-    }
-    result = await filterPixhostUnavailableImageUrls(result, document2);
-    return renderAgaghhhHdblogPreview(document2, result);
   }
 
   // src/agaghhh-enhancement.js
@@ -8109,7 +8774,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function buildHdblogSearchUrlForThreadCode(code) {
     const keyword = hdblogSearchCodeForThreadCode(code);
-    return keyword ? `http://hdblog.me/?s=${encodeURIComponent(keyword)}` : "";
+    return keyword ? `https://javclub.me/?s=${encodeURIComponent(keyword)}` : "";
   }
   function openSearchTab2(document2, url) {
     if (!url) return;
@@ -8133,8 +8798,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       button.id = SEARCH_BUTTON_ID2;
       button.type = "button";
       button.textContent = "\u{1F50D}";
-      button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 hdblog \u641C\u7D22";
-      button.setAttribute("aria-label", "\u5728 hdblog \u641C\u7D22\u5F53\u524D\u756A\u53F7");
+      button.title = "\u6309\u5F53\u524D\u756A\u53F7\u5728 JavClub \u641C\u7D22";
+      button.setAttribute("aria-label", "\u5728 JavClub \u641C\u7D22\u5F53\u524D\u756A\u53F7");
       Object.assign(button.style, {
         float: "right",
         position: "relative",
@@ -8232,11 +8897,16 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton2(document2);
     else document2.getElementById(COPY_BUTTON_ID2)?.remove();
   }
-  function observeModernResourceActionButtons(document2) {
+  function observeModernResourceActionButtons(document2, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2?.body || modernActionObservers.has(document2)) return;
     const Observer = document2.defaultView?.MutationObserver;
     if (typeof Observer !== "function") return;
-    const observer = new Observer(() => refreshModernResourceActionButtons(document2));
+    const observer = new Observer(() => {
+      refreshModernResourceActionButtons(document2);
+      if (isAgaghhhHdblogPreviewEnabled()) {
+        void installAgaghhhHdblogPreview(document2, document2.location, gmRequest2);
+      }
+    });
     observer.observe(document2.body, { childList: true, subtree: true });
     modernActionObservers.set(document2, observer);
   }
@@ -8383,7 +9053,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="cross-search" type="checkbox" style="margin-top:3px">
-        <span><strong>\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u6807\u9898\u65C1\u663E\u793A\u641C\u7D22\u6309\u94AE\uFF0C\u8BC6\u522B\u756A\u53F7\u540E\u76F4\u63A5\u6253\u5F00 hdblog \u641C\u7D22\uFF1B\u53EF\u72EC\u7ACB\u4E8E\u4E0B\u8F7D\u589E\u5F3A\u4F7F\u7528\u3002</small></span>
+        <span><strong>\u8DE8\u7AD9\u641C\u7D22\u6309\u94AE\uFF08\u{1F50D}\uFF09</strong><small style="display:block;margin-top:2px;color:#666">\u5728\u5E16\u5B50\u6807\u9898\u65C1\u663E\u793A\u641C\u7D22\u6309\u94AE\uFF0C\u8BC6\u522B\u756A\u53F7\u540E\u76F4\u63A5\u6253\u5F00 JavClub \u641C\u7D22\uFF1B\u53EF\u72EC\u7ACB\u4E8E\u4E0B\u8F7D\u589E\u5F3A\u4F7F\u7528\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
@@ -8395,11 +9065,28 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
-        <span><strong>\u663E\u793A hdblog \u5927\u9884\u89C8\u56FE</strong><small style="display:block;margin-top:2px;color:#666">\u6309\u5E16\u5B50\u756A\u53F7\u641C\u7D22 hdblog\uFF0C\u6CBF\u7528 hdblog \u7684\u201C\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD\u201D\uFF0C\u5E76\u628A\u5339\u914D\u6587\u7AE0\u7684 Preview \u5927\u56FE\u663E\u793A\u5230\u4E3B\u697C\u3002</small></span>
+        <span><strong>\u663E\u793A JavClub \u5927\u9884\u89C8\u56FE</strong><small style="display:block;margin-top:2px;color:#666">\u6309\u5E16\u5B50\u756A\u53F7\u641C\u7D22 JavClub\uFF0C\u6CBF\u7528 JavClub \u7684\u201C\u641C\u7D22\u7ED3\u679C\u5C4F\u853D\u5173\u952E\u8BCD\u201D\uFF0C\u5E76\u628A\u5339\u914D\u6587\u7AE0\u7684 Preview \u5927\u56FE\u663E\u793A\u5230\u4E3B\u697C\u3002</small></span>
       </label>
+      <div data-hdblog-preview-load-settings style="margin:0 0 13px 24px">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px">
+            <span>\u8D85\u65F6\u65F6\u95F4\uFF08\u79D2\uFF09</span>
+            <input data-setting="hdblog-preview-timeout" type="number" min="3" max="120" step="1"
+              style="width:78px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          </label>
+          <label style="display:flex;align-items:center;gap:6px">
+            <span>\u5931\u8D25\u91CD\u8BD5\u6B21\u6570</span>
+            <input data-setting="hdblog-preview-retries" type="number" min="0" max="5" step="1"
+              style="width:65px;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:6px">
+          </label>
+          <button type="button" data-action="reset-hdblog-preview-settings"
+            style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">\u6062\u590D\u9ED8\u8BA4</button>
+        </div>
+        <small style="display:block;margin-top:5px;color:#666">\u9ED8\u8BA4 30 \u79D2\u3001\u91CD\u8BD5 2 \u6B21\u3002\u4EC5\u5728 JavClub \u641C\u7D22\u5230\u5339\u914D\u6587\u7AE0\uFF0C\u4E14\u6587\u7AE0\u52A0\u8F7D\u5931\u8D25\u6216 Preview \u5DF2\u5B58\u5728\u4F46\u52A0\u8F7D\u5931\u8D25\u65F6\u624D\u91CD\u8BD5\uFF1B\u6CA1\u6709\u5339\u914D\u6587\u7AE0\u6216\u6587\u7AE0\u6CA1\u6709 Preview \u65F6\u76F4\u63A5\u4F7F\u7528\u540E\u5907\u6E90\u3002</small>
+      </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin:-5px 0 13px 24px">
         <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
-        <span><strong>JavFree Preview \u540E\u5907\u6E90</strong><small style="display:block;margin-top:2px;color:#666">hdblog \u6CA1\u6709\u53EF\u7528 Preview \u65F6\uFF0C\u518D\u641C\u7D22 javfree.me\uFF0C\u5E76\u53EA\u53D6\u5C01\u9762\u540E\u7684\u7B2C 1 \u5F20 Preview\u3002</small></span>
+        <span><strong>JavFree Preview \u540E\u5907\u6E90</strong><small style="display:block;margin-top:2px;color:#666">JavClub \u6CA1\u6709\u53EF\u7528 Preview \u65F6\uFF0C\u518D\u641C\u7D22 javfree.me\uFF0C\u5E76\u53EA\u53D6\u5C01\u9762\u540E\u7684\u7B2C 1 \u5F20 Preview\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px">
         <input data-setting="real-actress" type="checkbox" style="margin-top:3px">
@@ -8456,6 +9143,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         "description": "\u9884\u89C8\u56FE\u540E\u5907\u6E90\u548C\u6F14\u5458\u4FE1\u606F\u8865\u5168",
         "settings": [
           "hdblog-preview",
+          "hdblog-preview-timeout",
+          "hdblog-preview-retries",
           "javfree-preview-fallback",
           "real-actress"
         ]
@@ -8479,6 +9168,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const blockedKeywordsInput = panel.querySelector('[data-setting="blocked-keywords"]');
     const searchAutoRedirectInput = panel.querySelector('[data-setting="search-auto-redirect"]');
     const previewInput = panel.querySelector('[data-setting="hdblog-preview"]');
+    const previewTimeoutInput = panel.querySelector('[data-setting="hdblog-preview-timeout"]');
+    const previewRetriesInput = panel.querySelector('[data-setting="hdblog-preview-retries"]');
+    const previewResetButton = panel.querySelector('[data-action="reset-hdblog-preview-settings"]');
     const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
     const actressInput = panel.querySelector('[data-setting="real-actress"]');
     batchInput.checked = isAgaghhhBatchOpenEnabled();
@@ -8498,6 +9190,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     blockedKeywordsInput.value = getAgaghhhBlockedKeywordsText();
     searchAutoRedirectInput.checked = isAgaghhhSearchAutoRedirectEnabled();
     previewInput.checked = isAgaghhhHdblogPreviewEnabled();
+    const previewLoading = getHdblogPreviewLoadingSettings();
+    previewTimeoutInput.value = String(previewLoading.timeoutMs / 1e3);
+    previewRetriesInput.value = String(previewLoading.retryCount);
     javfreePreviewInput.checked = isAgaghhhJavfreePreviewFallbackEnabled();
     actressInput.checked = isAgaghhhRealActressEnabled();
     const syncBatchIntervalFields = () => {
@@ -8519,7 +9214,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       downloadGuardInput.disabled = !downloadInput.checked;
     };
     const syncPreviewFallbackFields = () => {
-      javfreePreviewInput.disabled = !previewInput.checked;
+      const disabled = !previewInput.checked;
+      javfreePreviewInput.disabled = disabled;
+      previewTimeoutInput.disabled = disabled;
+      previewRetriesInput.disabled = disabled;
+      previewResetButton.disabled = disabled;
     };
     const syncSearchFilterFields = () => {
       blockedKeywordsInput.disabled = !searchFilterInput.checked;
@@ -8536,6 +9235,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     batchHistoryInput.addEventListener("change", syncBatchHistoryFields);
     downloadInput.addEventListener("change", syncDownloadGuardField);
     previewInput.addEventListener("change", syncPreviewFallbackFields);
+    previewResetButton.addEventListener("click", () => {
+      previewTimeoutInput.value = String(DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS / 1e3);
+      previewRetriesInput.value = String(DEFAULT_HDBLOG_PREVIEW_RETRIES);
+      previewResetButton.blur();
+    });
     searchFilterInput.addEventListener("change", syncSearchFilterFields);
     batchIntervalResetButton.addEventListener("click", () => {
       batchIntervalMinInput.value = String(DEFAULT_AGAGHHH_BATCH_OPEN_INTERVAL_MIN_MS / 1e3);
@@ -8557,6 +9261,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       if (!Number.isFinite(batchIntervalMinSeconds) || !Number.isFinite(batchIntervalMaxSeconds) || batchIntervalMinSeconds < 0.1 || batchIntervalMaxSeconds > 600 || batchIntervalMaxSeconds < batchIntervalMinSeconds) {
         document2.defaultView?.alert("\u6279\u91CF\u6253\u5F00\u4E3B\u9898\u95F4\u9694\u8BF7\u8F93\u5165 0.1\u2013600 \u79D2\uFF0C\u4E14\u6700\u5927\u95F4\u9694\u4E0D\u80FD\u5C0F\u4E8E\u6700\u5C0F\u95F4\u9694\u3002");
         batchIntervalMinInput.focus();
+        return;
+      }
+      const previewTimeoutSeconds = Number(previewTimeoutInput.value);
+      const previewRetries = Number(previewRetriesInput.value);
+      if (!Number.isInteger(previewTimeoutSeconds) || previewTimeoutSeconds < 3 || previewTimeoutSeconds > 120 || !Number.isInteger(previewRetries) || previewRetries < 0 || previewRetries > 5) {
+        document2.defaultView?.alert("JavClub Preview \u8D85\u65F6\u65F6\u95F4\u5FC5\u987B\u4E3A 3\u2013120 \u79D2\u6574\u6570\uFF0C\u5931\u8D25\u91CD\u8BD5\u6B21\u6570\u5FC5\u987B\u4E3A 0\u20135 \u7684\u6574\u6570\u3002");
+        previewTimeoutInput.focus();
         return;
       }
       const batchHistoryLimit = Number(batchHistoryLimitInput.value);
@@ -8595,6 +9306,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         );
         GM_setValue(AGAGHHH_SEARCH_AUTO_REDIRECT_ENABLED_KEY, searchAutoRedirectInput.checked);
         GM_setValue(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY, previewInput.checked);
+        GM_setValue(HDBLOG_PREVIEW_TIMEOUT_KEY, previewTimeoutSeconds * 1e3);
+        GM_setValue(HDBLOG_PREVIEW_RETRIES_KEY, previewRetries);
         GM_setValue(AGAGHHH_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
         GM_setValue(AGAGHHH_REAL_ACTRESS_ENABLED_KEY, actressInput.checked);
       }
@@ -8645,7 +9358,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     else document2.getElementById(COPY_BUTTON_ID2)?.remove();
     if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
     refreshModernResourceActionButtons(document2);
-    observeModernResourceActionButtons(document2);
+    observeModernResourceActionButtons(document2, gmRequest2);
   }
 
   // src/fc2cmadb.js
@@ -8661,7 +9374,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   }
   function buildFc2cmadbHdblogSearchUrl(value) {
     const code = String(value ?? "").trim();
-    return /^\d{5,12}$/.test(code) ? "https://hdblog.me/?s=" + code : "";
+    return /^\d{5,12}$/.test(code) ? "https://javclub.me/?s=" + code : "";
   }
   function isFc2cmadbHdblogSearchEnabled() {
     return typeof GM_getValue !== "function" || GM_getValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, true) !== false;
@@ -8689,8 +9402,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       link.href = searchUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
-      link.title = "\u5728 HDBLOG \u641C\u7D22 FC2-PPV-" + code;
-      link.setAttribute("aria-label", "\u5728 HDBLOG \u641C\u7D22\u756A\u53F7 " + code);
+      link.title = "\u5728 JavClub \u641C\u7D22 FC2-PPV-" + code;
+      link.setAttribute("aria-label", "\u5728 JavClub \u641C\u7D22\u756A\u53F7 " + code);
       link.setAttribute(LINK_ATTR, code);
       link.style.cursor = "pointer";
       link.style.zIndex = "2";
@@ -8706,7 +9419,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (typeof GM_registerMenuCommand === "function") {
       const enabled = isFc2cmadbHdblogSearchEnabled();
       GM_registerMenuCommand(
-        "\u2699\uFE0F FC2CMADB\uFF1A\u756A\u53F7\u641C\u7D22 HDBLOG\uFF08" + (enabled ? "\u5DF2\u5F00\u542F\uFF0C\u70B9\u51FB\u5173\u95ED" : "\u5DF2\u5173\u95ED\uFF0C\u70B9\u51FB\u5F00\u542F") + "\uFF09",
+        "\u2699\uFE0F FC2CMADB\uFF1A\u756A\u53F7\u641C\u7D22 JavClub\uFF08" + (enabled ? "\u5DF2\u5F00\u542F\uFF0C\u70B9\u51FB\u5173\u95ED" : "\u5DF2\u5173\u95ED\uFF0C\u70B9\u51FB\u5F00\u542F") + "\uFF09",
         () => {
           if (typeof GM_setValue !== "function") return;
           GM_setValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, !enabled);
