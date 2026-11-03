@@ -86,6 +86,17 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
     assert.ok(progressButton);
     assert.equal(progressButton.textContent, '定位浏览进度');
     assert.equal(button.textContent, '批量打开本页（3）');
+    assert.equal(button.dataset.x1080xCompact, 'batch');
+    assert.equal(button.getAttribute('data-x1080x-count'), '3');
+    assert.ok(button.querySelector('svg[data-x1080x-icon="batch"]'));
+    assert.equal(progressButton.dataset.x1080xCompact, 'locator');
+    assert.equal(progressButton.getAttribute('data-x1080x-count'), '');
+    assert.ok(progressButton.querySelector('svg[data-x1080x-icon="locator"]'));
+    assert.match(button.title, /当前模式：打开本页全部/);
+    assert.match(progressButton.title, /跨页寻找已浏览与未浏览主题/);
+    const compactCss = dom.window.document.getElementById('x1080x-ex-batch-compact-controls');
+    assert.match(compactCss.textContent, /content:attr\(data-x1080x-count\)/);
+    assert.match(compactCss.textContent, /visually-hidden/);
     assert.equal(
       dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
       '1'
@@ -945,6 +956,10 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
     assert.ok(toolbar, 'modern board must render toolbar before pagination');
     assert.equal(toolbar.nextElementSibling?.className, 'pgt');
     assert.equal(button.textContent, '批量打开未浏览（1）');
+    assert.equal(button.getAttribute('data-x1080x-count'), '1');
+    assert.match(button.title, /当前模式：仅打开未浏览/);
+    assert.ok(button.querySelector('svg[data-x1080x-icon="batch"]'));
+    assert.ok(progress.querySelector('svg[data-x1080x-icon="locator"]'));
     assert.equal(dom.window.document.querySelector(`a[href*="${visited}"]`)?.getAttribute('data-x1080x-batch-opened'), '1');
     assert.match(dom.window.document.getElementById('x1080x-ex-batch-open-history-style').textContent, /resource-title.*#bd10e0/s);
 
@@ -980,6 +995,8 @@ test('modern 1080xin board renders bulk controls, skips visited links and restor
       'modern history marks should recover after client-side pagination');
     await waitFor(() => button.textContent === '批量打开未浏览（0）',
       'modern bulk open count should follow new list contents');
+    assert.equal(button.getAttribute('data-x1080x-count'), '0', 'compact counter follows SPA pagination');
+    assert.match(button.title, /批量打开未浏览（0）/);
 
     // A zero-unread board still offers an all-posts action without opening settings.
     const modeTrigger = dom.window.document.getElementById('x1080x-ex-batch-mode-trigger');
@@ -1546,6 +1563,7 @@ test('split batch button switches between unopened-only and all without visiting
     all.click();
     assert.equal(menu.hidden, true);
     assert.equal(values.get('x1080x-ex:agaghhh-batch-open-unopened-only'), false);
+    assert.ok(button.querySelector('svg[data-x1080x-icon="batch"]'), 'mode switching preserves icon');
     await waitFor(() => opened.length === 2, 'all mode must open both posts');
     await waitFor(() => button.textContent === '批量打开本页（2）', 'all mode must become default');
     assert.deepEqual(opened, ['401', '402']);
