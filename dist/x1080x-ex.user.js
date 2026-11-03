@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.34
+// @version      1.10.35
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -33,6 +33,21 @@
     path.setAttribute("d", DOWNLOAD_ICON_PATH);
     svg.append(path);
     button.replaceChildren(svg);
+  }
+
+  // src/settings-actions.js
+  var siteSettingsTools = /* @__PURE__ */ new Map();
+  function registerSettingsTool(id, label, action) {
+    siteSettingsTools.set(id, action);
+    if ((id === "match-domains" || id === "add-current-domain") && typeof GM_registerMenuCommand === "function") {
+      GM_registerMenuCommand(label, action);
+    }
+  }
+  function runSiteSettingsTool(id) {
+    const action = siteSettingsTools.get(id);
+    if (typeof action !== "function") return false;
+    action();
+    return true;
   }
 
   // src/core.js
@@ -493,6 +508,13 @@
 .sx-group-body input[type="number"], .sx-group-body input[type="text"], .sx-group-body input[type="url"], .sx-group-body input[type="password"], .sx-group-body textarea { max-width:100%; }
 .sx-group-body input:disabled, .sx-group-body textarea:disabled { opacity:.55; cursor:not-allowed; }
 .sx-group-body small { line-height:1.55; }
+.sx-group-body input[type="checkbox"] { flex:none; width:16px; height:16px; accent-color:#2563eb; cursor:pointer; }
+.sx-group-body input[type="number"], .sx-group-body input[type="text"], .sx-group-body input[type="url"], .sx-group-body input[type="password"], .sx-group-body textarea { font:inherit; border-color:#cbd5e1; border-radius:7px; }
+.sx-group-body button[type="button"] { appearance:none; padding:8px 13px; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#334155; cursor:pointer; font:600 13px/1.4 system-ui,sans-serif; }
+.sx-group-body button[type="button"]:hover:not(:disabled) { background:#f1f5f9; }
+.sx-group-body button[type="button"]:disabled { opacity:.5; cursor:not-allowed; }
+.sx-group-body button[type="button"]:focus-visible, .sx-footer button:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
+.sx-footer button { appearance:none; min-height:36px; padding:8px 18px !important; font:600 13px/1.4 system-ui,sans-serif; }
 .sx-group-body > [data-batch-open-interval-row], .sx-group-body > [data-batch-open-history-row], .sx-group-body > [data-keywords-row], .sx-group-body > [data-search-filter-keywords-row] { margin-left:0 !important; padding:13px 14px; border-radius:8px; border:1px solid #e6eaf0; background:#f8fafc; }
 .sx-group-body > [data-download-guard-row] { margin-left:0 !important; }
 .sx-footer { padding:13px 24px; border-top:1px solid #e5e7eb; background:#fff; margin:0 !important; flex:none; }
@@ -645,8 +667,10 @@
   function addSettingsExtraSection(form, spec, element) {
     if (!form?.querySelector("[data-settings-workspace]")) return false;
     const existing = form.querySelector('[data-settings-section="' + spec.key + '"]');
+    const activeKey = form.querySelector('[data-settings-tab][aria-selected="true"]')?.dataset.settingsTab;
     const group = existing ? { body: existing.querySelector(".sx-group-body") } : appendSection(form, spec);
     group.body.append(element);
+    if (!existing) activateSettingsSection(form, activeKey || spec.key);
     return true;
   }
 
@@ -693,9 +717,9 @@
     const hostname = String(locationObject?.hostname ?? "").toLowerCase().replace(/\.$/, "");
     return ["javclub.me", "hdblog.me"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
   }
-  function enhanceHdblogSettingsPanel(document2) {
+  function enhanceHdblogSettingsPanel(document2, providedForm = null) {
     const overlay = document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID);
-    const panel = overlay?.querySelector("form");
+    const panel = providedForm || overlay?.querySelector("form");
     if (!panel || panel.querySelector(`[${IMAGE_HOSTS_FIELD_ATTR}]`)) return false;
     const label = document2.createElement("label");
     label.setAttribute(IMAGE_HOSTS_FIELD_ATTR, "1");
@@ -1857,7 +1881,7 @@
   function closeJavfreeSettingsPanel(document2) {
     document2?.getElementById(JAVFREE_SETTINGS_PANEL_ID)?.remove();
   }
-  function openJavfreeSettingsPanel(document2 = globalThis.document) {
+  function openJavfreeSettingsPanel(document2 = globalThis.document, { embedded = false, onSaved } = {}) {
     if (!document2?.body) return null;
     closeJavfreeSettingsPanel(document2);
     const overlay = document2.createElement("div");
@@ -1950,21 +1974,15 @@
         GM_setValue(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       }
       closeJavfreeSettingsPanel(document2);
-      document2.defaultView?.location?.reload?.();
+      if (typeof onSaved === "function") onSaved();
+      else document2.defaultView?.location?.reload?.();
     });
     overlay.append(form);
-    document2.body.append(overlay);
+    if (!embedded) document2.body.append(overlay);
     return overlay;
-  }
-  function registerJavfreeSettingsMenu(document2, locationObject) {
-    if (!isJavfreeHost(locationObject) || typeof GM_registerMenuCommand !== "function") return;
-    const view = document2?.defaultView;
-    if (view && view.top !== view) return;
-    GM_registerMenuCommand("\u2699\uFE0F JavFree \u8BBE\u7F6E", () => openJavfreeSettingsPanel(document2));
   }
   function installJavfreeEnhancement(document2 = globalThis.document, locationObject = globalThis.location, request = globalThis.GM_xmlhttpRequest) {
     if (!document2 || !isJavfreeHost(locationObject)) return null;
-    registerJavfreeSettingsMenu(document2, locationObject);
     if (isJavfreeSearchAutoRedirectEnabled()) {
       const target = javfreeUniqueSearchTarget(document2, locationObject);
       if (target && typeof locationObject?.replace === "function") {
@@ -3196,7 +3214,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   function closeHdblogSettingsPanel(document2) {
     document2?.getElementById(HDBLOG_SETTINGS_PANEL_ID2)?.remove();
   }
-  function openHdblogSettingsPanel(document2 = globalThis.document) {
+  function openHdblogSettingsPanel(document2 = globalThis.document, { embedded = false, onSaved } = {}) {
     if (!document2?.body) return null;
     closeHdblogSettingsPanel(document2);
     const overlay = document2.createElement("div");
@@ -3581,21 +3599,15 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       }
       closeHdblogSettingsPanel(document2);
       const view = document2.defaultView;
-      if (view?.location?.reload) view.location.reload();
+      if (typeof onSaved === "function") onSaved();
+      else if (view?.location?.reload) view.location.reload();
     });
     overlay.append(panel);
-    document2.body.append(overlay);
+    if (!embedded) document2.body.append(overlay);
     return overlay;
-  }
-  function registerHdblogSettingsMenu(document2, locationObject) {
-    if (!isHdblogHost3(locationObject) || typeof GM_registerMenuCommand !== "function") return;
-    const view = document2?.defaultView;
-    if (view && view.top !== view) return;
-    GM_registerMenuCommand("\u2699\uFE0F JavClub \u8BBE\u7F6E", () => openHdblogSettingsPanel(document2));
   }
   function installHdblogArticleEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2) return;
-    registerHdblogSettingsMenu(document2, locationObject);
     if (!isHdblogArticlePage(document2, locationObject)) return;
     const storedWidth = readStoredWidth();
     if (isHdblogArticleLayoutEnabled()) {
@@ -6434,7 +6446,7 @@ ${settings.password}`;
   }
   function registerSettingsMenu() {
     if (window.top !== window.self) return;
-    GM_registerMenuCommand("\u{1F310} \u8BBE\u7F6E x1080x \u7AD9\u70B9\u57DF\u540D", () => {
+    registerSettingsTool("primary-domain", "\u{1F310} \u8BBE\u7F6E x1080x \u4E3B\u7AD9\u57DF\u540D", () => {
       const input = window.prompt(
         "\u8BF7\u8F93\u5165 x1080x \u7AD9\u70B9\u5F53\u524D\u4F7F\u7528\u7684\u57DF\u540D\uFF08\u5982 1080xin.com\uFF09\u3002\u8DE8\u7AD9\u641C\u7D22\u53CA\u6D4F\u89C8\u8FDB\u5EA6\u94FE\u63A5\u5C06\u4F7F\u7528\u8BE5\u5730\u5740\uFF0C\u65E7\u57DF\u540D\u4ECD\u53EF\u8BC6\u522B\uFF1A",
         getAgaghhhPrimaryDomain()
@@ -6449,7 +6461,7 @@ ${settings.password}`;
       window.alert(`x1080x \u7AD9\u70B9\u57DF\u540D\u5DF2\u4FDD\u5B58\uFF1A${domain}
 \u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002\u539F\u6709\u6D4F\u89C8\u8BB0\u5F55\u5C06\u7EE7\u7EED\u4FDD\u7559\u3002`);
     });
-    GM_registerMenuCommand("\u2699\uFE0F \u8BBE\u7F6E\u5339\u914D\u57DF\u540D", () => {
+    registerSettingsTool("match-domains", "\u2699\uFE0F \u8BBE\u7F6E\u5339\u914D\u57DF\u540D", () => {
       const current = getConfiguredDomains().join("\n");
       const input = window.prompt(
         "\u8BF7\u8F93\u5165\u5141\u8BB8\u811A\u672C\u8FD0\u884C\u7684\u57DF\u540D\uFF0C\u53EF\u7528\u9017\u53F7\u3001\u7A7A\u683C\u6216\u6362\u884C\u5206\u9694\u3002\u4E5F\u53EF\u4EE5\u7C98\u8D34\u5B8C\u6574\u7F51\u5740\uFF1A",
@@ -6467,7 +6479,7 @@ ${domains.join("\n")}
 
 \u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002`);
     });
-    GM_registerMenuCommand("\u2795 \u6DFB\u52A0\u5F53\u524D\u57DF\u540D", () => {
+    registerSettingsTool("add-current-domain", "\u2795 \u6DFB\u52A0\u5F53\u524D\u57DF\u540D", () => {
       const domains = getConfiguredDomains();
       if (!isAllowedHost(location.hostname, domains)) {
         domains.push(location.hostname.toLowerCase());
@@ -6475,12 +6487,12 @@ ${domains.join("\n")}
       }
       window.alert(`\u5DF2\u6DFB\u52A0 ${location.hostname}\uFF0C\u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002`);
     });
-    GM_registerMenuCommand("\u21A9\uFE0F \u91CD\u7F6E\u9ED8\u8BA4\u57DF\u540D", () => {
+    registerSettingsTool("reset-domains", "\u21A9\uFE0F \u91CD\u7F6E\u9ED8\u8BA4\u57DF\u540D", () => {
       saveDomains(parseDomainList(DEFAULT_DOMAINS));
       saveAgaghhhPrimaryDomain(DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
       window.alert(`\u5DF2\u6062\u590D\u9ED8\u8BA4\u57DF\u540D\uFF1A${DEFAULT_DOMAINS}`);
     });
-    GM_registerMenuCommand("\u21AA\uFE0F \u8FC1\u79FB\u65E7\u7248 x1080x \u6D4F\u89C8\u8BB0\u5F55\u5230\u65B0\u7248", () => {
+    registerSettingsTool("migrate-history", "\u21AA\uFE0F \u8FC1\u79FB\u65E7\u7248 x1080x \u6D4F\u89C8\u8BB0\u5F55\u5230\u65B0\u7248", () => {
       const legacy = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : [];
       const total = compatibleHistoryKeys(legacy).filter((value) => value.startsWith("tid:")).length;
       if (!total) {
@@ -6502,7 +6514,7 @@ ${domains.join("\n")}
 \u65E7\u8BB0\u5F55\u672A\u5220\u9664\u3002${result.unresolved ? "\n\u672A\u89E3\u6790\u8BB0\u5F55\u53EA\u6709\u65E7 TID\uFF0C\u9700\u8981\u53EF\u8BBF\u95EE\u7684\u65E7\u5E16\u6216\u7AD9\u70B9\u65B0\u65E7 ID \u6620\u5C04\u624D\u80FD\u6062\u590D\u3002" : ""}`);
       }).catch((error) => window.alert(`\u8FC1\u79FB\u5931\u8D25\uFF1A${error?.message || error}`));
     });
-    GM_registerMenuCommand("\u{1F9FE} \u68C0\u67E5\u65E7\u7248\u6D4F\u89C8\u8BB0\u5F55", () => {
+    registerSettingsTool("inspect-history", "\u{1F9FE} \u68C0\u67E5\u65E7\u7248\u6D4F\u89C8\u8BB0\u5F55", () => {
       const legacy = compatibleHistoryKeys(typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : []);
       const modern = compatibleHistoryKeys(typeof GM_getValue === "function" ? GM_getValue(MODERN_RESOURCE_HISTORY_KEY, []) : []);
       const aliases = typeof GM_getValue === "function" ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
@@ -6522,7 +6534,7 @@ ${domains.join("\n")}
 
 \u65E7 TID \u6570\u91CF\u5927\u4E8E 0 \u8868\u793A\u6570\u636E\u5DF2\u8BFB\u5230\uFF1B\u4ECD\u7F3A\u5BF9\u5E94\u4FE1\u606F\u7684\u8BB0\u5F55\u65E0\u6CD5\u4EC5\u51ED\u7F16\u53F7\u5224\u65AD\u65B0\u7248\u5E16\u5B50\u662F\u5426\u6D4F\u89C8\u8FC7\u3002\u82E5\u65E7 TID \u4E3A 0\uFF0C\u8BF7\u5728\u539F\u6765\u90A3\u4EFD\u6CB9\u7334\u811A\u672C\u4E2D\u68C0\u67E5\u6216\u5BFC\u51FA\u5B58\u50A8\u6570\u636E\u3002`);
     });
-    GM_registerMenuCommand("\u{1F4E5} \u5BFC\u5165\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u6587\u4EF6", () => {
+    registerSettingsTool("import-history", "\u{1F4E5} \u5BFC\u5165\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u6587\u4EF6", () => {
       showHistoryImportDialog(document, async (file) => {
         const payload = JSON.parse((await file.text()).replace(/^\uFEFF/, ""));
         const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
@@ -8931,7 +8943,7 @@ ${title}`;
   function closeX1080xSettingsPanel(document2) {
     document2?.getElementById(SETTINGS_PANEL_ID)?.remove();
   }
-  function openX1080xSettingsPanel(document2 = globalThis.document) {
+  function openX1080xSettingsPanel(document2 = globalThis.document, { embedded = false, onSaved } = {}) {
     if (!document2?.body) return null;
     closeX1080xSettingsPanel(document2);
     const host = document2.createElement("div");
@@ -9291,26 +9303,13 @@ ${title}`;
       }
       closeX1080xSettingsPanel(document2);
       const view = document2.defaultView;
-      if (view?.location?.reload) view.location.reload();
+      if (typeof onSaved === "function") onSaved();
+      else if (view?.location?.reload) view.location.reload();
     });
     overlay.append(panel);
     root.append(overlay);
-    document2.body.append(host);
+    if (!embedded) document2.body.append(host);
     return overlay;
-  }
-  function installX1080xSettingsMenu(document2 = globalThis.document, locationObject = globalThis.location) {
-    if (!document2 || !isAgaghhhHost(locationObject)) return;
-    const view = document2.defaultView;
-    if (view && view.top !== view) return;
-    if (typeof GM_registerMenuCommand !== "function") return;
-    GM_registerMenuCommand("\u2699\uFE0F x1080x \u8BBE\u7F6E", () => {
-      try {
-        openX1080xSettingsPanel(document2);
-      } catch (error) {
-        console.error("[x1080x-ex] failed to open agaghhh settings", error);
-        document2.defaultView?.alert?.(`x1080x \u8BBE\u7F6E\u6253\u5F00\u5931\u8D25\uFF1A${error?.message || error}`);
-      }
-    });
   }
   function installAgaghhhEnhancement(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2 || !isAgaghhhHost(locationObject)) return;
@@ -9337,195 +9336,6 @@ ${title}`;
     if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
     refreshModernResourceActionButtons(document2);
     observeModernResourceActionButtons(document2, gmRequest2);
-  }
-
-  // src/fc2cmadb.js
-  var FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY = "x1080x-ex:fc2cmadb-hdblog-search-enabled";
-  var LINK_ATTR = "data-x1080x-fc2cmadb-hdblog-search";
-  function isFc2cmadbUrl(value) {
-    try {
-      const host = new URL(value).hostname.toLowerCase().replace(/\.$/, "");
-      return host === "fc2cmadb.com" || host.endsWith(".fc2cmadb.com");
-    } catch {
-      return false;
-    }
-  }
-  function buildFc2cmadbHdblogSearchUrl(value) {
-    const code = String(value ?? "").trim();
-    return /^\d{5,12}$/.test(code) ? "https://javclub.me/?s=" + code : "";
-  }
-  function isFc2cmadbHdblogSearchEnabled() {
-    return typeof GM_getValue !== "function" || GM_getValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, true) !== false;
-  }
-  function enhanceFc2cmadbArticleCodes(documentObject) {
-    if (!documentObject || !isFc2cmadbHdblogSearchEnabled()) return 0;
-    let changed = 0;
-    for (const figure of documentObject.querySelectorAll("figure")) {
-      const badge = figure.querySelector(":scope > span.absolute.top-0.left-0");
-      const cover = figure.querySelector(':scope > a[href*="/articles/"]');
-      if (!badge || !cover) continue;
-      const code = String(badge.textContent || "").trim();
-      const searchUrl = buildFc2cmadbHdblogSearchUrl(code);
-      if (!searchUrl) continue;
-      try {
-        const articleUrl = new URL(cover.getAttribute("href"), documentObject.baseURI);
-        const articleMatch = articleUrl.pathname.match(/^\/articles\/(\d+)\/?$/);
-        if (!isFc2cmadbUrl(articleUrl.href) || !articleMatch || articleMatch[1] !== code) continue;
-      } catch {
-        continue;
-      }
-      const link = documentObject.createElement("a");
-      link.className = badge.className;
-      link.textContent = code;
-      link.href = searchUrl;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.title = "\u5728 JavClub \u641C\u7D22 FC2-PPV-" + code;
-      link.setAttribute("aria-label", "\u5728 JavClub \u641C\u7D22\u756A\u53F7 " + code);
-      link.setAttribute(LINK_ATTR, code);
-      link.style.cursor = "pointer";
-      link.style.zIndex = "2";
-      link.style.textDecoration = "underline";
-      badge.replaceWith(link);
-      changed += 1;
-    }
-    return changed;
-  }
-  function installFc2cmadbEnhancement(windowObject = globalThis.window) {
-    if (!windowObject || !isFc2cmadbUrl(windowObject.location?.href)) return null;
-    const documentObject = windowObject.document;
-    if (typeof GM_registerMenuCommand === "function") {
-      const enabled = isFc2cmadbHdblogSearchEnabled();
-      GM_registerMenuCommand(
-        "\u2699\uFE0F FC2CMADB\uFF1A\u756A\u53F7\u641C\u7D22 JavClub\uFF08" + (enabled ? "\u5DF2\u5F00\u542F\uFF0C\u70B9\u51FB\u5173\u95ED" : "\u5DF2\u5173\u95ED\uFF0C\u70B9\u51FB\u5F00\u542F") + "\uFF09",
-        () => {
-          if (typeof GM_setValue !== "function") return;
-          GM_setValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, !enabled);
-          windowObject.alert?.("FC2CMADB \u756A\u53F7\u641C\u7D22\u8BBE\u7F6E\u5DF2\u4FDD\u5B58\uFF0C\u5237\u65B0\u9875\u9762\u540E\u751F\u6548\u3002");
-        }
-      );
-    }
-    if (!documentObject?.body || !isFc2cmadbHdblogSearchEnabled()) return null;
-    const apply = () => enhanceFc2cmadbArticleCodes(documentObject);
-    apply();
-    const observer = new windowObject.MutationObserver(apply);
-    observer.observe(documentObject.body, { childList: true, subtree: true });
-    return observer;
-  }
-
-  // src/qbittorrent-settings.js
-  var SETTINGS_PANEL_ID2 = "x1080x-ex-settings-panel";
-  var QB_SECTION_ATTR = "data-x1080x-qb-settings";
-  var QB_BOUND_ATTR = "data-x1080x-qb-settings-bound";
-  function setStatus(element, message, kind = "") {
-    if (!element) return;
-    element.textContent = message;
-    element.style.color = kind === "error" ? "#c5221f" : kind === "success" ? "#16803c" : "#666";
-  }
-  function enhanceQbittorrentSettingsPanel(document2 = globalThis.document, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    const overlay = document2?.getElementById(SETTINGS_PANEL_ID2);
-    const form = overlay?.shadowRoot?.querySelector("form") || overlay?.querySelector("form");
-    if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
-    const current = getQbSettings();
-    if (!form.querySelector("[data-settings-workspace]")) {
-      form.style.width = "min(640px, 100%)";
-    }
-    form.setAttribute("autocomplete", "off");
-    const section = document2.createElement("div");
-    section.setAttribute(QB_SECTION_ATTR, "1");
-    section.style.cssText = "margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa";
-    section.innerHTML = `
-    <div style="font-weight:700;margin-bottom:11px">qBittorrent \u79CD\u5B50\u56DE\u9000</div>
-    <label style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
-      <input data-setting="qb-enabled" type="checkbox">
-      <span><strong>\u542F\u7528 qBittorrent \u5143\u6570\u636E\u56DE\u9000</strong><small style="display:block;margin-top:2px;color:#666">\u516C\u5171\u79CD\u5B50\u7F13\u5B58\u5747\u5931\u8D25\u540E\uFF0C\u901A\u8FC7 qBittorrent 5.2+ \u4ECE DHT / Tracker / Peer \u83B7\u53D6 metadata\uFF1B\u4E0D\u4F1A\u628A\u78C1\u529B\u52A0\u5165\u4E0B\u8F7D\u5217\u8868\u3002</small></span>
-    </label>
-    <label style="display:block;margin-bottom:10px">
-      <span style="display:block;font-weight:600;margin-bottom:5px">WebUI \u5730\u5740</span>
-      <input data-setting="qb-url" type="url" required placeholder="http://127.0.0.1:8080" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
-    </label>
-    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-bottom:10px">
-      <label style="display:block">
-        <span style="display:block;font-weight:600;margin-bottom:5px">\u7528\u6237\u540D</span>
-        <input data-setting="qb-username" type="text" required autocomplete="off" data-lpignore="true" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
-      </label>
-      <label style="display:block">
-        <span style="display:block;font-weight:600;margin-bottom:5px">\u5BC6\u7801</span>
-        <input data-setting="qb-password" type="password" autocomplete="off" data-lpignore="true" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
-      </label>
-    </div>
-    <label style="display:block;margin-bottom:10px">
-      <span style="display:block;font-weight:600;margin-bottom:5px">\u7B49\u5F85\u5143\u6570\u636E\uFF08\u79D2\uFF09</span>
-      <input data-setting="qb-timeout" type="number" min="10" max="300" step="1" required style="width:140px;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
-    </label>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button data-action="qb-test" type="button" style="padding:6px 12px">\u6D4B\u8BD5 qBittorrent \u767B\u5F55</button>
-      <span data-qb-status style="color:#666;overflow-wrap:anywhere"></span>
-    </div>
-    <small style="display:block;margin-top:9px;color:#666">\u7528\u6237\u540D\u548C\u5BC6\u7801\u4FDD\u5B58\u5728 Tampermonkey / Violentmonkey \u7684\u811A\u672C\u4E13\u5C5E\u5B58\u50A8\u4E2D\u3002\u5EFA\u8BAE WebUI \u4EC5\u5728\u53EF\u4FE1\u5C40\u57DF\u7F51\u4F7F\u7528\uFF0C\u6216\u4F7F\u7528 HTTPS\u3002</small>`;
-    if (addSettingsExtraSection(form, {
-      key: "qbittorrent",
-      title: "qBittorrent",
-      description: "\u4E0B\u8F7D\u5931\u8D25\u65F6\u901A\u8FC7 qBittorrent \u83B7\u53D6\u79CD\u5B50\u5143\u6570\u636E"
-    }, section)) {
-      section.style.cssText = "margin:0;padding:0;border:0;background:transparent";
-    } else {
-      const actions = form.lastElementChild;
-      form.insertBefore(section, actions || null);
-    }
-    const enabledInput = section.querySelector('[data-setting="qb-enabled"]');
-    const urlInput = section.querySelector('[data-setting="qb-url"]');
-    const usernameInput = section.querySelector('[data-setting="qb-username"]');
-    const passwordInput = section.querySelector('[data-setting="qb-password"]');
-    const timeoutInput = section.querySelector('[data-setting="qb-timeout"]');
-    const testButton = section.querySelector('[data-action="qb-test"]');
-    const status = section.querySelector("[data-qb-status]");
-    enabledInput.checked = current.enabled;
-    urlInput.value = current.url;
-    usernameInput.value = current.username;
-    passwordInput.value = current.password;
-    timeoutInput.value = String(Math.round(current.metadataTimeoutMs / 1e3));
-    const formSettings = () => ({
-      enabled: enabledInput.checked,
-      url: urlInput.value,
-      username: usernameInput.value,
-      password: passwordInput.value,
-      metadataTimeoutMs: Number(timeoutInput.value) * 1e3
-    });
-    testButton.addEventListener("click", async () => {
-      testButton.disabled = true;
-      setStatus(status, "\u6B63\u5728\u767B\u5F55 qBittorrent\u2026");
-      try {
-        const result = await testQbConnection(formSettings(), gmRequest2);
-        setStatus(status, `\u767B\u5F55\u6210\u529F\uFF0CqBittorrent ${result.version}`, "success");
-      } catch (error) {
-        setStatus(status, error?.message || String(error), "error");
-      } finally {
-        testButton.disabled = false;
-      }
-    });
-    if (form.getAttribute(QB_BOUND_ATTR) !== "1") {
-      form.setAttribute(QB_BOUND_ATTR, "1");
-      form.addEventListener("submit", (event) => {
-        try {
-          saveQbSettings(formSettings());
-        } catch (error) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          setStatus(status, error?.message || String(error), "error");
-        }
-      }, true);
-    }
-    return true;
-  }
-  function installQbittorrentSettings(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
-    if (!document2?.body || !isAgaghhhHost(locationObject)) return null;
-    if (enhanceQbittorrentSettingsPanel(document2, gmRequest2)) return null;
-    const Observer = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
-    if (typeof Observer !== "function") return null;
-    const observer = new Observer(() => enhanceQbittorrentSettingsPanel(document2, gmRequest2));
-    observer.observe(document2.body, { childList: true, subtree: true });
-    return observer;
   }
 
   // src/sehuatang.js
@@ -9667,7 +9477,7 @@ ${title}`;
     submit.click();
     return { submitted: true, message: "\u5DF2\u4EA4\u7ED9\u7F51\u7AD9\u53D1\u8868\uFF0C\u8BF7\u67E5\u770B\u539F\u751F\u56DE\u590D\u7ED3\u679C\uFF1B\u5982\u9700\u9A8C\u8BC1\u7801\u8BF7\u624B\u52A8\u5B8C\u6210\u3002" };
   }
-  function openSehuatangSettings(document2 = globalThis.document) {
+  function openSehuatangSettings(document2 = globalThis.document, { embedded = false, onSaved } = {}) {
     if (!document2?.body) return null;
     document2.getElementById(PANEL_ID)?.remove();
     const settings = getSehuatangSettings();
@@ -9694,19 +9504,65 @@ ${title}`;
       borderRadius: "12px",
       font: "14px/1.7 system-ui, sans-serif"
     });
-    form.innerHTML = `<h2 style="margin:0 0 16px">98\u5802\u8BBE\u7F6E</h2>
-    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="attachments"> \u9644\u4EF6\u5217\u8868\u663E\u793A\u5B9A\u4F4D\u56FE\u6807</label>
-    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="download"> \u9644\u4EF6\u5217\u8868\u663E\u793A\u4E0B\u8F7D\u56FE\u6807</label>
-    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="reply"> \u663E\u793A\u300C\u5FEB\u6377\u56DE\u590D\u300D\u6309\u94AE</label>
-    <label style="display:block;margin:12px 0"><input type="checkbox" data-setting="hidden-notice"> \u63D0\u793A\u697C\u4E3B\u56DE\u590D\u540E\u53EF\u89C1\u7684\u9690\u85CF\u5185\u5BB9</label>
-    <label style="display:block">\u56DE\u590D\u77ED\u8BED<textarea data-setting="phrase" rows="3" style="display:block;width:100%;box-sizing:border-box;margin-top:6px"></textarea></label>
-    <p>\u70B9\u51FB\u5FEB\u6377\u56DE\u590D\u4F1A\u7ACB\u5373\u4F7F\u7528\u8BE5\u77ED\u8BED\u53D1\u8868\uFF0C\u5DF2\u6709\u8349\u7A3F\u65F6\u4FDD\u7559\u8349\u7A3F\u3002\u9A8C\u8BC1\u7801\u3001\u6743\u9650\u548C\u9650\u6D41\u4ECD\u7531\u7F51\u7AD9\u5904\u7406\u3002</p>
-    <p>\u6D6E\u52A8\u680F\u76F4\u63A5\u5217\u51FA\u697C\u4E3B\u9644\u4EF6\uFF0C\u6BCF\u4E2A\u6587\u4EF6\u53F3\u4FA7\u63D0\u4F9B\u5B9A\u4F4D\u548C\u4E0B\u8F7D\u56FE\u6807\uFF1B\u60AC\u6D6E\u56FE\u6807\u53EF\u67E5\u770B\u7528\u9014\u3002\u4E0B\u8F7D\u6CBF\u7528\u7F51\u7AD9\u539F\u751F\u94FE\u63A5\u3001\u6743\u9650\u53CA\u4ED8\u8D39\u786E\u8BA4\u3002</p>
-    <p>\u62D6\u52A8\u6D6E\u52A8\u680F\u9876\u90E8\u53EF\u79FB\u52A8\u5E76\u8BB0\u4F4F\u4F4D\u7F6E\uFF0C\u6309\u94AE\u968F\u9875\u9762\u6EDA\u52A8\u4FDD\u6301\u53EF\u89C1\u3002</p>
-    <button type="button" data-action="reset-position">\u91CD\u7F6E\u6309\u94AE\u4F4D\u7F6E</button>
+    form.innerHTML = `
+    <h2 style="margin:0 0 18px;font-size:20px">98\u5802\u8BBE\u7F6E</h2>
+    <div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="attachments" style="margin-top:3px">
+        <span><strong>\u9644\u4EF6\u5B9A\u4F4D\u56FE\u6807</strong><small style="display:block;color:#64748b;margin-top:3px">\u5728\u697C\u4E3B\u9644\u4EF6\u65C1\u663E\u793A\u5B9A\u4F4D\u6309\u94AE\uFF0C\u70B9\u51FB\u8DF3\u5230\u5BF9\u5E94\u9644\u4EF6\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="download" style="margin-top:3px">
+        <span><strong>\u9644\u4EF6\u4E0B\u8F7D\u56FE\u6807</strong><small style="display:block;color:#64748b;margin-top:3px">\u6CBF\u7528\u7F51\u7AD9\u539F\u751F\u4E0B\u8F7D\u94FE\u63A5\uFF0C\u4ECD\u9700\u9075\u5B88\u539F\u6709\u6743\u9650\u548C\u4ED8\u8D39\u89C4\u5219\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
+        <span><strong>\u56DE\u590D\u540E\u53EF\u89C1\u5185\u5BB9\u63D0\u793A</strong><small style="display:block;color:#64748b;margin-top:3px">\u63D0\u793A\u697C\u4E3B\u56DE\u590D\u540E\u53EF\u89C1\u7684\u5185\u5BB9\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u7ED5\u8FC7\u9650\u5236\u3002</small></span>
+      </label>
+    </div>
+    <div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="reply" style="margin-top:3px">
+        <span><strong>\u5FEB\u6377\u56DE\u590D\u6309\u94AE</strong><small style="display:block;color:#64748b;margin-top:3px">\u70B9\u51FB\u540E\u4EA4\u7531\u7F51\u7AD9\u53D1\u8868\uFF0C\u5DF2\u6709\u8349\u7A3F\u4E0D\u4F1A\u88AB\u8986\u76D6\uFF1B\u9A8C\u8BC1\u7801\u548C\u6743\u9650\u4ECD\u7531\u7F51\u7AD9\u5904\u7406\u3002</small></span>
+      </label>
+      <label style="display:block;margin-bottom:12px">
+        <span style="display:block;font-weight:600;margin-bottom:7px">\u5FEB\u6377\u56DE\u590D\u77ED\u8BED</span>
+        <textarea data-setting="phrase" rows="3" placeholder="\u8F93\u5165\u5FEB\u6377\u56DE\u590D\u5185\u5BB9"
+          style="display:block;width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #cbd5e1;border-radius:7px;resize:vertical;font:inherit"></textarea>
+        <small style="display:block;color:#64748b;margin-top:5px">\u4FDD\u5B58\u540E\uFF0C\u4E0B\u6B21\u70B9\u51FB\u5FEB\u6377\u56DE\u590D\u4F1A\u4F7F\u7528\u6B64\u77ED\u8BED\u3002</small>
+      </label>
+    </div>
+    <div>
+      <div data-setting="floating-position">
+        <p style="color:#64748b;margin:0 0 12px">\u6D6E\u52A8\u680F\u663E\u793A\u697C\u4E3B\u9644\u4EF6\uFF0C\u652F\u6301\u5B9A\u4F4D\u3001\u4E0B\u8F7D\u548C\u5FEB\u6377\u56DE\u590D\u3002\u62D6\u52A8\u9876\u90E8\u53EF\u4EE5\u79FB\u52A8\u5E76\u8BB0\u4F4F\u4F4D\u7F6E\uFF0C\u6EDA\u52A8\u9875\u9762\u65F6\u4ECD\u53EF\u89C1\u3002</p>
+        <button type="button" data-action="reset-position">\u91CD\u7F6E\u6D6E\u52A8\u680F\u4F4D\u7F6E</button>
+        <small style="display:block;color:#64748b;margin-top:8px">\u70B9\u51FB\u540E\u9700\u4FDD\u5B58\u8BBE\u7F6E\u624D\u4F1A\u6062\u590D\u9ED8\u8BA4\u4F4D\u7F6E\u3002</small>
+      </div>
+    </div>
     <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:20px">
-      <button type="button" data-action="cancel">\u53D6\u6D88</button><button type="submit">\u4FDD\u5B58</button>
+      <button type="button" data-action="cancel" style="padding:7px 14px">\u53D6\u6D88</button>
+      <button type="submit" style="padding:7px 16px;font-weight:600">\u4FDD\u5B58</button>
     </div>`;
+    organizeSettingsPanel(form, [
+      {
+        key: "attachments",
+        title: "\u9644\u4EF6\u529F\u80FD",
+        description: "\u9644\u4EF6\u5B9A\u4F4D\u3001\u4E0B\u8F7D\u548C\u5185\u5BB9\u63D0\u793A",
+        settings: ["attachments", "download", "hidden-notice"]
+      },
+      {
+        key: "reply",
+        title: "\u5FEB\u6377\u56DE\u590D",
+        description: "\u542F\u7528\u5FEB\u6377\u56DE\u590D\u5E76\u8BBE\u7F6E\u56DE\u590D\u77ED\u8BED",
+        settings: ["reply", "phrase"]
+      },
+      {
+        key: "position",
+        title: "\u6D6E\u52A8\u680F\u4F4D\u7F6E",
+        description: "\u6D6E\u52A8\u6309\u94AE\u7684\u4F4D\u7F6E\u7BA1\u7406",
+        settings: ["floating-position"]
+      }
+    ]);
     const field = (name) => form.querySelector(`[data-setting="${name}"]`);
     field("attachments").checked = settings.attachments;
     field("download").checked = settings.download;
@@ -9739,12 +9595,13 @@ ${title}`;
       save(SHT_REPLY_PHRASE_KEY, field("phrase").value.trim());
       if (resetPosition) save(SHT_POSITION_KEY, null);
       overlay.remove();
-      installSehuatangToolbar(document2);
+      if (typeof onSaved === "function") onSaved();
+      if (isSehuatangHost(document2.defaultView?.location)) installSehuatangToolbar(document2);
     });
     field("phrase").addEventListener("input", () => field("phrase").setCustomValidity(""));
     field("reply").addEventListener("change", () => field("phrase").setCustomValidity(""));
     overlay.append(form);
-    document2.body.append(overlay);
+    if (!embedded) document2.body.append(overlay);
     return overlay;
   }
   var installations = /* @__PURE__ */ new WeakMap();
@@ -9958,15 +9815,418 @@ ${title}`;
     if (!document2?.body || !isSehuatangHost(location2)) return null;
     const view = document2.defaultView;
     if (view && view.top !== view) return null;
-    if (typeof GM_registerMenuCommand === "function") {
-      GM_registerMenuCommand("\u2699\uFE0F 98\u5802\u8BBE\u7F6E", () => openSehuatangSettings(document2));
-    }
     return installSehuatangToolbar(document2);
   }
 
+  // src/fc2cmadb.js
+  var FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY = "x1080x-ex:fc2cmadb-hdblog-search-enabled";
+  var LINK_ATTR = "data-x1080x-fc2cmadb-hdblog-search";
+  function isFc2cmadbUrl(value) {
+    try {
+      const host = new URL(value).hostname.toLowerCase().replace(/\.$/, "");
+      return host === "fc2cmadb.com" || host.endsWith(".fc2cmadb.com");
+    } catch {
+      return false;
+    }
+  }
+  function buildFc2cmadbHdblogSearchUrl(value) {
+    const code = String(value ?? "").trim();
+    return /^\d{5,12}$/.test(code) ? "https://javclub.me/?s=" + code : "";
+  }
+  function isFc2cmadbHdblogSearchEnabled() {
+    return typeof GM_getValue !== "function" || GM_getValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, true) !== false;
+  }
+  function enhanceFc2cmadbArticleCodes(documentObject) {
+    if (!documentObject || !isFc2cmadbHdblogSearchEnabled()) return 0;
+    let changed = 0;
+    for (const figure of documentObject.querySelectorAll("figure")) {
+      const badge = figure.querySelector(":scope > span.absolute.top-0.left-0");
+      const cover = figure.querySelector(':scope > a[href*="/articles/"]');
+      if (!badge || !cover) continue;
+      const code = String(badge.textContent || "").trim();
+      const searchUrl = buildFc2cmadbHdblogSearchUrl(code);
+      if (!searchUrl) continue;
+      try {
+        const articleUrl = new URL(cover.getAttribute("href"), documentObject.baseURI);
+        const articleMatch = articleUrl.pathname.match(/^\/articles\/(\d+)\/?$/);
+        if (!isFc2cmadbUrl(articleUrl.href) || !articleMatch || articleMatch[1] !== code) continue;
+      } catch {
+        continue;
+      }
+      const link = documentObject.createElement("a");
+      link.className = badge.className;
+      link.textContent = code;
+      link.href = searchUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.title = "\u5728 JavClub \u641C\u7D22 FC2-PPV-" + code;
+      link.setAttribute("aria-label", "\u5728 JavClub \u641C\u7D22\u756A\u53F7 " + code);
+      link.setAttribute(LINK_ATTR, code);
+      link.style.cursor = "pointer";
+      link.style.zIndex = "2";
+      link.style.textDecoration = "underline";
+      badge.replaceWith(link);
+      changed += 1;
+    }
+    return changed;
+  }
+  function installFc2cmadbEnhancement(windowObject = globalThis.window) {
+    if (!windowObject || !isFc2cmadbUrl(windowObject.location?.href)) return null;
+    const documentObject = windowObject.document;
+    if (!documentObject?.body || !isFc2cmadbHdblogSearchEnabled()) return null;
+    const apply = () => enhanceFc2cmadbArticleCodes(documentObject);
+    apply();
+    const observer = new windowObject.MutationObserver(apply);
+    observer.observe(documentObject.body, { childList: true, subtree: true });
+    return observer;
+  }
+
+  // src/qbittorrent-settings.js
+  var SETTINGS_PANEL_ID2 = "x1080x-ex-settings-panel";
+  var QB_SECTION_ATTR = "data-x1080x-qb-settings";
+  var QB_BOUND_ATTR = "data-x1080x-qb-settings-bound";
+  function setStatus(element, message, kind = "") {
+    if (!element) return;
+    element.textContent = message;
+    element.style.color = kind === "error" ? "#c5221f" : kind === "success" ? "#16803c" : "#666";
+  }
+  function enhanceQbittorrentSettingsPanel(document2 = globalThis.document, gmRequest2 = globalThis.GM_xmlhttpRequest, providedForm = null) {
+    const overlay = document2?.getElementById(SETTINGS_PANEL_ID2);
+    const form = providedForm || overlay?.shadowRoot?.querySelector("form") || overlay?.querySelector("form");
+    if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
+    const current = getQbSettings();
+    if (!form.querySelector("[data-settings-workspace]")) {
+      form.style.width = "min(640px, 100%)";
+    }
+    form.setAttribute("autocomplete", "off");
+    const section = document2.createElement("div");
+    section.setAttribute(QB_SECTION_ATTR, "1");
+    section.style.cssText = "margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa";
+    section.innerHTML = `
+    <div style="font-weight:700;margin-bottom:11px">qBittorrent \u79CD\u5B50\u56DE\u9000</div>
+    <label style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+      <input data-setting="qb-enabled" type="checkbox">
+      <span><strong>\u542F\u7528 qBittorrent \u5143\u6570\u636E\u56DE\u9000</strong><small style="display:block;margin-top:2px;color:#666">\u516C\u5171\u79CD\u5B50\u7F13\u5B58\u5747\u5931\u8D25\u540E\uFF0C\u901A\u8FC7 qBittorrent 5.2+ \u4ECE DHT / Tracker / Peer \u83B7\u53D6 metadata\uFF1B\u4E0D\u4F1A\u628A\u78C1\u529B\u52A0\u5165\u4E0B\u8F7D\u5217\u8868\u3002</small></span>
+    </label>
+    <label style="display:block;margin-bottom:10px">
+      <span style="display:block;font-weight:600;margin-bottom:5px">WebUI \u5730\u5740</span>
+      <input data-setting="qb-url" type="url" required placeholder="http://127.0.0.1:8080" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+    </label>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-bottom:10px">
+      <label style="display:block">
+        <span style="display:block;font-weight:600;margin-bottom:5px">\u7528\u6237\u540D</span>
+        <input data-setting="qb-username" type="text" required autocomplete="off" data-lpignore="true" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+      </label>
+      <label style="display:block">
+        <span style="display:block;font-weight:600;margin-bottom:5px">\u5BC6\u7801</span>
+        <input data-setting="qb-password" type="password" autocomplete="off" data-lpignore="true" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+      </label>
+    </div>
+    <label style="display:block;margin-bottom:10px">
+      <span style="display:block;font-weight:600;margin-bottom:5px">\u7B49\u5F85\u5143\u6570\u636E\uFF08\u79D2\uFF09</span>
+      <input data-setting="qb-timeout" type="number" min="10" max="300" step="1" required style="width:140px;box-sizing:border-box;padding:8px 10px;border:1px solid #bbb;border-radius:6px">
+    </label>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button data-action="qb-test" type="button" style="padding:6px 12px">\u6D4B\u8BD5 qBittorrent \u767B\u5F55</button>
+      <span data-qb-status style="color:#666;overflow-wrap:anywhere"></span>
+    </div>
+    <small style="display:block;margin-top:9px;color:#666">\u7528\u6237\u540D\u548C\u5BC6\u7801\u4FDD\u5B58\u5728 Tampermonkey / Violentmonkey \u7684\u811A\u672C\u4E13\u5C5E\u5B58\u50A8\u4E2D\u3002\u5EFA\u8BAE WebUI \u4EC5\u5728\u53EF\u4FE1\u5C40\u57DF\u7F51\u4F7F\u7528\uFF0C\u6216\u4F7F\u7528 HTTPS\u3002</small>`;
+    if (addSettingsExtraSection(form, {
+      key: "qbittorrent",
+      title: "qBittorrent",
+      description: "\u4E0B\u8F7D\u5931\u8D25\u65F6\u901A\u8FC7 qBittorrent \u83B7\u53D6\u79CD\u5B50\u5143\u6570\u636E"
+    }, section)) {
+      section.style.cssText = "margin:0;padding:0;border:0;background:transparent";
+    } else {
+      const actions = form.lastElementChild;
+      form.insertBefore(section, actions || null);
+    }
+    const enabledInput = section.querySelector('[data-setting="qb-enabled"]');
+    const urlInput = section.querySelector('[data-setting="qb-url"]');
+    const usernameInput = section.querySelector('[data-setting="qb-username"]');
+    const passwordInput = section.querySelector('[data-setting="qb-password"]');
+    const timeoutInput = section.querySelector('[data-setting="qb-timeout"]');
+    const testButton = section.querySelector('[data-action="qb-test"]');
+    const status = section.querySelector("[data-qb-status]");
+    enabledInput.checked = current.enabled;
+    urlInput.value = current.url;
+    usernameInput.value = current.username;
+    passwordInput.value = current.password;
+    timeoutInput.value = String(Math.round(current.metadataTimeoutMs / 1e3));
+    const formSettings = () => ({
+      enabled: enabledInput.checked,
+      url: urlInput.value,
+      username: usernameInput.value,
+      password: passwordInput.value,
+      metadataTimeoutMs: Number(timeoutInput.value) * 1e3
+    });
+    testButton.addEventListener("click", async () => {
+      testButton.disabled = true;
+      setStatus(status, "\u6B63\u5728\u767B\u5F55 qBittorrent\u2026");
+      try {
+        const result = await testQbConnection(formSettings(), gmRequest2);
+        setStatus(status, `\u767B\u5F55\u6210\u529F\uFF0CqBittorrent ${result.version}`, "success");
+      } catch (error) {
+        setStatus(status, error?.message || String(error), "error");
+      } finally {
+        testButton.disabled = false;
+      }
+    });
+    if (form.getAttribute(QB_BOUND_ATTR) !== "1") {
+      form.setAttribute(QB_BOUND_ATTR, "1");
+      form.addEventListener("submit", (event) => {
+        try {
+          saveQbSettings(formSettings());
+        } catch (error) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          setStatus(status, error?.message || String(error), "error");
+        }
+      }, true);
+    }
+    return true;
+  }
+  function installQbittorrentSettings(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
+    if (!document2?.body || !isAgaghhhHost(locationObject)) return null;
+    if (enhanceQbittorrentSettingsPanel(document2, gmRequest2)) return null;
+    const Observer = document2.defaultView?.MutationObserver || globalThis.MutationObserver;
+    if (typeof Observer !== "function") return null;
+    const observer = new Observer(() => enhanceQbittorrentSettingsPanel(document2, gmRequest2));
+    observer.observe(document2.body, { childList: true, subtree: true });
+    return observer;
+  }
+
+  // src/settings-center.js
+  var SETTINGS_CENTER_ID = "x1080x-ex-unified-settings-center";
+  var SETTINGS_CENTER_SITES = Object.freeze([
+    { key: "x1080x", label: "x1080x" },
+    { key: "javclub", label: "JavClub" },
+    { key: "javfree", label: "JavFree" },
+    { key: "fc2cmadb", label: "FC2CMADB" },
+    { key: "sehuatang", label: "98\u5802" }
+  ]);
+  var STYLE2 = ':host{all:initial;color-scheme:light;font:14px/1.5 system-ui,sans-serif;color:#253142}\n*{box-sizing:border-box}\n.backdrop{position:fixed;inset:0;z-index:2147483647;background:#0f172a99;padding:16px;display:grid;place-items:center}\n.dialog{width:min(1040px,100%);height:min(790px,calc(100vh - 32px));background:white;box-shadow:0 24px 90px #0005;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;min-height:0}\n.header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid #e2e8f0}\n.header h2{font-size:19px;margin:0}.header small{color:#64748b}.close{font-size:23px;border:0;background:transparent;cursor:pointer;color:#475569;padding:0 8px}\n.tabs{display:flex;gap:4px;overflow-x:auto;padding:9px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0}\n.tabs button{flex:none;border:0;border-radius:8px;padding:9px 14px;background:transparent;color:#475569;font:600 13px system-ui,sans-serif;cursor:pointer}\n.tabs button[aria-selected=true]{background:#e8f1ff;color:#155bb5;box-shadow:inset 0 -2px #2563eb}\n.tabs button[data-dirty=true]::after{content:" \u2022";color:#db8421}\n.content{flex:1;min-height:0;overflow:hidden}\n.pane{height:100%;overflow:auto;min-height:0}\n.pane[hidden]{display:none!important}\n.pane form{height:100%!important;max-height:none!important;width:100%!important;max-width:none!important;box-shadow:none!important;border-radius:0!important}\n.pane .sx-content{min-height:0}\n.status{padding:10px 18px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b}\n.pane form.simple{padding:28px!important;height:auto!important;max-width:720px!important;margin:0 auto;display:flex;flex-direction:column;gap:14px}.simple h3{margin:0;font-size:18px;color:#1e293b}.simple p{margin:0 0 4px}\n.simple label{display:flex;align-items:center;gap:9px;padding:16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#334155}.simple label input[type=checkbox]{width:16px;height:16px;accent-color:#2563eb}\n.simple p{color:#64748b}.simple button{align-self:flex-end;cursor:pointer;border:1px solid #2563eb;background:#2563eb;color:white;border-radius:7px;padding:9px 18px;margin-top:8px;font:600 13px/1.4 system-ui,sans-serif;min-height:36px}.simple button:hover{background:#1d4ed8}\n.tools{display:flex;flex-direction:column;gap:9px;padding:0 0 15px}\n.tools button{cursor:pointer;border:1px solid #cbd5e1;border-radius:7px;padding:10px 12px;text-align:left;background:white;color:#334155;font:inherit}\n.tools button:hover{background:#f1f5f9}\n.tools small{color:#64748b}\n@media(max-width:650px){.backdrop{padding:6px}.dialog{height:calc(100vh - 12px)}.header{padding:12px}.tabs{padding:6px}.tabs button{padding:8px 10px}.status{padding:8px 12px}}';
+  function inferSite(location2 = globalThis.location) {
+    const host = String(location2?.hostname || "").toLowerCase();
+    if (isAgaghhhHost(location2)) return "x1080x";
+    if (["javclub.me", "hdblog.me"].some((domain) => host === domain || host.endsWith("." + domain))) return "javclub";
+    if (host === "javfree.me" || host.endsWith(".javfree.me")) return "javfree";
+    if (host === "fc2cmadb.com" || host.endsWith(".fc2cmadb.com")) return "fc2cmadb";
+    if (host === "sehuatang.org" || host === "www.sehuatang.org") return "sehuatang";
+    return "x1080x";
+  }
+  function createHistoryTools(document2) {
+    const section = document2.createElement("div");
+    section.className = "tools";
+    for (const [key, label] of [
+      ["primary-domain", "\u{1F310} \u8BBE\u7F6E x1080x \u4E3B\u7AD9\u57DF\u540D"],
+      ["reset-domains", "\u21A9\uFE0F \u91CD\u7F6E\u9ED8\u8BA4\u57DF\u540D"],
+      ["migrate-history", "\u21AA\uFE0F \u8FC1\u79FB\u65E7\u7248\u6D4F\u89C8\u8BB0\u5F55"],
+      ["inspect-history", "\u{1F9FE} \u68C0\u67E5\u65E7\u7248\u6D4F\u89C8\u8BB0\u5F55"],
+      ["import-history", "\u{1F4E5} \u5BFC\u5165\u65E7\u8BBA\u575B\u5386\u53F2\u6062\u590D\u6587\u4EF6"]
+    ]) {
+      const button = document2.createElement("button");
+      button.type = "button";
+      button.dataset.tool = key;
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        try {
+          if (!runSiteSettingsTool(key)) throw new Error("\u5F53\u524D\u9875\u9762\u5C1A\u672A\u6CE8\u518C\u8BE5\u64CD\u4F5C");
+        } catch (error) {
+          document2.defaultView?.alert?.(error?.message || String(error));
+        }
+      });
+      section.append(button);
+    }
+    const note = document2.createElement("small");
+    note.textContent = "\u539F\u6709\u914D\u7F6E\u548C\u6D4F\u89C8\u8BB0\u5F55\u4FDD\u6301\u4E0D\u53D8\uFF1B\u57DF\u540D\u53D8\u66F4\u540E\u5237\u65B0\u76EE\u6807\u7F51\u7AD9\u3002";
+    section.append(note);
+    return section;
+  }
+  function openUnifiedSettingsCenter(document2 = globalThis.document, { initialSite = inferSite(document2?.defaultView?.location), gmRequest: gmRequest2 = globalThis.GM_xmlhttpRequest } = {}) {
+    if (!document2?.body) return null;
+    document2.getElementById(SETTINGS_CENTER_ID)?.remove();
+    const host = document2.createElement("div");
+    host.id = SETTINGS_CENTER_ID;
+    const root = host.attachShadow({ mode: "open" });
+    const style = document2.createElement("style");
+    style.textContent = STYLE2;
+    const backdrop = document2.createElement("div");
+    backdrop.className = "backdrop";
+    const dialog = document2.createElement("div");
+    dialog.className = "dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-label", "x1080x-ex \u8BBE\u7F6E\u4E2D\u5FC3");
+    const header = document2.createElement("div");
+    header.className = "header";
+    const heading = document2.createElement("div");
+    const title = document2.createElement("h2");
+    title.textContent = "x1080x-ex \u8BBE\u7F6E\u4E2D\u5FC3";
+    const subtitle = document2.createElement("small");
+    subtitle.textContent = "\u6240\u6709\u7F51\u7AD9\u96C6\u4E2D\u7BA1\u7406\uFF0C\u4FDD\u5B58\u540E\u5237\u65B0\u76EE\u6807\u7F51\u7AD9\u751F\u6548";
+    heading.append(title, subtitle);
+    const closeButton = document2.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "close";
+    closeButton.setAttribute("aria-label", "\u5173\u95ED\u8BBE\u7F6E\u4E2D\u5FC3");
+    closeButton.textContent = "\xD7";
+    header.append(heading, closeButton);
+    const nav = document2.createElement("nav");
+    nav.className = "tabs";
+    nav.setAttribute("role", "tablist");
+    nav.setAttribute("aria-label", "\u7F51\u7AD9\u8BBE\u7F6E");
+    const content = document2.createElement("div");
+    content.className = "content";
+    const status = document2.createElement("div");
+    status.className = "status";
+    status.setAttribute("role", "status");
+    status.textContent = "\u5404\u7F51\u7AD9\u72EC\u7ACB\u4FDD\u5B58\uFF1B\u5207\u6362\u7F51\u7AD9\u4E0D\u4F1A\u4E22\u5931\u672A\u4FDD\u5B58\u7684\u8F93\u5165\u3002";
+    const tabs = /* @__PURE__ */ new Map();
+    const panes = /* @__PURE__ */ new Map();
+    const forms = /* @__PURE__ */ new Map();
+    const dirty = /* @__PURE__ */ new Set();
+    const saved = (key) => {
+      dirty.delete(key);
+      tabs.get(key)?.removeAttribute("data-dirty");
+      status.textContent = "\u2713 " + SETTINGS_CENTER_SITES.find((site) => site.key === key).label + " \u8BBE\u7F6E\u5DF2\u4FDD\u5B58\u3002\u8BF7\u5237\u65B0\u5BF9\u5E94\u7F51\u7AD9\u3002";
+    };
+    const close = () => {
+      if (dirty.size && document2.defaultView?.confirm?.("\u5B58\u5728\u672A\u4FDD\u5B58\u7684\u8BBE\u7F6E\uFF0C\u786E\u5B9A\u5173\u95ED\u5417\uFF1F") === false) return;
+      host.remove();
+    };
+    closeButton.addEventListener("click", close);
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) close();
+    });
+    root.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    });
+    content.addEventListener("click", (event) => {
+      if (event.target?.closest?.('[data-action="cancel"]')) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+      }
+    }, true);
+    function makeForm(key) {
+      if (key === "fc2cmadb") {
+        const form2 = document2.createElement("form");
+        form2.className = "simple";
+        const h3 = document2.createElement("h3");
+        h3.textContent = "FC2CMADB \u756A\u53F7\u641C\u7D22";
+        const p = document2.createElement("p");
+        p.textContent = "\u70B9\u51FB\u4F5C\u54C1\u5361\u7247\u4E0A\u7684 FC2 \u6570\u5B57\u756A\u53F7\uFF0C\u5728 JavClub \u641C\u7D22\u5BF9\u5E94\u4F5C\u54C1\u3002";
+        const label = document2.createElement("label");
+        const check = document2.createElement("input");
+        check.type = "checkbox";
+        check.dataset.setting = "fc2cmadb-search";
+        check.checked = isFc2cmadbHdblogSearchEnabled();
+        const text = document2.createElement("span");
+        text.textContent = "\u542F\u7528\u756A\u53F7\u641C\u7D22 JavClub";
+        label.append(check, text);
+        const submit = document2.createElement("button");
+        submit.type = "submit";
+        submit.textContent = "\u4FDD\u5B58 FC2CMADB \u8BBE\u7F6E";
+        form2.append(h3, p, label, submit);
+        form2.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (typeof GM_setValue === "function") GM_setValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, check.checked);
+          saved(key);
+        });
+        return form2;
+      }
+      const options = { embedded: true, onSaved: () => saved(key) };
+      let overlay;
+      if (key === "x1080x") overlay = openX1080xSettingsPanel(document2, options);
+      else if (key === "javclub") overlay = openHdblogSettingsPanel(document2, options);
+      else if (key === "javfree") overlay = openJavfreeSettingsPanel(document2, options);
+      else if (key === "sehuatang") overlay = openSehuatangSettings(document2, options);
+      const form = overlay?.querySelector("form");
+      if (!form) throw new Error(key + " \u8BBE\u7F6E\u8868\u5355\u4E0D\u5B58\u5728");
+      if (key === "x1080x") {
+        enhanceQbittorrentSettingsPanel(document2, gmRequest2, form);
+        addSettingsExtraSection(form, {
+          key: "site-tools",
+          title: "\u57DF\u540D\u4E0E\u5386\u53F2\u5DE5\u5177",
+          description: "\u4E3B\u7AD9\u57DF\u540D\u3001\u65E7\u8BB0\u5F55\u8BCA\u65AD\u3001\u8FC1\u79FB\u548C\u6062\u590D"
+        }, createHistoryTools(document2));
+      }
+      if (key === "javclub") enhanceHdblogSettingsPanel(document2, form);
+      return form;
+    }
+    function activate(key) {
+      if (!panes.has(key)) return false;
+      if (!forms.has(key)) {
+        try {
+          const form = makeForm(key);
+          panes.get(key).append(form);
+          forms.set(key, form);
+          const markDirty = () => {
+            dirty.add(key);
+            tabs.get(key).setAttribute("data-dirty", "true");
+          };
+          form.addEventListener("change", markDirty);
+          form.addEventListener("input", markDirty);
+          form.addEventListener("click", (event) => {
+            if (event.target?.closest?.('button[data-action^="reset-"]')) markDirty();
+          });
+        } catch (error) {
+          status.textContent = "\u52A0\u8F7D\u5931\u8D25\uFF1A" + (error?.message || String(error));
+          console.error("[x1080x-ex] settings center failed:", key, error);
+          return false;
+        }
+      }
+      for (const [site, pane] of panes) {
+        const selected = site === key;
+        pane.hidden = !selected;
+        tabs.get(site).setAttribute("aria-selected", String(selected));
+        tabs.get(site).tabIndex = selected ? 0 : -1;
+      }
+      status.textContent = "\u5404\u7F51\u7AD9\u72EC\u7ACB\u4FDD\u5B58\uFF1B\u5207\u6362\u7F51\u7AD9\u4E0D\u4F1A\u4E22\u5931\u672A\u4FDD\u5B58\u7684\u8F93\u5165\u3002";
+      return true;
+    }
+    for (const site of SETTINGS_CENTER_SITES) {
+      const button = document2.createElement("button");
+      button.type = "button";
+      button.dataset.siteTab = site.key;
+      button.id = "x1080x-ex-site-" + site.key;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-selected", "false");
+      button.textContent = site.label;
+      button.addEventListener("click", () => activate(site.key));
+      tabs.set(site.key, button);
+      nav.append(button);
+      const pane = document2.createElement("section");
+      pane.className = "pane";
+      pane.hidden = true;
+      pane.dataset.sitePane = site.key;
+      pane.setAttribute("role", "tabpanel");
+      pane.setAttribute("aria-labelledby", button.id);
+      panes.set(site.key, pane);
+      content.append(pane);
+    }
+    dialog.append(header, nav, content, status);
+    backdrop.append(dialog);
+    root.append(style, backdrop);
+    document2.body.append(host);
+    activate(tabs.has(initialSite) ? initialSite : "x1080x");
+    closeButton.focus();
+    return host;
+  }
+  function installUnifiedSettingsMenu(document2 = globalThis.document) {
+    if (!document2?.body || document2.defaultView && document2.defaultView.top !== document2.defaultView) return false;
+    if (typeof GM_registerMenuCommand !== "function") return false;
+    GM_registerMenuCommand("\u2699\uFE0F x1080x-ex \u8BBE\u7F6E\u4E2D\u5FC3", () => openUnifiedSettingsCenter(document2));
+    return true;
+  }
+
   // src/index.js
+  installUnifiedSettingsMenu();
   installFc2cmadbEnhancement();
-  installX1080xSettingsMenu();
   installAgaghhhEnhancement();
   installQbittorrentSettings();
   installHdblogImageHostSettings();
