@@ -1,4 +1,5 @@
 import { renderDownloadIcon } from './download-icon.js';
+import { saveDownloadBlob } from './blob-download.js';
 import {
   JAVCLUB_PREVIEW_TIMEOUT_KEY,
   JAVCLUB_PREVIEW_RETRIES_KEY,
@@ -700,18 +701,8 @@ function requestImageBlob(url, referer, gmRequest = globalThis.GM_xmlhttpRequest
 }
 
 function saveBlob(document, blob, name) {
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.hidden = true;
-  anchor.download = name;
-  anchor.href = objectUrl;
-  document.body.append(anchor);
-  try {
-    anchor.click();
-  } finally {
-    anchor.remove();
-    document.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-  }
+  // A zero-delay revoke can invalidate a download before the browser owns it.
+  return saveDownloadBlob(blob, name, document, { browserDownload: true });
 }
 
 async function resolveCandidateUrl(document, candidate, gmRequest) {
@@ -825,7 +816,7 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
             gmRequest
           );
           const extension = extensionFromBlob(blob, url);
-          saveBlob(
+          await saveBlob(
             document,
             blob,
             hdblogImageFilename(code, downloaded + phaseDownloaded, resolved.length, extension)
@@ -870,7 +861,7 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
             gmRequest
           );
           const extension = extensionFromBlob(blob, javfreeUrl);
-          saveBlob(document, blob, hdblogImageFilename(code, 0, 1, extension));
+          await saveBlob(document, blob, hdblogImageFilename(code, 0, 1, extension));
           downloaded = 1;
           failures.length = 0;
           skipped = 0;

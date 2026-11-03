@@ -483,6 +483,15 @@ test('JavFree Preview download saves the second image as code.jpg', async () => 
   globalThis.URL = dom.window.URL;
   const saved = [];
   const revoked = [];
+  const pendingReleases = [];
+  const nativeSetTimeout = dom.window.setTimeout.bind(dom.window);
+  dom.window.setTimeout = (callback, delay, ...args) => {
+    if (delay === 10000) {
+      pendingReleases.push(callback);
+      return 1;
+    }
+    return nativeSetTimeout(callback, delay, ...args);
+  };
   dom.window.URL.createObjectURL = () => 'blob:javfree-preview';
   dom.window.URL.revokeObjectURL = (url) => revoked.push(url);
   const originalClick = dom.window.HTMLAnchorElement.prototype.click;
@@ -507,6 +516,9 @@ test('JavFree Preview download saves the second image as code.jpg', async () => 
     }
     assert.deepEqual(saved, [{ name: 'SAN-437.jpg', href: 'blob:javfree-preview' }]);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(revoked, [], 'object URL must not be revoked before the browser takes ownership');
+    assert.equal(pendingReleases.length, 1, 'browser save should retain the Blob for 10 seconds');
+    pendingReleases[0]();
     assert.deepEqual(revoked, ['blob:javfree-preview']);
   } finally {
     dom.window.HTMLAnchorElement.prototype.click = originalClick;
@@ -514,5 +526,6 @@ test('JavFree Preview download saves the second image as code.jpg', async () => 
     else globalThis.GM_getValue = oldGet;
     if (oldUrl === undefined) delete globalThis.URL;
     else globalThis.URL = oldUrl;
+    dom.window.close();
   }
 });

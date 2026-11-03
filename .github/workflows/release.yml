@@ -34,22 +34,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-        shell: bash
-        run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "$TAG already exists; skipping release creation."
-          else
-            gh release create "$TAG" dist/x1080x-ex.user.js \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "$TAG" \
-              --generate-notes
-          fi
-
       - name: Update built userscript on main
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -64,3 +48,20 @@ jobs:
           git add dist/x1080x-ex.user.js
           git commit -m "release: update built userscript for v$VERSION"
           git push
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG already exists; skipping release creation."
+          else
+            gh release create "$TAG" dist/x1080x-ex.user.js \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$(git rev-parse HEAD)" \
+              --title "$TAG" \
+              --generate-notes
+          fi
+
