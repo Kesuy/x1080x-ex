@@ -937,32 +937,32 @@ function ensureBatchCompactStyles(document) {
   if (document.getElementById(BATCH_COMPACT_STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = BATCH_COMPACT_STYLE_ID;
-  style.textContent = \`
-    #\${BATCH_BUTTON_ID}[data-x1080x-compact="1"],
-    #\${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact="1"] {
+  style.textContent = `
+    #${BATCH_BUTTON_ID}[data-x1080x-compact],
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] {
       display:inline-flex;align-items:center;justify-content:center;
       vertical-align:middle;gap:0;
     }
-    #\${BATCH_BUTTON_ID}[data-x1080x-compact="1"] svg,
-    #\${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact="1"] svg {
+    #${BATCH_BUTTON_ID}[data-x1080x-compact] svg,
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] svg {
       display:block;width:18px;height:18px;flex:none;
       fill:none;stroke:currentColor;stroke-width:2;
       stroke-linecap:round;stroke-linejoin:round;
     }
-    #\${BATCH_BUTTON_ID}[data-x1080x-compact="1"]::after {
+    #${BATCH_BUTTON_ID}[data-x1080x-compact]::after {
       content:attr(data-x1080x-count);font-size:13px;line-height:20px;
       font-weight:600;font-variant-numeric:tabular-nums;
       padding-left:5px;white-space:nowrap;
     }
-    #\${BATCH_BUTTON_ID}[data-x1080x-count=""]::after { content:none; }
-    #\${BATCH_BUTTON_ID}[data-x1080x-compact="1"] .x1080x-visually-hidden,
-    #\${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact="1"] .x1080x-visually-hidden {
+    #${BATCH_BUTTON_ID}[data-x1080x-count=""]::after { content:none; }
+    #${BATCH_BUTTON_ID}[data-x1080x-compact] .x1080x-visually-hidden,
+    #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] .x1080x-visually-hidden {
       position:absolute !important;width:1px !important;height:1px !important;
       padding:0 !important;margin:-1px !important;overflow:hidden !important;
       clip:rect(0,0,0,0) !important;white-space:nowrap !important;
       border:0 !important;
     }
-  \`;
+  `;
   (document.head || document.documentElement).append(style);
 }
 
