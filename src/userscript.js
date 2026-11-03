@@ -102,6 +102,10 @@ const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval
 const DEFAULT_DOMAINS = '1080xin.com\nagaghhh.cc\nhdblog.me\nfc2cmadb.com';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
+const BATCH_SPLIT_ID = 'x1080x-ex-batch-split';
+const BATCH_MODE_TRIGGER_ID = 'x1080x-ex-batch-mode-trigger';
+const BATCH_MODE_MENU_ID = 'x1080x-ex-batch-mode-menu';
+const batchMenuDismissInstalled = new WeakSet();
 const BATCH_PROGRESS_BUTTON_ID = 'x1080x-ex-batch-progress-locator';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
 const REQUEST_TIMEOUT = 60000;
@@ -648,9 +652,9 @@ function inferBatchProgressFromCurrentPage(document) {
   );
 }
 
-function collectBatchOpenThreads(document) {
+function collectBatchOpenThreads(document, unopenedOnly = isBatchOpenUnopenedOnlyEnabled()) {
   const threads = collectForumThreadLinks(document);
-  if (!isBatchOpenUnopenedOnlyEnabled()) return threads;
+  if (!unopenedOnly) return threads;
   const history = new Set(readBatchOpenHistory());
   return threads.filter((thread) => !isBatchThreadVisited(thread, history));
 }
@@ -923,6 +927,53 @@ function cancelBatchOpen() {
   batchOpenState.finishDelay = null;
 }
 
+function updateBatchModeMenu(document) {
+  const menu = document.getElementById(BATCH_MODE_MENU_ID);
+  if (!menu) return;
+  const threads = collectForumThreadLinks(document);
+  const history = new Set(readBatchOpenHistory());
+  const unreadCount = threads.filter((thread) => !isBatchThreadVisited(thread, history)).length;
+  const canSkipRead = isBatchOpenHistoryEnabled();
+  const selected = isBatchOpenUnopenedOnlyEnabled();
+  for (const entry of menu.querySelectorAll('button[data-batch-mode]')) {
+    const unreadOnly = entry.dataset.batchMode === 'unread';
+    const disabled = unreadOnly && !canSkipRead;
+    entry.disabled = disabled || Boolean(batchOpenState);
+    entry.textContent = `${selected === unreadOnly ? '✓ ' : ''}${unreadOnly ? '仅打开未浏览' : '打开本页全部'}（${unreadOnly ? unreadCount : threads.length}）`;
+    entry.title = disabled ? '请先在设置中开启「保存批量打开记录」' : '选择此模式并立即开始批量打开';
+    entry.setAttribute('aria-checked', String(selected === unreadOnly));
+    entry.style.opacity = disabled ? '0.5' : '1';
+    entry.style.cursor = disabled ? 'not-allowed' : 'pointer';
+  }
+}
+
+function closeBatchModeMenu(document) {
+  const menu = document.getElementById(BATCH_MODE_MENU_ID);
+  const trigger = document.getElementById(BATCH_MODE_TRIGGER_ID);
+  if (menu) menu.hidden = true;
+  trigger?.setAttribute('aria-expanded', 'false');
+}
+
+function setBatchOpenMode(unreadOnly) {
+  const config = batchOpenHistoryConfig();
+  if (!config || typeof GM_setValue !== 'function') return false;
+  if (unreadOnly && !isBatchOpenHistoryEnabled()) return false;
+  GM_setValue(config.unopenedOnlyKey, unreadOnly);
+  return true;
+}
+
+function installBatchModeMenuDismiss(document) {
+  if (batchMenuDismissInstalled.has(document)) return;
+  batchMenuDismissInstalled.add(document);
+  document.addEventListener('click', (event) => {
+    const wrapper = document.getElementById(BATCH_SPLIT_ID);
+    if (wrapper && !wrapper.contains(event.target)) closeBatchModeMenu(document);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeBatchModeMenu(document);
+  });
+}
+
 function setBatchButtonIdle(button, count) {
   const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
   const label = unopenedOnly
@@ -933,6 +984,9 @@ function setBatchButtonIdle(button, count) {
     ? '按列表顺序在后台逐个打开本页未浏览主题（以脚本浏览记录为准）；间隔随机，并定期停顿；再次点击可停止'
     : '按列表顺序在后台逐个打开本页主题；间隔随机，并定期停顿；再次点击可停止';
   button.style.background = '#398bd4';
+  const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
+  if (dropdown) dropdown.disabled = false;
+  updateBatchModeMenu(document);
 }
 
 async function openCurrentPageThreads(button) {
@@ -959,6 +1013,10 @@ async function openCurrentPageThreads(button) {
     cfChallenge: null,
   };
   batchOpenState = state;
+  closeBatchModeMenu(document);
+  const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
+  if (dropdown) dropdown.disabled = true;
+  updateBatchModeMenu(document);
   rememberBatchProgressForCurrentPage(document, false);
   const failures = [];
   let opened = 0;
@@ -1049,6 +1107,8 @@ async function openCurrentPageThreads(button) {
     const completedPage = !wasCancelled && failures.length === 0 && opened === threads.length;
     rememberBatchProgressForCurrentPage(document, completedPage);
     batchOpenState = null;
+    if (dropdown) dropdown.disabled = false;
+    updateBatchModeMenu(document);
     button.textContent = state.cfChallenge
       ? `CF 验证，已停止（${opened}/${threads.length}）`
       : wasCancelled
@@ -1789,8 +1849,8 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
   button.addEventListener('click', () => void locateCurrentBatchProgress(button));
   refreshBatchProgressLocatorButton(button);
   if (prependButton) {
-    const batchButton = document.getElementById(BATCH_BUTTON_ID);
-    if (batchButton?.parentElement === host) batchButton.after(button);
+    const batchWrapper = document.getElementById(BATCH_SPLIT_ID);
+    if (batchWrapper?.parentElement === host) batchWrapper.after(button);
     else host.prepend(button);
   } else {
     host.append(button);
@@ -1842,24 +1902,106 @@ function addBatchOpenButton() {
   }
   if (!threads.length || !host) return;
 
+  const split = document.createElement('div');
+  split.id = BATCH_SPLIT_ID;
+  Object.assign(split.style, {
+    display: 'inline-flex',
+    alignItems: 'stretch',
+    position: 'relative',
+    zIndex: '20',
+    float: 'right',
+    margin: prependButton ? '0 0 0 12px' : '0 8px 6px 12px',
+    whiteSpace: 'nowrap',
+  });
+
   const button = document.createElement('button');
   button.id = BATCH_BUTTON_ID;
   button.type = 'button';
   Object.assign(button.style, {
-    float: 'right',
-    position: 'relative',
-    zIndex: '20',
-    margin: '0 8px 6px 12px',
+    margin: '0',
     padding: '7px 13px',
     border: '1px solid #2878c8',
-    borderRadius: '5px',
+    borderRadius: '5px 0 0 5px',
     color: '#fff',
     background: '#398bd4',
     cursor: 'pointer',
     fontSize: '14px',
     lineHeight: '20px',
   });
-  setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+
+  const trigger = document.createElement('button');
+  trigger.id = BATCH_MODE_TRIGGER_ID;
+  trigger.type = 'button';
+  trigger.setAttribute('aria-haspopup', 'menu');
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.setAttribute('aria-controls', BATCH_MODE_MENU_ID);
+  trigger.setAttribute('aria-label', '选择批量打开模式');
+  trigger.title = '切换仅未浏览 / 本页全部，可直接开始';
+  trigger.textContent = '▾';
+  Object.assign(trigger.style, {
+    padding: '7px 9px',
+    border: '1px solid #2878c8',
+    borderLeft: '0',
+    borderRadius: '0 5px 5px 0',
+    color: '#fff',
+    background: '#398bd4',
+    cursor: 'pointer',
+    fontSize: '15px',
+    lineHeight: '20px',
+  });
+
+  const menu = document.createElement('div');
+  menu.id = BATCH_MODE_MENU_ID;
+  menu.setAttribute('role', 'menu');
+  menu.hidden = true;
+  Object.assign(menu.style, {
+    position: 'absolute',
+    top: 'calc(100% + 5px)',
+    right: '0',
+    minWidth: '228px',
+    padding: '6px',
+    background: '#171d27',
+    border: '1px solid #3b4656',
+    borderRadius: '7px',
+    boxShadow: '0 8px 24px rgba(0,0,0,.35)',
+    zIndex: '9999',
+  });
+  for (const [key, unreadOnly] of [['unread', true], ['all', false]]) {
+    const entry = document.createElement('button');
+    entry.type = 'button';
+    entry.dataset.batchMode = key;
+    entry.setAttribute('role', 'menuitemradio');
+    Object.assign(entry.style, {
+      display: 'block',
+      width: '100%',
+      padding: '9px 11px',
+      border: '0',
+      borderRadius: '4px',
+      color: '#fff',
+      background: 'transparent',
+      fontSize: '13px',
+      textAlign: 'left',
+      whiteSpace: 'nowrap',
+    });
+    entry.addEventListener('mouseenter', () => {
+      if (!entry.disabled) entry.style.background = '#324253';
+    });
+    entry.addEventListener('mouseleave', () => { entry.style.background = 'transparent'; });
+    entry.addEventListener('click', () => {
+      closeBatchModeMenu(document);
+      if (batchOpenState || !setBatchOpenMode(unreadOnly)) return;
+      setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+      void openCurrentPageThreads(button);
+    });
+    menu.append(entry);
+  }
+
+  trigger.addEventListener('click', () => {
+    if (batchOpenState) return;
+    updateBatchModeMenu(document);
+    menu.hidden = !menu.hidden;
+    trigger.setAttribute('aria-expanded', String(!menu.hidden));
+  });
   button.addEventListener('mouseenter', () => {
     if (!batchOpenState) button.style.background = '#246eaf';
   });
@@ -1867,12 +2009,12 @@ function addBatchOpenButton() {
     if (!batchOpenState) button.style.background = '#398bd4';
   });
   button.addEventListener('click', () => void openCurrentPageThreads(button));
-  if (prependButton) {
-    button.style.margin = '0 0 0 12px';
-    host.prepend(button);
-  } else {
-    host.append(button);
-  }
+
+  split.append(button, trigger, menu);
+  if (prependButton) host.prepend(split);
+  else host.append(split);
+  installBatchModeMenuDismiss(document);
+  setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
   addBatchProgressLocatorButton(host, prependButton);
 }
 
