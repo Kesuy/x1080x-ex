@@ -121,7 +121,7 @@ export function parsePixhostImagePage(document, html, pageUrl) {
   return candidateUrl(raw, pageUrl);
 }
 
-function requestPixhostPage(showUrl, gmRequest, referer) {
+function requestPixhostPage(showUrl, gmRequest, referer, timeout = REQUEST_TIMEOUT) {
   return new Promise((resolve, reject) => {
     if (typeof gmRequest !== 'function') {
       reject(new Error('当前 userscript 管理器不支持 GM_xmlhttpRequest'));
@@ -131,7 +131,7 @@ function requestPixhostPage(showUrl, gmRequest, referer) {
       method: 'GET',
       url: showUrl,
       responseType: 'text',
-      timeout: REQUEST_TIMEOUT,
+      timeout,
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
         ...(referer ? { Referer: referer } : {}),
@@ -158,7 +158,8 @@ export function resolvePixhostShowUrl(
   document,
   showUrl,
   thumbnailUrl = '',
-  gmRequest = globalThis.GM_xmlhttpRequest
+  gmRequest = globalThis.GM_xmlhttpRequest,
+  timeout = REQUEST_TIMEOUT
 ) {
   const absoluteShowUrl = absoluteUrl(showUrl, document?.baseURI || 'https://pixhost.to/');
   if (!absoluteShowUrl || !isPixhostShowUrl(absoluteShowUrl, document?.baseURI)) {
@@ -167,14 +168,20 @@ export function resolvePixhostShowUrl(
   if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
 
   const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl, document?.baseURI || absoluteShowUrl);
-  const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document?.location?.href)
+  const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document?.location?.href, timeout)
     .then(({ html, finalUrl }) => {
       if (isPixhostUnavailablePage(document, html)) return '';
       return parsePixhostImagePage(document, html, finalUrl || absoluteShowUrl) || fallback;
     })
-    .catch((error) => (
-      error?.status === 404 || error?.status === 410 ? '' : fallback
-    ));
+    .catch((error) => {
+      // Do not cache a network/timeout failure: a later Preview retry should
+      // really re-request the Pixhost page instead of reusing a stale fallback.
+      if (error?.status !== 404 && error?.status !== 410) {
+        resolutionCache.delete(absoluteShowUrl);
+        return fallback;
+      }
+      return '';
+    });
   resolutionCache.set(absoluteShowUrl, promise);
   return promise;
 }
