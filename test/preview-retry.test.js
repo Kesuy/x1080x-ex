@@ -8,6 +8,7 @@ import {
   HDBLOG_PREVIEW_TIMEOUT_KEY,
   HDBLOG_PREVIEW_RETRIES_KEY,
 } from '../src/agaghhh-hdblog-preview.js';
+import { openX1080xSettingsPanel } from '../src/agaghhh-enhancement.js';
 
 const SEARCH = 'https://hdblog.me/?s=RTRY-001';
 const ARTICLE = 'https://hdblog.me/1234/rtry-001/';
@@ -108,4 +109,34 @@ test('modern resource Preview is inserted into first post body, not the surround
   assert.ok(section);
   assert.equal(section.parentElement?.className, 'post-content');
   dom.window.close();
+});
+
+test('x1080x settings display editable Preview timeout/retry controls', () => {
+  const doc = new JSDOM('<!doctype html><body></body>', { url: 'https://1080xin.com/' });
+  const previous = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => (
+    key === HDBLOG_PREVIEW_TIMEOUT_KEY ? 15000
+      : key === HDBLOG_PREVIEW_RETRIES_KEY ? 3
+      : fallback
+  );
+  try {
+    const overlay = openX1080xSettingsPanel(doc.window.document);
+    const timeout = overlay.querySelector('[data-setting="hdblog-preview-timeout"]');
+    const retries = overlay.querySelector('[data-setting="hdblog-preview-retries"]');
+    assert.ok(timeout && retries);
+    assert.equal(timeout.value, '15');
+    assert.equal(retries.value, '3');
+    overlay.querySelector('[data-action="reset-hdblog-preview-settings"]').click();
+    assert.equal(timeout.value, '30');
+    assert.equal(retries.value, '2');
+    const enable = overlay.querySelector('[data-setting="hdblog-preview"]');
+    enable.checked = false;
+    enable.dispatchEvent(new doc.window.Event('change'));
+    assert.equal(timeout.disabled, true);
+    assert.equal(retries.disabled, true);
+  } finally {
+    if (previous === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = previous;
+    doc.window.close();
+  }
 });
