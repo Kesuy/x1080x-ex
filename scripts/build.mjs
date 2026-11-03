@@ -23,6 +23,8 @@ const metadata = `// ==UserScript==
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_addValueChangeListener
+// @grant        GM_removeValueChangeListener
 // @grant        GM_setClipboard
 // @grant        GM_registerMenuCommand
 // @grant        GM_openInTab
