@@ -155,6 +155,23 @@ function saveDomains(domains) {
   GM_setValue(STORAGE_KEY, domains.join('\n'));
 }
 
+const siteSettingsTools = new Map();
+
+function registerSettingsTool(id, label, action) {
+  siteSettingsTools.set(id, action);
+  if ((id === 'match-domains' || id === 'add-current-domain')
+    && typeof GM_registerMenuCommand === 'function') {
+    GM_registerMenuCommand(label, action);
+  }
+}
+
+export function runSiteSettingsTool(id) {
+  const action = siteSettingsTools.get(id);
+  if (!action) return false;
+  action();
+  return true;
+}
+
 function registerSettingsMenu() {
   if (window.top !== window.self) return;
   GM_registerMenuCommand('🌐 设置 x1080x 主站域名', () => {
