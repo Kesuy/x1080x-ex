@@ -843,9 +843,13 @@ function expandHdblogPreviewImages() {
   if (!marker) return 0;
 
   const boundary = markers.find((element) => isFollowing(marker, element) && isHdblogPreviewBoundary(element));
+  const related = [...content.querySelectorAll('.yarpp, .yarpp-related, .related-posts, [class*="related-posts"]')]
+    .find((element) => isFollowing(marker, element));
   const isInPreviewRange = (element) => (
     isFollowing(marker, element)
     && (!boundary || !isFollowing(boundary, element))
+    && (!related || !isFollowing(related, element))
+    && !element.closest('.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, [class*="related-posts"]')
   );
 
   let expanded = 0;
@@ -1974,7 +1978,7 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
   if (isJavclubToolbar && batchWrapper?.parentElement === host) {
     button.style.float = 'none';
     button.style.margin = '0';
-    batchWrapper.before(button); // Locator on the left, batch open on the right.
+    batchWrapper.after(button); // JavClub: batch open first, progress locator on the right.
   } else if (prependButton) {
     if (batchWrapper?.parentElement === host) batchWrapper.after(button);
     else host.prepend(button);
@@ -1986,10 +1990,36 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
 function addBatchOpenButton() {
   if (document.getElementById(BATCH_BUTTON_ID)) return;
   const threads = collectForumThreadLinks(document);
+  const isJavclubToolbar = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
   let prependButton = false;
   let host = document.querySelector('#pgt')
     || document.querySelector('#threadlist .th')
     || document.querySelector('#threadlist');
+  // Position the listing actions in the unused right section of the Genesis
+  // navigation bar. Do not prepend controls into .archive-description.
+  if (isJavclubToolbar && document.querySelector('.nav-primary .wrap .genesis-nav-menu')) {
+    const navWrap = document.querySelector('.nav-primary .wrap');
+    host = document.getElementById(BATCH_TOOLBAR_ID);
+    if (!host) {
+      host = document.createElement('div');
+      host.id = BATCH_TOOLBAR_ID;
+      navWrap.append(host);
+    }
+    if (!navWrap.style.position) navWrap.style.position = 'relative';
+    Object.assign(host.style, {
+      position: 'absolute',
+      right: '14px',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      zIndex: '50',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: '8px',
+      whiteSpace: 'nowrap',
+    });
+    ensureBatchCompactStyles(document);
+  }
   if (!host && isAgaghhhHost(location) && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) {
     const pagination = document.querySelector('.thread-list .pgt');
     if (pagination) {
@@ -2031,7 +2061,6 @@ function addBatchOpenButton() {
     }
   }
   if (!threads.length || !host) return;
-  const isJavclubToolbar = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
   if (isJavclubToolbar) {
     Object.assign(host.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' });
   }
