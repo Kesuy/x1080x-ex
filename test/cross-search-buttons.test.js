@@ -96,7 +96,7 @@ test('agaghhh thread shows a search icon beside download and opens hdblog search
     const search = dom.window.document.querySelector('#x1080x-ex-agaghhh-hdblog-search');
     assert.ok(search);
     assert.equal(search.textContent, '🔍');
-    assert.equal(search.getAttribute('aria-label'), '在 hdblog 搜索当前番号');
+    assert.equal(search.getAttribute('aria-label'), '在 JavClub 搜索当前番号');
     search.click();
     assert.equal(opened[0]?.url, 'https://javclub.me/?s=121125_001');
   });
