@@ -604,6 +604,14 @@ export async function fetchHdblogPreviewWithRetries(
   );
 }
 
+// Downloaders should wait for an already-running Preview lookup before
+// taking their job snapshot. This never initiates a new external request.
+export function pendingAgaghhhHdblogPreview(document, pageUrl = document?.location?.href) {
+  const cached = previewLookups.get(document);
+  if (!cached?.promise || !pageUrl || !cached.key.startsWith(`${pageUrl}::`)) return null;
+  return cached.promise;
+}
+
 export async function installAgaghhhHdblogPreview(
   document = globalThis.document,
   locationObject = globalThis.location,
