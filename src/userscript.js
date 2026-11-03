@@ -174,7 +174,7 @@ export function runSiteSettingsTool(id) {
 
 function registerSettingsMenu() {
   if (window.top !== window.self) return;
-  GM_registerMenuCommand('🌐 设置 x1080x 主站域名', () => {
+  registerSettingsTool('primary-domain', '🌐 设置 x1080x 主站域名', () => {
     const input = window.prompt(
       '请输入 x1080x 站点当前使用的域名（如 1080xin.com）。跨站搜索及浏览进度链接将使用该地址，旧域名仍可识别：',
       getAgaghhhPrimaryDomain()
@@ -188,7 +188,7 @@ function registerSettingsMenu() {
     saveAgaghhhPrimaryDomain(domain);
     window.alert(`x1080x 站点域名已保存：${domain}\n刷新页面后生效。原有浏览记录将继续保留。`);
   });
-  GM_registerMenuCommand('⚙️ 设置匹配域名', () => {
+  registerSettingsTool('match-domains', '⚙️ 设置匹配域名', () => {
     const current = getConfiguredDomains().join('\n');
     const input = window.prompt(
       '请输入允许脚本运行的域名，可用逗号、空格或换行分隔。也可以粘贴完整网址：',
@@ -204,7 +204,7 @@ function registerSettingsMenu() {
     window.alert(`已保存：\n${domains.join('\n')}\n\n刷新页面后生效。`);
   });
 
-  GM_registerMenuCommand('➕ 添加当前域名', () => {
+  registerSettingsTool('add-current-domain', '➕ 添加当前域名', () => {
     const domains = getConfiguredDomains();
     if (!isAllowedHost(location.hostname, domains)) {
       domains.push(location.hostname.toLowerCase());
@@ -213,12 +213,12 @@ function registerSettingsMenu() {
     window.alert(`已添加 ${location.hostname}，刷新页面后生效。`);
   });
 
-  GM_registerMenuCommand('↩️ 重置默认域名', () => {
+  registerSettingsTool('reset-domains', '↩️ 重置默认域名', () => {
     saveDomains(parseDomainList(DEFAULT_DOMAINS));
     saveAgaghhhPrimaryDomain(DEFAULT_AGAGHHH_PRIMARY_DOMAIN);
     window.alert(`已恢复默认域名：${DEFAULT_DOMAINS}`);
   });
-  GM_registerMenuCommand('↪️ 迁移旧版 x1080x 浏览记录到新版', () => {
+  registerSettingsTool('migrate-history', '↪️ 迁移旧版 x1080x 浏览记录到新版', () => {
     const legacy = typeof GM_getValue === 'function'
       ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])
       : [];
@@ -240,7 +240,7 @@ function registerSettingsMenu() {
       })
       .catch((error) => window.alert(`迁移失败：${error?.message || error}`));
   });
-  GM_registerMenuCommand('🧾 检查旧版浏览记录', () => {
+  registerSettingsTool('inspect-history', '🧾 检查旧版浏览记录', () => {
     const legacy = compatibleHistoryKeys(typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []) : []);
     const modern = compatibleHistoryKeys(typeof GM_getValue === 'function' ? GM_getValue(MODERN_RESOURCE_HISTORY_KEY, []) : []);
     const aliases = typeof GM_getValue === 'function' ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
@@ -252,7 +252,7 @@ function registerSettingsMenu() {
     } }).length > 0).length;
     window.alert(`旧版数字 TID：${tids.length} 条\n已取得对应信息：${matched} 条\n仍缺对应信息：${tids.length - matched} 条\n旧记录中的标题/资源信息：${legacy.filter(isUsableHistoryAlias).length} 项\n共享标题/番号索引：${Array.isArray(aliases) ? aliases.length : 0} 项\n新版资源记录：${modern.filter(value => value.startsWith('resource:')).length} 条\n\n旧 TID 数量大于 0 表示数据已读到；仍缺对应信息的记录无法仅凭编号判断新版帖子是否浏览过。若旧 TID 为 0，请在原来那份油猴脚本中检查或导出存储数据。`);
   });
-  GM_registerMenuCommand('📥 导入旧论坛历史恢复文件', () => {
+  registerSettingsTool('import-history', '📥 导入旧论坛历史恢复文件', () => {
     showHistoryImportDialog(document, async file => {
       const payload = JSON.parse((await file.text()).replace(/^\uFEFF/, ''));
       const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
