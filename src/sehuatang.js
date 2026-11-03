@@ -159,7 +159,7 @@ export function submitSehuatangQuickReply(document, phrase) {
   return { submitted: true, message: '已交给网站发表，请查看原生回复结果；如需验证码请手动完成。' };
 }
 
-export function openSehuatangSettings(document = globalThis.document) {
+export function openSehuatangSettings(document = globalThis.document, { embedded = false, onSaved } = {}) {
   if (!document?.body) return null;
   document.getElementById(PANEL_ID)?.remove();
   const settings = getSehuatangSettings();
@@ -212,12 +212,13 @@ export function openSehuatangSettings(document = globalThis.document) {
     save(SHT_REPLY_PHRASE_KEY, field('phrase').value.trim());
     if (resetPosition) save(SHT_POSITION_KEY, null);
     overlay.remove();
-    installSehuatangToolbar(document);
+    if (typeof onSaved === 'function') onSaved();
+    if (isSehuatangHost(document.defaultView?.location)) installSehuatangToolbar(document);
   });
   field('phrase').addEventListener('input', () => field('phrase').setCustomValidity(''));
   field('reply').addEventListener('change', () => field('phrase').setCustomValidity(''));
   overlay.append(form);
-  document.body.append(overlay);
+  if (!embedded) document.body.append(overlay);
   return overlay;
 }
 
