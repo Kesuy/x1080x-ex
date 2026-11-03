@@ -1,4 +1,5 @@
 import { isHdblogImagePageHost } from './hdblog-image-hosts.js';
+import { retryJavclubPreviewRequest } from './javclub-preview-loading.js';
 
 const PIXHOST_PAGE_HOST_PATTERN = /^(?:www\.)?(?:pixhost\.(?:to|cc|org)|pixho\.st)$/i;
 const PIXHOST_THUMB_HOST_PATTERN = /^t(\d+)\.(.+)$/i;
@@ -148,8 +149,8 @@ function requestPixhostPage(showUrl, gmRequest, referer, timeout = REQUEST_TIMEO
           finalUrl: response.finalUrl || response.responseURL || showUrl,
         });
       },
-      onerror: () => reject(new Error('图床页面请求发生网络错误')),
-      ontimeout: () => reject(new Error('图床页面请求超时')),
+      onerror: () => reject(Object.assign(new Error('图床页面请求发生网络错误'), { retryable: true })),
+      ontimeout: () => reject(Object.assign(new Error('图床页面请求超时'), { retryable: true })),
     });
   });
 }
@@ -159,7 +160,8 @@ export function resolvePixhostShowUrl(
   showUrl,
   thumbnailUrl = '',
   gmRequest = globalThis.GM_xmlhttpRequest,
-  timeout = REQUEST_TIMEOUT
+  timeout = REQUEST_TIMEOUT,
+  retryCount = 0
 ) {
   const absoluteShowUrl = absoluteUrl(showUrl, document?.baseURI || 'https://pixhost.to/');
   if (!absoluteShowUrl || !isPixhostShowUrl(absoluteShowUrl, document?.baseURI)) {
@@ -168,19 +170,19 @@ export function resolvePixhostShowUrl(
   if (resolutionCache.has(absoluteShowUrl)) return resolutionCache.get(absoluteShowUrl);
 
   const fallback = derivePixhostImageUrlFromThumbnail(thumbnailUrl, document?.baseURI || absoluteShowUrl);
-  const promise = requestPixhostPage(absoluteShowUrl, gmRequest, document?.location?.href, timeout)
-    .then(({ html, finalUrl }) => {
+  const promise = retryJavclubPreviewRequest(
+    () => requestPixhostPage(absoluteShowUrl, gmRequest, document?.location?.href, timeout),
+    retryCount
+  ).then(({ html, finalUrl }) => {
       if (isPixhostUnavailablePage(document, html)) return '';
       return parsePixhostImagePage(document, html, finalUrl || absoluteShowUrl) || fallback;
     })
     .catch((error) => {
-      // Do not cache a network/timeout failure: a later Preview retry should
-      // really re-request the Pixhost page instead of reusing a stale fallback.
-      if (error?.status !== 404 && error?.status !== 410) {
-        resolutionCache.delete(absoluteShowUrl);
-        return fallback;
-      }
-      return '';
+      // Do not cache a transient failure: a later attempt should be allowed to
+      // re-request the Pixhost page rather than reuse a stale fallback result.
+      if (error?.status === 404 || error?.status === 410) return '';
+      resolutionCache.delete(absoluteShowUrl);
+      return fallback;
     });
   resolutionCache.set(absoluteShowUrl, promise);
   return promise;
