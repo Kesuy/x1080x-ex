@@ -29,7 +29,7 @@ test('reports only same batch session and opened URL, not unrelated Cloudflare t
 
   assert.equal(reportBatchCloudflareChallenge(doc.window.document, url, read, write, now), true);
   assert.deepEqual(store.get(BATCH_CF_EVENT_KEY), {
-    sessionId: 'run-1', url, detectedAt: now,
+    sessionId: 'run-1', url, challengeUrl: url, detectedAt: now,
   });
   store.delete(BATCH_CF_EVENT_KEY);
   assert.equal(reportBatchCloudflareChallenge(doc.window.document, 'https://1080xin.com/resources/unrelated', read, write, now), false);
@@ -51,5 +51,20 @@ test('Cloudflare listener must not mark a normal resource page as a challenge', 
   const write = (key, value) => store.set(key, value);
   assert.equal(reportBatchCloudflareChallenge(doc.window.document, url, read, write, 10000), false);
   assert.equal(store.has(BATCH_CF_EVENT_KEY), false);
+  doc.window.close();
+});
+
+test('maps a redirected Cloudflare challenge back to the original resource', () => {
+  const original = 'https://1080xin.com/resources/abc123';
+  const redirected = 'https://1080xin.com/cdn-cgi/challenge-platform/h/s/p';
+  const doc = new JSDOM('<html><head><title>Just a moment...</title></head><body>Cloudflare</body></html>');
+  const store = new Map([[BATCH_CF_SESSION_KEY, {
+    id: 'run-redirect', host: '1080xin.com', urls: [original], updatedAt: 10000,
+  }]]);
+  const read = (key, fallback) => store.get(key) ?? fallback;
+  const write = (key, value) => store.set(key, value);
+  assert.equal(reportBatchCloudflareChallenge(doc.window.document, redirected, read, write, 10000), true);
+  assert.equal(store.get(BATCH_CF_EVENT_KEY)?.url, original);
+  assert.equal(store.get(BATCH_CF_EVENT_KEY)?.challengeUrl, redirected);
   doc.window.close();
 });
