@@ -71,27 +71,23 @@ test('converts only matching number badges to search links and keeps cover click
   dom.window.close();
 });
 
-test('independent settings menu can disable badge links, including on existing installations', () => {
+test('FC2CMADB uses independent saved switch without site-specific Tampermonkey menu', () => {
   const dom = new JSDOM('<!doctype html><body>' + card() + '</body>', {
     url: 'https://fc2cmadb.com/actresses/9791',
   });
-  const values = new Map();
-  withSettings(values, (menu) => {
+  withSettings(new Map(), menu => {
     const observer = installFc2cmadbEnhancement(dom.window);
     assert.ok(observer);
-    assert.equal(menu.length, 1);
+    assert.equal(menu.length, 0);
     assert.equal(dom.window.document.querySelectorAll('a[data-x1080x-fc2cmadb-hdblog-search]').length, 1);
-    dom.window.alert = () => {};
-    menu[0].callback();
-    assert.equal(values.get(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY), false);
     observer.disconnect();
   });
   const disabledDom = new JSDOM('<!doctype html><body>' + card() + '</body>', {
     url: 'https://fc2cmadb.com/actresses/9791',
   });
-  withSettings(new Map([[FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, false]]), (menu) => {
+  withSettings(new Map([[FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, false]]), menu => {
     assert.equal(installFc2cmadbEnhancement(disabledDom.window), null);
-    assert.equal(menu.length, 1);
+    assert.equal(menu.length, 0);
     assert.equal(disabledDom.window.document.querySelectorAll('figure > span.absolute.top-0.left-0').length, 1);
   });
   dom.window.close();
