@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.33
+// @version      1.10.34
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1100,6 +1100,64 @@
     applyHdblogBrowseEnhancement(window);
   }
 
+  // src/blob-download.js
+  async function saveDownloadBlob(blob, name, document2 = globalThis.document, { browserDownload = false } = {}) {
+    const view = document2.defaultView;
+    if (!browserDownload && typeof GM_download === "function") {
+      const info = typeof GM_info === "object" ? GM_info : {};
+      const version = String(info.version || "").split(".").map(Number);
+      const supportsBlob = info.scriptHandler === "Tampermonkey" && (version[0] > 5 || version[0] === 5 && (version[1] > 4 || version[1] === 4 && version[2] >= 6226));
+      const objectUrl2 = supportsBlob ? null : view.URL.createObjectURL(blob);
+      let timer;
+      try {
+        await new Promise((resolve, reject) => {
+          let handle;
+          timer = view.setTimeout(() => {
+            handle?.abort?.();
+            reject(new Error("\u4FDD\u5B58\u6587\u4EF6\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868"));
+          }, 6e4);
+          const finish = (callback) => (value) => {
+            view.clearTimeout(timer);
+            callback(value);
+          };
+          handle = GM_download({
+            url: objectUrl2 || blob,
+            name,
+            saveAs: false,
+            onload: finish(resolve),
+            onerror: finish((error) => {
+              const reasons = {
+                not_enabled: "\u8BF7\u5728 Tampermonkey \u8BBE\u7F6E\u4E2D\u542F\u7528\u4E0B\u8F7D\u529F\u80FD",
+                not_whitelisted: "\u8BF7\u5728 Tampermonkey \u8BBE\u7F6E\u4E2D\u5141\u8BB8\u6B64\u6587\u4EF6\u6269\u5C55\u540D",
+                not_permitted: "\u8BF7\u6388\u4E88 Tampermonkey \u4E0B\u8F7D\u6743\u9650",
+                not_supported: "\u5F53\u524D\u811A\u672C\u7BA1\u7406\u5668\u4E0D\u652F\u6301\u6B64\u4E0B\u8F7D\u65B9\u5F0F"
+              };
+              reject(new Error(reasons[error?.error] || "\u6587\u4EF6\u4FDD\u5B58\u5931\u8D25\u6216\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868"));
+            }),
+            ontimeout: finish(() => reject(new Error("\u4FDD\u5B58\u6587\u4EF6\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868")))
+          });
+        });
+        return { confirmed: true };
+      } finally {
+        view.clearTimeout(timer);
+        if (objectUrl2) view.URL.revokeObjectURL(objectUrl2);
+      }
+    }
+    const objectUrl = view.URL.createObjectURL(blob);
+    const anchor = document2.createElement("a");
+    anchor.hidden = true;
+    anchor.download = name;
+    anchor.href = objectUrl;
+    document2.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+      view.setTimeout(() => view.URL.revokeObjectURL(objectUrl), 1e4);
+    }
+    return { confirmed: false };
+  }
+
   // src/site-domains.js
   var AGAGHHH_PRIMARY_DOMAIN_KEY = "x1080x-ex:agaghhh-primary-domain";
   var AGAGHHH_DOMAIN_ALIASES_KEY = "x1080x-ex:agaghhh-domain-aliases";
@@ -1727,18 +1785,7 @@
     }
   }
   function saveBlob(document2, blob, filename) {
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document2.createElement("a");
-    anchor.hidden = true;
-    anchor.href = objectUrl;
-    anchor.download = filename;
-    document2.body.append(anchor);
-    try {
-      anchor.click();
-    } finally {
-      anchor.remove();
-      document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    }
+    return saveDownloadBlob(blob, filename, document2, { browserDownload: true });
   }
   async function downloadJavfreePreview(button, document2, locationObject, request) {
     const code = javfreeCodeFromDocument(document2, locationObject);
@@ -1748,7 +1795,7 @@
     button.textContent = "\u4E0B\u8F7D\u4E2D\u2026";
     try {
       const blob = await requestImageBlob(previewUrl, locationObject?.href || document2.baseURI, request);
-      saveBlob(document2, blob, code + "." + extensionFromBlob(blob, previewUrl));
+      await saveBlob(document2, blob, code + "." + extensionFromBlob(blob, previewUrl));
       button.textContent = "\u2713";
     } catch (error) {
       button.textContent = "\u5931\u8D25";
@@ -2713,18 +2760,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     });
   }
   function saveBlob2(document2, blob, name) {
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document2.createElement("a");
-    anchor.hidden = true;
-    anchor.download = name;
-    anchor.href = objectUrl;
-    document2.body.append(anchor);
-    try {
-      anchor.click();
-    } finally {
-      anchor.remove();
-      document2.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    }
+    return saveDownloadBlob(blob, name, document2, { browserDownload: true });
   }
   async function resolveCandidateUrl(document2, candidate, gmRequest2) {
     const displayed = displayedPixhostImageUrl(document2, candidate.image);
@@ -2822,7 +2858,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
               gmRequest2
             );
             const extension = extensionFromBlob2(blob, url);
-            saveBlob2(
+            await saveBlob2(
               document2,
               blob,
               hdblogImageFilename(code, downloaded + phaseDownloaded, resolved.length, extension)
@@ -2862,7 +2898,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
               gmRequest2
             );
             const extension = extensionFromBlob2(blob, javfreeUrl);
-            saveBlob2(document2, blob, hdblogImageFilename(code, 0, 1, extension));
+            await saveBlob2(document2, blob, hdblogImageFilename(code, 0, 1, extension));
             downloaded = 1;
             failures.length = 0;
             skipped = 0;
@@ -6114,64 +6150,6 @@ ${settings.password}`;
     } catch {
       return [];
     }
-  }
-
-  // src/blob-download.js
-  async function saveDownloadBlob(blob, name, document2 = globalThis.document, { browserDownload = false } = {}) {
-    const view = document2.defaultView;
-    if (!browserDownload && typeof GM_download === "function") {
-      const info = typeof GM_info === "object" ? GM_info : {};
-      const version = String(info.version || "").split(".").map(Number);
-      const supportsBlob = info.scriptHandler === "Tampermonkey" && (version[0] > 5 || version[0] === 5 && (version[1] > 4 || version[1] === 4 && version[2] >= 6226));
-      const objectUrl2 = supportsBlob ? null : view.URL.createObjectURL(blob);
-      let timer;
-      try {
-        await new Promise((resolve, reject) => {
-          let handle;
-          timer = view.setTimeout(() => {
-            handle?.abort?.();
-            reject(new Error("\u4FDD\u5B58\u6587\u4EF6\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868"));
-          }, 6e4);
-          const finish = (callback) => (value) => {
-            view.clearTimeout(timer);
-            callback(value);
-          };
-          handle = GM_download({
-            url: objectUrl2 || blob,
-            name,
-            saveAs: false,
-            onload: finish(resolve),
-            onerror: finish((error) => {
-              const reasons = {
-                not_enabled: "\u8BF7\u5728 Tampermonkey \u8BBE\u7F6E\u4E2D\u542F\u7528\u4E0B\u8F7D\u529F\u80FD",
-                not_whitelisted: "\u8BF7\u5728 Tampermonkey \u8BBE\u7F6E\u4E2D\u5141\u8BB8\u6B64\u6587\u4EF6\u6269\u5C55\u540D",
-                not_permitted: "\u8BF7\u6388\u4E88 Tampermonkey \u4E0B\u8F7D\u6743\u9650",
-                not_supported: "\u5F53\u524D\u811A\u672C\u7BA1\u7406\u5668\u4E0D\u652F\u6301\u6B64\u4E0B\u8F7D\u65B9\u5F0F"
-              };
-              reject(new Error(reasons[error?.error] || "\u6587\u4EF6\u4FDD\u5B58\u5931\u8D25\u6216\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868"));
-            }),
-            ontimeout: finish(() => reject(new Error("\u4FDD\u5B58\u6587\u4EF6\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868")))
-          });
-        });
-        return { confirmed: true };
-      } finally {
-        view.clearTimeout(timer);
-        if (objectUrl2) view.URL.revokeObjectURL(objectUrl2);
-      }
-    }
-    const objectUrl = view.URL.createObjectURL(blob);
-    const anchor = document2.createElement("a");
-    anchor.hidden = true;
-    anchor.download = name;
-    anchor.href = objectUrl;
-    document2.body.append(anchor);
-    try {
-      anchor.click();
-    } finally {
-      anchor.remove();
-      view.setTimeout(() => view.URL.revokeObjectURL(objectUrl), 1e4);
-    }
-    return { confirmed: false };
   }
 
   // src/batch-cf-detection.js
