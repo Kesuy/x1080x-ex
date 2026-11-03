@@ -53,10 +53,10 @@ export function checkPixhostPreviewImage(value, document, timeout = IMAGE_CHECK_
   });
 }
 
-export async function filterPixhostUnavailableImageUrls(result, document) {
+export async function filterPixhostUnavailableImageUrls(result, document, timeout = IMAGE_CHECK_TIMEOUT) {
   if (!result?.imageUrls?.length) return result;
   const valid = await Promise.all(result.imageUrls.map(
-    (url) => checkPixhostPreviewImage(url, document)
+    (url) => checkPixhostPreviewImage(url, document, timeout)
   ));
   if (valid.every(Boolean)) return result;
   const imageUrls = result.imageUrls.filter((_url, index) => valid[index]);
