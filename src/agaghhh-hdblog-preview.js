@@ -28,9 +28,26 @@ installOfficialPreviewFallbackSetting();
 const HDBLOG_ORIGIN = 'https://hdblog.me';
 const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 const DEFAULT_HDBLOG_BLOCKED_KEYWORDS = 'モザイク破壊';
-const REQUEST_TIMEOUT = 30000;
-const HDBLOG_RETRY_DELAYS = [500, 1000];
+export const HDBLOG_PREVIEW_TIMEOUT_KEY = 'x1080x-ex:hdblog-preview-request-timeout-ms';
+export const HDBLOG_PREVIEW_RETRIES_KEY = 'x1080x-ex:hdblog-preview-retry-count';
+export const DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS = 30000;
+export const DEFAULT_HDBLOG_PREVIEW_RETRIES = 2;
+const REQUEST_TIMEOUT = DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS;
 const previewLookups = new WeakMap();
+
+export function getHdblogPreviewLoadingSettings() {
+  const read = typeof GM_getValue === 'function'
+    ? GM_getValue
+    : (_key, fallback) => fallback;
+  const timeoutMs = Number(read(HDBLOG_PREVIEW_TIMEOUT_KEY, DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS));
+  const retries = Number(read(HDBLOG_PREVIEW_RETRIES_KEY, DEFAULT_HDBLOG_PREVIEW_RETRIES));
+  return {
+    timeoutMs: Number.isInteger(timeoutMs) && timeoutMs >= 3000 && timeoutMs <= 120000
+      ? timeoutMs : DEFAULT_HDBLOG_PREVIEW_TIMEOUT_MS,
+    retryCount: Number.isInteger(retries) && retries >= 0 && retries <= 5
+      ? retries : DEFAULT_HDBLOG_PREVIEW_RETRIES,
+  };
+}
 const CONTAINER_ID = 'x1080x-ex-agaghhh-hdblog-preview';
 const PREVIEW_IMAGE_ATTR = 'data-x1080x-hdblog-preview-url';
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
@@ -50,7 +67,7 @@ function absoluteHttpUrl(value, baseUrl) {
   }
 }
 
-function requestText(url, gmRequest, referer = '') {
+function requestText(url, gmRequest, referer = '', timeoutMs = REQUEST_TIMEOUT) {
   return new Promise((resolve, reject) => {
     if (typeof gmRequest !== 'function') {
       reject(new Error('当前 userscript 管理器不支持 GM_xmlhttpRequest'));
@@ -60,7 +77,7 @@ function requestText(url, gmRequest, referer = '') {
       method: 'GET',
       url,
       responseType: 'text',
-      timeout: REQUEST_TIMEOUT,
+      timeout: timeoutMs,
       headers: {
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
         ...(referer ? { Referer: referer } : {}),
@@ -155,9 +172,9 @@ function redirectFromHtml(html, baseUrl, hostDocument) {
   return absoluteHttpUrl(scriptMatch?.[1], baseUrl);
 }
 
-async function resolveHdblogReferTarget(document, referUrl, articleUrl, gmRequest) {
+async function resolveHdblogReferTarget(document, referUrl, articleUrl, gmRequest, timeoutMs = REQUEST_TIMEOUT) {
   try {
-    const response = await requestText(referUrl, gmRequest, articleUrl);
+    const response = await requestText(referUrl, gmRequest, articleUrl, timeoutMs);
     const finalUrl = absoluteHttpUrl(response.finalUrl, referUrl);
     if (finalUrl && finalUrl !== referUrl && !isHdblogReferUrl(finalUrl, referUrl)) {
       return finalUrl;
@@ -323,7 +340,7 @@ function inPreviewRange(range, node) {
   return !range.boundary || !isAfter(range.boundary, node);
 }
 
-export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequest, healthDocument = null) {
+export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequest, healthDocument = null, timeoutMs = REQUEST_TIMEOUT) {
   const range = previewRange(document);
   if (!range) return [];
 
@@ -386,12 +403,12 @@ export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequ
       const image = candidate.image;
       const thumbnail = candidate.thumbUrl;
       if (isHdblogReferUrl(target, document.baseURI)) {
-        target = await resolveHdblogReferTarget(document, target, articleUrl, gmRequest);
+        target = await resolveHdblogReferTarget(document, target, articleUrl, gmRequest, timeoutMs);
       }
 
       const pixhostShowTarget = target && isPixhostShowUrl(target, document.baseURI);
       if (pixhostShowTarget) {
-        target = await resolvePixhostShowUrl(document, target, thumbnail, gmRequest);
+        target = await resolvePixhostShowUrl(document, target, thumbnail, gmRequest, timeoutMs);
         if (!target) continue;
       }
 
@@ -408,7 +425,7 @@ export async function collectHdblogPreviewImageUrls(document, articleUrl, gmRequ
 
   const verify = async (urls) => {
     if (!healthDocument || !urls.length) return urls;
-    const checked = await filterPixhostUnavailableImageUrls({ imageUrls: urls }, healthDocument);
+    const checked = await filterPixhostUnavailableImageUrls({ imageUrls: urls }, healthDocument, timeoutMs);
     return checked.imageUrls;
   };
   const { standard, fourK } = partitionPreviewCandidates(candidates);
@@ -432,14 +449,19 @@ export async function fetchHdblogPreviewForCode(
   code,
   gmRequest = globalThis.GM_xmlhttpRequest,
   hostDocument = globalThis.document,
-  verifyImages = false
+  verifyImages = false,
+  options = {}
 ) {
   const normalizedCode = String(code || '').trim().toUpperCase();
   if (!normalizedCode) return { code: '', articleUrl: '', imageUrls: [], blocked: [], remaining: [] };
   const searchCode = hdblogSearchCodeForThreadCode(normalizedCode);
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT;
+  const retryCount = options.retryCount ?? 0;
+  const wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
+  // Always search exactly once: no match means there is nothing confirmed to retry.
   const searchUrl = `${HDBLOG_ORIGIN}/?s=${encodeURIComponent(searchCode)}`;
-  const searchResponse = await requestText(searchUrl, gmRequest, `${HDBLOG_ORIGIN}/`);
+  const searchResponse = await requestText(searchUrl, gmRequest, `${HDBLOG_ORIGIN}/`, timeoutMs);
   const searchDocument = parseHtml(searchResponse.html, searchResponse.finalUrl || searchUrl, hostDocument);
   if (!searchDocument) return { code: normalizedCode, articleUrl: '', imageUrls: [], blocked: [], remaining: [] };
 
@@ -449,14 +471,35 @@ export async function fetchHdblogPreviewForCode(
     return { code: normalizedCode, articleUrl: '', imageUrls: [], ...selection };
   }
 
+  // A matching HDblog article is confirmed. Only the article/Preview stage is
+  // retryable; an article with no Preview section is a definitive miss.
   const articleUrl = selection.selected.url;
-  const articleResponse = await requestText(articleUrl, gmRequest, searchUrl);
-  const articleDocument = parseHtml(articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument);
-  const imageUrls = articleDocument
-    ? await collectHdblogPreviewImageUrls(
-      articleDocument, articleUrl, gmRequest, verifyImages ? hostDocument : null
-    )
-    : [];
+  let imageUrls = [];
+  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+    let shouldRetry = false;
+    try {
+      const articleResponse = await requestText(articleUrl, gmRequest, searchUrl, timeoutMs);
+      const articleDocument = parseHtml(
+        articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument
+      );
+      if (!articleDocument || !previewRange(articleDocument)) break;
+      imageUrls = await collectHdblogPreviewImageUrls(
+        articleDocument, articleUrl, gmRequest,
+        verifyImages ? hostDocument : null, timeoutMs
+      );
+      if (imageUrls.length) break;
+      shouldRetry = true;
+    } catch (error) {
+      shouldRetry = true;
+      console.warn('[x1080x-ex] matched HDblog article Preview loading failed', {
+        code: normalizedCode, attempt: attempt + 1,
+        error: error?.message || String(error),
+      });
+    }
+    if (!shouldRetry || attempt >= retryCount) break;
+    const delay = Math.min(500 * (attempt + 1), 2000);
+    await wait(delay);
+  }
   return { code: normalizedCode, articleUrl, imageUrls, ...selection };
 }
 
@@ -469,7 +512,7 @@ function firstPostContent(document) {
     .find((element) => /^post_\d+$/i.test(element.id))
     || document.querySelector('#postlist > div, #postlist')
     || document.querySelector('#first-post');
-  return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text')
+  return firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text, .post-content')
     || firstPost || null;
 }
 
@@ -551,23 +594,14 @@ export async function fetchHdblogPreviewWithRetries(
   code,
   gmRequest = globalThis.GM_xmlhttpRequest,
   hostDocument = globalThis.document,
-  wait = (delay) => new Promise((resolve) => setTimeout(resolve, delay))
+  settings = getHdblogPreviewLoadingSettings()
 ) {
-  let lastResult = null;
-  for (let attempt = 0; attempt <= HDBLOG_RETRY_DELAYS.length; attempt += 1) {
-    try {
-      lastResult = await fetchHdblogPreviewForCode(code, gmRequest, hostDocument, true);
-      if (lastResult?.imageUrls?.length) return lastResult;
-    } catch (error) {
-      console.warn('[x1080x-ex] HDblog Preview attempt failed', {
-        code, attempt: attempt + 1, error: error?.message || String(error),
-      });
+  return fetchHdblogPreviewForCode(
+    code, gmRequest, hostDocument, true, {
+      timeoutMs: settings.timeoutMs,
+      retryCount: settings.retryCount,
     }
-    if (attempt < HDBLOG_RETRY_DELAYS.length) {
-      await wait(HDBLOG_RETRY_DELAYS[attempt]);
-    }
-  }
-  return lastResult;
+  );
 }
 
 export async function installAgaghhhHdblogPreview(
