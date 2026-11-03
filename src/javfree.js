@@ -588,7 +588,7 @@ function closeJavfreeSettingsPanel(document) {
   document?.getElementById(JAVFREE_SETTINGS_PANEL_ID)?.remove();
 }
 
-export function openJavfreeSettingsPanel(document = globalThis.document) {
+export function openJavfreeSettingsPanel(document = globalThis.document, { embedded = false, onSaved } = {}) {
   if (!document?.body) return null;
   closeJavfreeSettingsPanel(document);
 
@@ -686,11 +686,12 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
       GM_setValue(JAVFREE_PREVIEW_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
     }
     closeJavfreeSettingsPanel(document);
-    document.defaultView?.location?.reload?.();
+    if (typeof onSaved === 'function') onSaved();
+    else document.defaultView?.location?.reload?.();
   });
 
   overlay.append(form);
-  document.body.append(overlay);
+  if (!embedded) document.body.append(overlay);
   return overlay;
 }
 
