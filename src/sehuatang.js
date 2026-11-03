@@ -432,8 +432,5 @@ export function installSehuatangEnhancement(document = globalThis.document, loca
   if (!document?.body || !isSehuatangHost(location)) return null;
   const view = document.defaultView;
   if (view && view.top !== view) return null;
-  if (typeof GM_registerMenuCommand === 'function') {
-    GM_registerMenuCommand('⚙️ 98堂设置', () => openSehuatangSettings(document));
-  }
   return installSehuatangToolbar(document);
 }
