@@ -165,7 +165,14 @@ for (const enabled of [true, false]) {
     attachmentClicks++;
   });
   sht.window.eval(artifact);
-  assert.ok(menus.has('⚙️ 98堂设置'));
+  assert.deepEqual([...menus.keys()], [
+    '⚙️ 设置匹配域名', '➕ 添加当前域名', '⚙️ x1080x-ex 设置中心',
+  ]);
+  menus.get('⚙️ x1080x-ex 设置中心')();
+  const settingsHost = sht.window.document.getElementById('x1080x-ex-unified-settings-center');
+  assert.ok(settingsHost, 'all websites must use the shared settings center');
+  assert.ok(settingsHost.shadowRoot.querySelector('[data-site-pane="sehuatang"] form'));
+  settingsHost.remove();
   const toolbar = sht.window.document.getElementById('x1080x-ex-sehuatang-toolbar');
   assert.equal(Boolean(toolbar), enabled);
   assert.equal(replies, 0);
