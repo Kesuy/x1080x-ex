@@ -574,6 +574,13 @@ function previewRange(content) {
 
 function inPreviewRange(range, node) {
   if (!range || !isAfter(range.marker, node)) return false;
+  // Related works are also nested inside JavClub's article content.
+  // Never collect their thumbnail links as downloadable Preview images.
+  const element = node.nodeType === 1 ? node : node.parentElement;
+  if (element?.closest?.('.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, [class*="related-posts"]')) return false;
+  const content = element?.closest?.('.entry-content');
+  const related = content?.querySelector?.('.yarpp, .yarpp-related, .related-posts, [class*="related-posts"]');
+  if (related && isAfter(range.marker, related) && isAfter(related, node)) return false;
   return !range.boundary || !isAfter(range.boundary, node);
 }
 
