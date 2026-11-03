@@ -184,7 +184,7 @@ test('JavClub 関連作品 YARPP 推荐区不属于 Preview，缩略图和链接
     assert.equal(doc.querySelector('#after-thumb').dataset.x1080xPreviewLarge, undefined);
     const collected = collectHdblogPixhostPreviewImages(doc);
     assert.equal(collected.length, 1, '下载器不得把 YARPP 的 Pixhost 缩略图算作 Preview');
-    assert.match(collected[0].pixhostShowUrl, /real-preview\\.jpg$/);
+    assert.match(collected[0].pixhostShowUrl, /real-preview\.jpg$/);
   } finally {
     dom.window.close();
   }
