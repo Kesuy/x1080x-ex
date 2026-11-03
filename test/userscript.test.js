@@ -1380,8 +1380,8 @@ test('history diagnosis distinguishes loaded old TIDs from records with a usable
   globalThis.GM_registerMenuCommand = (name, callback) => menus.set(name, callback);
   dom.window.alert = message => alerts.push(message);
   try {
-    await import(`../src/userscript.js?history-diagnosis=${Date.now()}`);
-    menus.get('🧾 检查旧版浏览记录')();
+    const { runSiteSettingsTool } = await import(`../src/userscript.js?history-diagnosis=${Date.now()}`);
+    assert.equal(runSiteSettingsTool('inspect-history'), true);
     assert.match(alerts[0], /旧版数字 TID：3 条/);
     assert.match(alerts[0], /已取得对应信息：1 条/);
     assert.match(alerts[0], /仍缺对应信息：2 条/);
