@@ -1589,3 +1589,96 @@ test('split batch button disables unread-only when record saving is off', async 
     dom.window.close();
   }
 });
+
+test('bulk download waits for HDblog Preview in flight, then saves cover and Preview', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>FNS-267</title></head><body>
+    <div class="panel detail-panel"><header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button secondary dock-side small">收藏</button>
+      </div></span></div>
+      <h1>FNS-267 [BT] Sample</h1>
+    </header></div>
+    <article id="first-post" class="post"><div class="post-content">
+      <div class="post-text"><div class="protected-text discuz-body">
+        <img class="body-image" src="https://images.example.com/fns-267-cover.jpg">
+      </div></div>
+    </div></article>
+  </body></html>`, { url: 'https://1080xin.com/resources/modern-fns267?page=1' });
+  const restore = installDomGlobals(dom.window);
+  const requests = [];
+  const saved = [];
+  let articleReply = null;
+  const searchUrl = 'https://hdblog.me/?s=FNS-267';
+  const articleUrl = 'https://hdblog.me/8765/fns-267/';
+  const previewUrl = 'https://images.example.com/fns-267-preview.jpg';
+  const originalGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => {
+    if (key === 'x1080x-ex:agaghhh-javfree-preview-fallback-enabled') return false;
+    if (key === 'x1080x-ex:agaghhh-official-preview-fallback-enabled') return false;
+    return fallback;
+  };
+  dom.window.URL.createObjectURL = () => 'blob:preview-download-test';
+  dom.window.URL.revokeObjectURL = () => {};
+  globalThis.GM_download = (opts) => {
+    saved.push(opts.name);
+    queueMicrotask(() => opts.onload());
+  };
+  globalThis.GM_xmlhttpRequest = (opts) => {
+    requests.push({ url: opts.url, type: opts.responseType });
+    if (opts.responseType === 'text' && opts.url === searchUrl) {
+      queueMicrotask(() => opts.onload({
+        status: 200, finalUrl: searchUrl,
+        responseText: `<main id="genesis-content"><article class="entry">
+          <h2 class="entry-title"><a href="${articleUrl}">FNS-267</a></h2>
+        </article></main>`,
+      }));
+      return;
+    }
+    if (opts.responseType === 'text' && opts.url === articleUrl) {
+      articleReply = () => opts.onload({
+        status: 200, finalUrl: articleUrl,
+        responseText: `<main id="genesis-content"><article class="entry"><div class="entry-content">
+          <p>Preview:</p><p><a href="${previewUrl}"><img src="${previewUrl}"></a></p><p>BTFile:</p>
+        </div></article></main>`,
+      });
+      return;
+    }
+    if (opts.responseType === 'blob') {
+      queueMicrotask(() => opts.onload({
+        status: 200, finalUrl: opts.url,
+        responseHeaders: 'Content-Type: image/jpeg',
+        response: new dom.window.Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' }),
+      }));
+      return;
+    }
+    assert.fail(`unexpected Preview test request ${opts.url}`);
+  };
+
+  try {
+    await import(`../src/userscript.js?modern-preview-wait=${Date.now()}`);
+    const { installAgaghhhHdblogPreview } = await import('../src/agaghhh-hdblog-preview.js');
+    const previewTask = installAgaghhhHdblogPreview(
+      dom.window.document, dom.window.location, globalThis.GM_xmlhttpRequest
+    );
+    await waitFor(() => typeof articleReply === 'function', 'HDblog matching article lookup should be pending');
+
+    const button = dom.window.document.getElementById('x1080x-ex-download');
+    assert.ok(button);
+    button.click();
+    assert.equal(button.disabled, true);
+    assert.equal(saved.length, 0, 'must not snapshot/download the cover before Preview lookup finishes');
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent,
+      /等待 Preview 加载完成/);
+    articleReply();
+    await previewTask;
+    await waitFor(() => saved.length === 2 && !button.disabled, 'both images should be saved');
+    assert.deepEqual(saved, ['FNS-267 A.jpg', 'FNS-267 B.jpg']);
+    assert.ok(requests.some((request) => request.url === previewUrl && request.type === 'blob'));
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent,
+      /已处理 2\/2 · 已保存 2/);
+  } finally {
+    globalThis.GM_getValue = originalGet;
+    restore();
+    dom.window.close();
+  }
+});
