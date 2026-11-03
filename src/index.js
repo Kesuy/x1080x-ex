@@ -1,4 +1,5 @@
 import './userscript.js';
+// Unified site settings are initialized after the legacy runtime.
 import {
   installAgaghhhEnhancement,
   installX1080xSettingsMenu,
