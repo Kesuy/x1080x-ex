@@ -201,7 +201,8 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     const batchSplit = dom.window.document.querySelector('#x1080x-ex-batch-split');
     assert.equal(button.parentElement, batchSplit);
     assert.equal(batchSplit.parentElement, archiveDescription);
-    assert.equal(archiveDescription.firstElementChild, batchSplit);
+    assert.equal(archiveDescription.firstElementChild, progressButton);
+    assert.equal(progressButton.nextElementSibling, batchSplit);
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
     assert.equal(dom.window.document.querySelector('#x1080x-ex-open-page-toolbar'), null);
     assert.equal(button.textContent, '批量打开本页（2）');
