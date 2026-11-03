@@ -47,6 +47,12 @@ import { showHistoryImportDialog } from './history-import.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
 import {
+  BATCH_CF_SESSION_KEY,
+  BATCH_CF_EVENT_KEY,
+  isCloudflareChallengePage,
+  watchBatchCloudflareChallenge,
+} from './batch-cf-detection.js';
+import {
   ensureModernResourceActionGroup,
   placeModernResourceActionButton,
   ensureModernDownloadStatus,
@@ -947,6 +953,10 @@ async function openCurrentPageThreads(button) {
     cancelled: false,
     finishDelay: null,
     timeoutId: null,
+    sessionId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    openedUrls: [],
+    previousHistory: new Set(readBatchOpenHistory()),
+    cfChallenge: null,
   };
   batchOpenState = state;
   rememberBatchProgressForCurrentPage(document, false);
@@ -959,13 +969,51 @@ async function openCurrentPageThreads(button) {
   });
   button.style.background = '#b84b4b';
 
+  const onCloudflare = (event) => {
+    if (!event || event.sessionId !== state.sessionId || state.cfChallenge) return;
+    state.cfChallenge = event;
+    // Do not retain an unverified challenge page as an already browsed item.
+    const historyId = batchOpenHistoryId(event.url);
+    if (historyId && !state.previousHistory.has(historyId)) {
+      const config = batchOpenHistoryConfig();
+      if (config && typeof GM_getValue === 'function' && typeof GM_setValue === 'function') {
+        const raw = GM_getValue(config.historyKey, []);
+        if (Array.isArray(raw)) {
+          GM_setValue(config.historyKey, raw.filter((entry) => entry !== historyId));
+          applyBatchOpenHistory(document);
+        }
+      }
+    }
+    cancelBatchOpen();
+    button.textContent = '检测到 Cloudflare 验证，已停止';
+    button.style.background = '#b36b22';
+  };
+  const checkCloudflare = () => {
+    if (typeof GM_getValue === 'function') {
+      onCloudflare(GM_getValue(BATCH_CF_EVENT_KEY, null));
+    }
+  };
+  const listenerId = typeof GM_addValueChangeListener === 'function'
+    ? GM_addValueChangeListener(BATCH_CF_EVENT_KEY, (_key, _old, value) => onCloudflare(value))
+    : null;
+
   try {
     await waitForBatchDelay(randomDelay(timing.initialMin, timing.initialMax), state);
     for (const [index, thread] of threads.entries()) {
+      checkCloudflare();
       if (state.cancelled) break;
 
       button.textContent = `停止后台打开（${opened}/${threads.length}）`;
       try {
+        state.openedUrls.push(thread.url);
+        if (typeof GM_setValue === 'function') {
+          GM_setValue(BATCH_CF_SESSION_KEY, {
+            id: state.sessionId,
+            host: currentHost(),
+            updatedAt: Date.now(),
+            urls: state.openedUrls.slice(-30),
+          });
+        }
         GM_openInTab(thread.url, {
           active: false,
           insert: false,
@@ -977,6 +1025,7 @@ async function openCurrentPageThreads(button) {
         failures.push(`${index + 1}. ${redactDiagnostic(error?.message || error || '打开失败')}`);
       }
 
+      checkCloudflare();
       if (index === threads.length - 1 || state.cancelled) break;
       const completedCount = index + 1;
       const isLongPause = completedCount % timing.pauseEvery === 0;
@@ -985,19 +1034,29 @@ async function openCurrentPageThreads(button) {
         : randomDelay(timing.delayMin, timing.delayMax);
       button.textContent = `${isLongPause ? '停顿' : '等待'} ${Math.ceil(delay / 1000)} 秒（${opened}/${threads.length}）`;
       await waitForBatchDelay(delay, state);
+      checkCloudflare();
     }
   } finally {
+    if (listenerId !== null && typeof GM_removeValueChangeListener === 'function') {
+      GM_removeValueChangeListener(listenerId);
+    }
+    if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function'
+      && GM_getValue(BATCH_CF_SESSION_KEY, null)?.id === state.sessionId) {
+      GM_setValue(BATCH_CF_SESSION_KEY, null);
+    }
     endBatchOpenGuard();
     const wasCancelled = state.cancelled;
     const completedPage = !wasCancelled && failures.length === 0 && opened === threads.length;
     rememberBatchProgressForCurrentPage(document, completedPage);
     batchOpenState = null;
-    button.textContent = wasCancelled
+    button.textContent = state.cfChallenge
+      ? `CF 验证，已停止（${opened}/${threads.length}）`
+      : wasCancelled
       ? `已停止（已打开 ${opened}/${threads.length}）`
       : failures.length
         ? `完成（打开 ${opened}，失败 ${failures.length}）`
         : `✓ 已按顺序打开 ${opened} 个主题`;
-    button.style.background = failures.length ? '#b36b22' : '#398bd4';
+    button.style.background = (failures.length || state.cfChallenge) ? '#b36b22' : '#398bd4';
     window.setTimeout(() => {
       if (!batchOpenState) {
         setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
@@ -1005,6 +1064,14 @@ async function openCurrentPageThreads(button) {
     }, 3000);
   }
 
+  if (state.cfChallenge) {
+    window.alert(
+      `批量打开已自动停止：检测到 Cloudflare 人机验证。\n\n`
+      + `验证页：${state.cfChallenge.url}\n`
+      + `已打开 ${opened}/${threads.length} 个主题。\n\n`
+      + '请切换到验证标签页，手动完成验证后，再回列表重新点击批量打开。'
+    );
+  }
   if (failures.length) {
     window.alert(`以下主题打开失败：\n\n${failures.join('\n')}`);
   }
@@ -1889,6 +1956,9 @@ function observeModernBoard() {
 registerSettingsMenu();
 
 if (isAllowedHost(location.hostname, getConfiguredDomains())) {
+  watchBatchCloudflareChallenge(document, location.href);
+  // A Cloudflare interstitial is not a successfully visited thread.
+  if (!isCloudflareChallengePage(document)) {
   const expandHdblogPreview = typeof GM_getValue !== 'function'
     || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
   if (expandHdblogPreview) expandHdblogPreviewImages();
@@ -1904,4 +1974,5 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   }
   startAutomaticLegacyHistoryMigration();
   observeModernBoard();
+  }
 }
