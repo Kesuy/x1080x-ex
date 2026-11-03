@@ -18,10 +18,11 @@ function setStatus(element, message, kind = '') {
 
 export function enhanceQbittorrentSettingsPanel(
   document = globalThis.document,
-  gmRequest = globalThis.GM_xmlhttpRequest
+  gmRequest = globalThis.GM_xmlhttpRequest,
+  providedForm = null
 ) {
   const overlay = document?.getElementById(SETTINGS_PANEL_ID);
-  const form = overlay?.shadowRoot?.querySelector('form') || overlay?.querySelector('form');
+  const form = providedForm || overlay?.shadowRoot?.querySelector('form') || overlay?.querySelector('form');
   if (!form || form.querySelector(`[${QB_SECTION_ATTR}]`)) return false;
 
   const current = getQbSettings();
