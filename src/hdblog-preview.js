@@ -162,7 +162,7 @@ function findBoundary(root, marker) {
     const text = normalizeText(node.nodeValue);
     return text && (
       PREVIEW_BOUNDARY_PATTERN.test(text)
-      || /^(?:関連作品|関連記事|関連動画|Related(?:\\s+(?:Posts|Articles|Videos|Works))?)\\s*[:：]?$/i.test(text)
+      || /^(?:関連作品|関連記事|関連動画|Related(?:\s+(?:Posts|Articles|Videos|Works))?)\s*[:：]?$/i.test(text)
     );
   }) || null;
   const relatedBoundary = [...root.querySelectorAll(RELATED_CONTENT_SELECTOR)]
