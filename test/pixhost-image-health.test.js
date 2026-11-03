@@ -64,11 +64,11 @@ for (const code of ['DASS-909', 'DASS-904']) {
     const gmRequest = (options) => {
       requests.push(options.url);
       let html = '';
-      if (options.url === `https://hdblog.me/?s=${code}`) {
+      if (options.url === `https://javclub.me/?s=${code}`) {
         html = `<main id="genesis-content"><article class="entry"><h2 class="entry-title">
-          <a href="https://hdblog.me/1234/${code.toLowerCase()}/">${code}</a>
+          <a href="https://javclub.me/1234/${code.toLowerCase()}/">${code}</a>
         </h2></article></main>`;
-      } else if (options.url === `https://hdblog.me/1234/${code.toLowerCase()}/`) {
+      } else if (options.url === `https://javclub.me/1234/${code.toLowerCase()}/`) {
         html = `<main id="genesis-content"><article class="entry"><div class="entry-content">
           <p>Preview:</p><p><img src="${pixhost}"></p><p>BTFile:</p>
         </div></article></main>`;
@@ -113,9 +113,9 @@ test('healthy Pixhost Preview is retained and does not trigger fallback', async 
   mockImages(dom.window.document, () => [1280, 720]);
   const gmRequest = (options) => {
     let html;
-    if (options.url === 'https://hdblog.me/?s=DASS-909') {
-      html = '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://hdblog.me/1234/dass-909/">DASS-909</a></h2></article></main>';
-    } else if (options.url === 'https://hdblog.me/1234/dass-909/') {
+    if (options.url === 'https://javclub.me/?s=DASS-909') {
+      html = '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://javclub.me/1234/dass-909/">DASS-909</a></h2></article></main>';
+    } else if (options.url === 'https://javclub.me/1234/dass-909/') {
       html = `<main id="genesis-content"><article class="entry"><div class="entry-content"><p>Preview:</p><p><img src="${pixhost}"></p><p>BTFile:</p></div></article></main>`;
     } else {
       throw new Error('JavFree must not be fetched for a healthy HDblog Preview');
@@ -129,7 +129,7 @@ test('healthy Pixhost Preview is retained and does not trigger fallback', async 
       dom.window.document, dom.window.location, gmRequest
     );
     assert.ok(section);
-    assert.match(section.textContent, /HDblog Preview/);
+    assert.match(section.textContent, /JavClub Preview/);
     assert.equal(section.querySelector('img')?.src, pixhost);
   } finally {
     if (oldGet === undefined) delete globalThis.GM_getValue;
@@ -153,9 +153,9 @@ test('removed normal Pixhost preview uses healthy 4K on the same HDblog article 
   const gmRequest = (options) => {
     requests.push(options.url);
     let html;
-    if (options.url === 'https://hdblog.me/?s=EBWH-365') {
-      html = '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://hdblog.me/988344/ebwh-365/">EBWH-365</a></h2></article></main>';
-    } else if (options.url === 'https://hdblog.me/988344/ebwh-365/') {
+    if (options.url === 'https://javclub.me/?s=EBWH-365') {
+      html = '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://javclub.me/988344/ebwh-365/">EBWH-365</a></h2></article></main>';
+    } else if (options.url === 'https://javclub.me/988344/ebwh-365/') {
       html = `<main id="genesis-content"><article class="entry"><div class="entry-content">
         <p>Preview:</p>
         <p><a href="${fourKShow}"><img src="https://t4.pixhost.to/thumbs/6003/ebwh-365_4k60fps-mp4.jpg"></a></p>
@@ -180,8 +180,8 @@ test('removed normal Pixhost preview uses healthy 4K on the same HDblog article 
     assert.equal(section.querySelector('img')?.src, fourK);
     assert.equal(section.querySelectorAll('img').length, 1);
     assert.deepEqual(requests, [
-      'https://hdblog.me/?s=EBWH-365',
-      'https://hdblog.me/988344/ebwh-365/',
+      'https://javclub.me/?s=EBWH-365',
+      'https://javclub.me/988344/ebwh-365/',
       normalShow,
       fourKShow,
     ]);
