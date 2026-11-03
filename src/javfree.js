@@ -1,4 +1,5 @@
 import { renderDownloadIcon } from './download-icon.js';
+import { saveDownloadBlob } from './blob-download.js';
 import { organizeSettingsPanel } from './settings-layout.js';
 import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
@@ -506,18 +507,9 @@ function extensionFromBlob(blob, url) {
 }
 
 function saveBlob(document, blob, filename) {
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.hidden = true;
-  anchor.href = objectUrl;
-  anchor.download = filename;
-  document.body.append(anchor);
-  try {
-    anchor.click();
-  } finally {
-    anchor.remove();
-    document.defaultView?.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-  }
+  // Use the shared browser save path: release Blob URLs after the browser
+  // has had time to take ownership of the initiated download.
+  return saveDownloadBlob(blob, filename, document, { browserDownload: true });
 }
 
 async function downloadJavfreePreview(button, document, locationObject, request) {
@@ -529,7 +521,7 @@ async function downloadJavfreePreview(button, document, locationObject, request)
   button.textContent = '下载中…';
   try {
     const blob = await requestImageBlob(previewUrl, locationObject?.href || document.baseURI, request);
-    saveBlob(document, blob, code + '.' + extensionFromBlob(blob, previewUrl));
+    await saveBlob(document, blob, code + '.' + extensionFromBlob(blob, previewUrl));
     button.textContent = '✓';
   } catch (error) {
     button.textContent = '失败';
