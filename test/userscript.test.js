@@ -187,8 +187,10 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     assert.ok(button);
     assert.ok(progressButton);
     assert.equal(progressButton.textContent, '定位浏览进度');
-    assert.equal(button.parentElement, archiveDescription);
-    assert.equal(archiveDescription.firstElementChild, button);
+    const batchSplit = dom.window.document.querySelector('#x1080x-ex-batch-split');
+    assert.equal(button.parentElement, batchSplit);
+    assert.equal(batchSplit.parentElement, archiveDescription);
+    assert.equal(archiveDescription.firstElementChild, batchSplit);
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
     assert.equal(dom.window.document.querySelector('#x1080x-ex-open-page-toolbar'), null);
     assert.equal(button.textContent, '批量打开本页（2）');
@@ -1490,5 +1492,89 @@ test('disabled or unset history setting never saves a hydrated resource title', 
       await new Promise(resolve => dom.window.setTimeout(resolve, 0));
       assert.deepEqual(writes, []);
     } finally { dom.window.close(); await Promise.resolve(); restore(); }
+  }
+});
+
+test('split batch button switches between unopened-only and all without visiting settings', async () => {
+  const dom = new JSDOM(`<!doctype html><html><head><title>论坛列表</title></head><body>
+    <div id="pgt"></div>
+    <div id="threadlist"><table>
+      <tbody id="normalthread_401"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=401">已浏览</a></th></tr></tbody>
+      <tbody id="normalthread_402"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=402">未浏览</a></th></tr></tbody>
+    </table></div>
+  </body></html>`, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
+  const restore = installDomGlobals(dom.window);
+  const oldTimeout = dom.window.setTimeout;
+  const oldClearTimeout = dom.window.clearTimeout;
+  dom.window.setTimeout = (callback) => { queueMicrotask(callback); return 1; };
+  dom.window.clearTimeout = () => {};
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+    ['x1080x-ex:agaghhh-batch-open-history', ['tid:401']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  const opened = [];
+  globalThis.GM_openInTab = (url) => opened.push(new URL(url).searchParams.get('tid'));
+  try {
+    await import(`../src/userscript.js?split-open=${Date.now()}`);
+    const doc = dom.window.document;
+    const button = doc.getElementById('x1080x-ex-open-page');
+    const trigger = doc.getElementById('x1080x-ex-batch-mode-trigger');
+    const menu = doc.getElementById('x1080x-ex-batch-mode-menu');
+    assert.equal(button.textContent, '批量打开未浏览（1）');
+    trigger.click();
+    assert.equal(menu.hidden, false);
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+    const all = menu.querySelector('[data-batch-mode="all"]');
+    const unread = menu.querySelector('[data-batch-mode="unread"]');
+    assert.match(all.textContent, /打开本页全部（2）/);
+    assert.match(unread.textContent, /仅打开未浏览（1）/);
+
+    all.click();
+    assert.equal(menu.hidden, true);
+    assert.equal(values.get('x1080x-ex:agaghhh-batch-open-unopened-only'), false);
+    await waitFor(() => opened.length === 2, 'all mode must open both posts');
+    await waitFor(() => button.textContent === '批量打开本页（2）', 'all mode must become default');
+    assert.deepEqual(opened, ['401', '402']);
+
+    // Simulate another unvisited item appearing after the all-mode run.
+    values.set('x1080x-ex:agaghhh-batch-open-history', ['tid:401']);
+    trigger.click();
+    assert.match(unread.textContent, /仅打开未浏览（1）/);
+    unread.click();
+    assert.equal(values.get('x1080x-ex:agaghhh-batch-open-unopened-only'), true);
+    await waitFor(() => opened.length === 3, 'unread mode must skip visited 401');
+    assert.deepEqual(opened, ['401', '402', '402']);
+  } finally {
+    dom.window.setTimeout = oldTimeout;
+    dom.window.clearTimeout = oldClearTimeout;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('split batch button disables unread-only when record saving is off', async () => {
+  const dom = new JSDOM(`<!doctype html><body><div id="pgt"></div>
+    <div id="threadlist"><table>
+      <tbody id="normalthread_401"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=401">帖子</a></th></tr></tbody>
+    </table></div>`, { url: 'https://agaghhh.cc/forum.php?mod=forumdisplay&fid=75' });
+  const restore = installDomGlobals(dom.window);
+  globalThis.GM_getValue = (key, fallback) => (
+    key === 'x1080x-ex:agaghhh-batch-open-history-enabled' ? false : fallback
+  );
+  try {
+    await import(`../src/userscript.js?split-disabled=${Date.now()}`);
+    const trigger = dom.window.document.getElementById('x1080x-ex-batch-mode-trigger');
+    assert.ok(trigger);
+    trigger.click();
+    const unread = dom.window.document.querySelector('[data-batch-mode="unread"]');
+    assert.equal(unread.disabled, true);
+    assert.match(unread.title, /保存批量打开记录/);
+    assert.ok(!dom.window.document.querySelector('[data-batch-mode="all"]').disabled);
+  } finally {
+    restore();
+    dom.window.close();
   }
 });
