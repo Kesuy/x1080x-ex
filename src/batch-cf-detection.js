@@ -49,8 +49,13 @@ export function reportBatchCloudflareChallenge(
   try { current = new URL(pageUrl); } catch { return false; }
   if (current.hostname.toLowerCase() !== session.host) return false;
   const challengePath = /^\/cdn-cgi\/challenge-platform\//i.test(current.pathname);
-  if (!challengePath && !session.urls.some((url) => sameBatchThread(url, pageUrl))) return false;
-  write(BATCH_CF_EVENT_KEY, { sessionId: session.id, url: pageUrl, detectedAt: now });
+  const originalUrl = session.urls.find((url) => sameBatchThread(url, pageUrl))
+    || (challengePath && session.urls.find((url) => sameBatchThread(url, document.referrer)))
+    || (challengePath ? session.urls.at(-1) : null);
+  if (!originalUrl) return false;
+  write(BATCH_CF_EVENT_KEY, {
+    sessionId: session.id, url: originalUrl, challengeUrl: pageUrl, detectedAt: now,
+  });
   return true;
 }
 
