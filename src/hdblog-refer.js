@@ -14,7 +14,7 @@ function normalizeText(value) {
 
 function isHdblogHostname(hostname) {
   const host = String(hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return host === 'hdblog.me' || host.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
 function absoluteHttpUrl(value, baseUrl) {
@@ -27,7 +27,7 @@ function absoluteHttpUrl(value, baseUrl) {
   }
 }
 
-export function isHdblogReferUrl(value, baseUrl = 'https://hdblog.me/') {
+export function isHdblogReferUrl(value, baseUrl = 'https://javclub.me/') {
   const href = absoluteHttpUrl(value, baseUrl);
   if (!href) return false;
   try {
@@ -106,18 +106,18 @@ function requestReferTarget(document, referUrl, gmRequest, referer) {
       },
       onload(response) {
         if (response.status >= 400 || response.status === 0) {
-          reject(new Error(`hdblog refer 请求失败（HTTP ${response.status || 0}）`));
+          reject(new Error(`JavClub refer 请求失败（HTTP ${response.status || 0}）`));
           return;
         }
         const target = targetFromResponse(document, response, referUrl);
         if (!target) {
-          reject(new Error('hdblog refer 没有返回可识别的跳转地址'));
+          reject(new Error('JavClub refer 没有返回可识别的跳转地址'));
           return;
         }
         resolve(target);
       },
-      onerror: () => reject(new Error('hdblog refer 请求发生网络错误')),
-      ontimeout: () => reject(new Error('hdblog refer 请求超时')),
+      onerror: () => reject(new Error('JavClub refer 请求发生网络错误')),
+      ontimeout: () => reject(new Error('JavClub refer 请求超时')),
     });
   });
 }
@@ -127,7 +127,7 @@ export function resolveHdblogReferUrl(
   referUrl,
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
-  const absoluteReferUrl = absoluteHttpUrl(referUrl, document?.baseURI || 'https://hdblog.me/');
+  const absoluteReferUrl = absoluteHttpUrl(referUrl, document?.baseURI || 'https://javclub.me/');
   if (!absoluteReferUrl || !isHdblogReferUrl(absoluteReferUrl, document?.baseURI)) {
     return Promise.resolve('');
   }
