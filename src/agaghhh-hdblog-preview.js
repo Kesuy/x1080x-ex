@@ -29,6 +29,8 @@ const HDBLOG_ORIGIN = 'https://hdblog.me';
 const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 const DEFAULT_HDBLOG_BLOCKED_KEYWORDS = 'モザイク破壊';
 const REQUEST_TIMEOUT = 30000;
+const HDBLOG_RETRY_DELAYS = [500, 1000];
+const previewLookups = new WeakMap();
 const CONTAINER_ID = 'x1080x-ex-agaghhh-hdblog-preview';
 const PREVIEW_IMAGE_ATTR = 'data-x1080x-hdblog-preview-url';
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
@@ -543,49 +545,92 @@ export function renderAgaghhhHdblogPreview(document, result) {
   return section;
 }
 
+// An empty search page, incomplete article, failed image health check or
+// transient network error should not immediately replace a valid HDblog Preview.
+export async function fetchHdblogPreviewWithRetries(
+  code,
+  gmRequest = globalThis.GM_xmlhttpRequest,
+  hostDocument = globalThis.document,
+  wait = (delay) => new Promise((resolve) => setTimeout(resolve, delay))
+) {
+  let lastResult = null;
+  for (let attempt = 0; attempt <= HDBLOG_RETRY_DELAYS.length; attempt += 1) {
+    try {
+      lastResult = await fetchHdblogPreviewForCode(code, gmRequest, hostDocument, true);
+      if (lastResult?.imageUrls?.length) return lastResult;
+    } catch (error) {
+      console.warn('[x1080x-ex] HDblog Preview attempt failed', {
+        code, attempt: attempt + 1, error: error?.message || String(error),
+      });
+    }
+    if (attempt < HDBLOG_RETRY_DELAYS.length) {
+      await wait(HDBLOG_RETRY_DELAYS[attempt]);
+    }
+  }
+  return lastResult;
+}
+
 export async function installAgaghhhHdblogPreview(
   document = globalThis.document,
   locationObject = globalThis.location,
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
-  if (!document || !isThreadPage(locationObject) || document.getElementById(CONTAINER_ID)) return null;
+  if (!document || !isThreadPage(locationObject)) return null;
   const code = threadCode(document);
-  if (!code) return null;
-  let result = null;
+  if (!code || !firstPostContent(document)) return null;
+
+  const pageUrl = document.location?.href || locationObject?.href || '';
+  const key = `${pageUrl}::${code}`;
+  const section = document.getElementById(CONTAINER_ID);
+  if (section && section.dataset.x1080xPreviewKey === key) return section;
+  if (section) section.remove();
+
+  const cached = previewLookups.get(document);
+  if (cached?.key === key) {
+    if (cached.promise) return cached.promise;
+    return renderAgaghhhHdblogPreview(document, cached.result);
+  }
+
+  const task = (async () => {
+    let result = await fetchHdblogPreviewWithRetries(code, gmRequest, document);
+
+    // Three HDblog checks (original + two retries) finish before any fallback.
+    if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
+      try {
+        result = await fetchJavfreePreviewForCode(code, gmRequest, document);
+      } catch (error) {
+        console.warn('[x1080x-ex] JavFree preview fallback failed', {
+          code, error: error?.message || String(error),
+        });
+      }
+    }
+
+    result = await filterPixhostUnavailableImageUrls(result, document);
+
+    if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
+      try {
+        result = await fetchOfficialPreviewFallbackForCode(code, gmRequest, document);
+      } catch (error) {
+        console.warn('[x1080x-ex] official preview fallback failed', {
+          code, error: error?.message || String(error),
+        });
+      }
+    }
+    result = await filterPixhostUnavailableImageUrls(result, document);
+
+    // Ignore results from a prior resource when Next.js navigates without a reload.
+    if ((document.location?.href || locationObject?.href || '') !== pageUrl
+      || threadCode(document) !== code) return null;
+    previewLookups.set(document, { key, result, promise: null });
+    const rendered = renderAgaghhhHdblogPreview(document, result);
+    if (rendered) rendered.dataset.x1080xPreviewKey = key;
+    return rendered;
+  })();
+
+  previewLookups.set(document, { key, promise: task, result: null });
   try {
-    result = await fetchHdblogPreviewForCode(code, gmRequest, document, true);
-  } catch (error) {
-    console.warn('[x1080x-ex] hdblog preview lookup failed', {
-      code,
-      error: error?.message || String(error),
-    });
+    return await task;
+  } finally {
+    if (previewLookups.get(document)?.promise === task) previewLookups.delete(document);
   }
-
-  // HDblog has already verified its images (including the 4K alternative).
-  // When it has no usable Preview, continue through the configured sources.
-  if (!result?.imageUrls?.length && isAgaghhhJavfreePreviewFallbackEnabled()) {
-    try {
-      result = await fetchJavfreePreviewForCode(code, gmRequest, document);
-    } catch (error) {
-      console.warn('[x1080x-ex] JavFree preview fallback failed', {
-        code,
-        error: error?.message || String(error),
-      });
-    }
-  }
-
-  result = await filterPixhostUnavailableImageUrls(result, document);
-
-  if (!result?.imageUrls?.length && isOfficialPreviewFallbackEnabled()) {
-    try {
-      result = await fetchOfficialPreviewFallbackForCode(code, gmRequest, document);
-    } catch (error) {
-      console.warn('[x1080x-ex] official preview fallback failed', {
-        code,
-        error: error?.message || String(error),
-      });
-    }
-  }
-  result = await filterPixhostUnavailableImageUrls(result, document);
-  return renderAgaghhhHdblogPreview(document, result);
 }
