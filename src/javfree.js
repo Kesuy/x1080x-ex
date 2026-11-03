@@ -154,7 +154,7 @@ export function isJavfreeHost(locationObject = globalThis.location) {
 
 function isHdblogHost(locationObject = globalThis.location) {
   const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 export function extractJavfreeVideoCode(value) {
@@ -965,7 +965,7 @@ export async function installHdblogJavfreeFallback(
       await fetchJavfreePreviewForCode(code, request, document)
     );
   } catch (error) {
-    console.warn('[x1080x-ex] JavFree preview fallback failed on hdblog', {
+    console.warn('[x1080x-ex] JavFree preview fallback failed on JavClub', {
       code,
       error: error?.message || String(error),
     });
