@@ -6,6 +6,7 @@ import {
   parseBlockedKeywords,
 } from './hdblog-search.js';
 import { isHdblogReferUrl } from './hdblog-refer.js';
+import { isHdblogArticleUrl } from './hdblog-search.js';
 import { partitionPreviewCandidates } from './hdblog-preview-variants.js';
 import { makePreviewGestureFriendly } from './preview-gesture.js';
 import { filterPixhostUnavailableImageUrls } from './preview-image-health.js';
@@ -25,7 +26,7 @@ import {
 
 installOfficialPreviewFallbackSetting();
 
-const HDBLOG_ORIGIN = 'https://hdblog.me';
+const HDBLOG_ORIGIN = 'https://javclub.me';
 const HDBLOG_BLOCKED_KEYWORDS_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 const DEFAULT_HDBLOG_BLOCKED_KEYWORDS = 'モザイク破壊';
 export const HDBLOG_PREVIEW_TIMEOUT_KEY = 'x1080x-ex:hdblog-preview-request-timeout-ms';
@@ -466,6 +467,14 @@ export async function fetchHdblogPreviewForCode(
   if (!searchDocument) return { code: normalizedCode, articleUrl: '', imageUrls: [], blocked: [], remaining: [] };
 
   const candidates = collectHdblogSearchResults(searchDocument);
+  // Some WordPress configurations redirect a unique /?s=CODE search directly
+  // to /123.html. Accept only an article whose title contains that code.
+  if (!candidates.length && isHdblogArticleUrl(searchResponse.finalUrl)) {
+    const title = normalizeText(searchDocument.querySelector('main#genesis-content article.entry h1.entry-title')?.textContent);
+    if (title && codeTokenMatches(title, searchCode)) {
+      candidates.push({ url: searchResponse.finalUrl, title });
+    }
+  }
   const selection = chooseHdblogSearchResult(candidates, searchCode, getHdblogBlockedKeywords());
   if (!selection.selected) {
     return { code: normalizedCode, articleUrl: '', imageUrls: [], ...selection };
@@ -491,7 +500,7 @@ export async function fetchHdblogPreviewForCode(
       shouldRetry = true;
     } catch (error) {
       shouldRetry = true;
-      console.warn('[x1080x-ex] matched HDblog article Preview loading failed', {
+      console.warn('[x1080x-ex] matched JavClub article Preview loading failed', {
         code: normalizedCode, attempt: attempt + 1,
         error: error?.message || String(error),
       });
@@ -555,7 +564,7 @@ export function renderAgaghhhHdblogPreview(document, result) {
   source.href = result.sourceUrl || result.articleUrl || '#';
   source.target = '_blank';
   source.rel = 'noopener noreferrer';
-  source.textContent = `${result.sourceName || 'HDblog'} Preview · ${result.code}`;
+  source.textContent = `${result.sourceName || 'JavClub'} Preview · ${result.code}`;
   source.style.cssText = 'color:inherit;text-decoration:none';
   heading.append(source);
   section.append(heading);
@@ -638,7 +647,7 @@ export async function installAgaghhhHdblogPreview(
     try {
       result = await fetchHdblogPreviewWithRetries(code, gmRequest, document);
     } catch (error) {
-      console.warn('[x1080x-ex] HDblog Preview search/loading failed', {
+      console.warn('[x1080x-ex] JavClub Preview search/loading failed', {
         code, error: error?.message || String(error),
       });
     }

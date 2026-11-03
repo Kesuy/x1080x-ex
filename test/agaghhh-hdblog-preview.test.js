@@ -29,17 +29,17 @@ test('uses the same hdblog blocked keywords when two search results exist', () =
   const candidates = [
     {
       title: 'SVMGM-050 モザイク破壊版',
-      url: 'https://hdblog.me/964140/svgmgm-050-mosaic/',
+      url: 'https://javclub.me/964140/svgmgm-050-mosaic/',
     },
     {
       title: 'SVMGM-050 通常版',
-      url: 'https://hdblog.me/964139/svmgm-050/',
+      url: 'https://javclub.me/964139/svmgm-050/',
     },
   ];
   const result = chooseHdblogSearchResult(candidates, 'SVMGM-050', ['モザイク破壊']);
   assert.equal(result.blocked.length, 1);
   assert.equal(result.remaining.length, 1);
-  assert.equal(result.selected?.url, 'https://hdblog.me/964139/svmgm-050/');
+  assert.equal(result.selected?.url, 'https://javclub.me/964139/svmgm-050/');
 });
 
 test('FC2 agaghhh lookup searches hdblog by numeric id and returns Preview', async () => {
@@ -48,19 +48,19 @@ test('FC2 agaghhh lookup searches hdblog by numeric id and returns Preview', asy
   const previewImage = 'https://img1.example.com/fc2-4906444-preview.jpg';
   const gmRequest = (options) => {
     requested.push(options.url);
-    if (options.url === 'https://hdblog.me/?s=4906444') {
+    if (options.url === 'https://javclub.me/?s=4906444') {
       options.onload({
         status: 200,
         finalUrl: options.url,
         responseText: `<!doctype html><html><body><main id="genesis-content">
           <article class="entry"><h2 class="entry-title">
-            <a href="https://hdblog.me/936935/fc2ppv-4906444/">FC2-PPV 4906444 220 Sample</a>
+            <a href="https://javclub.me/936935/fc2ppv-4906444/">FC2-PPV 4906444 220 Sample</a>
           </h2></article>
         </main></body></html>`,
       });
       return;
     }
-    if (options.url === 'https://hdblog.me/936935/fc2ppv-4906444/') {
+    if (options.url === 'https://javclub.me/936935/fc2ppv-4906444/') {
       options.onload({
         status: 200,
         finalUrl: options.url,
@@ -79,11 +79,11 @@ test('FC2 agaghhh lookup searches hdblog by numeric id and returns Preview', asy
     fetchHdblogPreviewForCode('FC2-4906444', gmRequest, browser.window.document)
   ));
 
-  assert.equal(result.articleUrl, 'https://hdblog.me/936935/fc2ppv-4906444/');
+  assert.equal(result.articleUrl, 'https://javclub.me/936935/fc2ppv-4906444/');
   assert.deepEqual(result.imageUrls, [previewImage]);
   assert.deepEqual(requested, [
-    'https://hdblog.me/?s=4906444',
-    'https://hdblog.me/936935/fc2ppv-4906444/',
+    'https://javclub.me/?s=4906444',
+    'https://javclub.me/936935/fc2ppv-4906444/',
   ]);
 
   browser.window.close();
@@ -94,32 +94,32 @@ test('fetches hdblog Preview images including refer -> Pixhost resolution', asyn
   const requested = [];
   const gmRequest = (options) => {
     requested.push(options.url);
-    if (options.url === 'https://hdblog.me/?s=SVMGM-050') {
+    if (options.url === 'https://javclub.me/?s=SVMGM-050') {
       options.onload({
         status: 200,
         finalUrl: options.url,
         responseText: `<!doctype html><html><body><main id="genesis-content">
-          <article class="entry"><h2 class="entry-title"><a href="https://hdblog.me/964140/svgmgm-050-mosaic/">SVMGM-050 モザイク破壊版</a></h2></article>
-          <article class="entry"><h2 class="entry-title"><a href="https://hdblog.me/964139/svmgm-050/">SVMGM-050 通常版</a></h2></article>
+          <article class="entry"><h2 class="entry-title"><a href="https://javclub.me/964140/svgmgm-050-mosaic/">SVMGM-050 モザイク破壊版</a></h2></article>
+          <article class="entry"><h2 class="entry-title"><a href="https://javclub.me/964139/svmgm-050/">SVMGM-050 通常版</a></h2></article>
         </main></body></html>`,
       });
       return;
     }
-    if (options.url === 'https://hdblog.me/964139/svmgm-050/') {
+    if (options.url === 'https://javclub.me/964139/svmgm-050/') {
       options.onload({
         status: 200,
         finalUrl: options.url,
         responseText: `<!doctype html><html><body><main id="genesis-content"><article class="entry"><div class="entry-content">
           <p>Preview:</p>
           <p><a href="https://img1.example.com/full-1.jpg"><img src="https://img1.example.com/thumb-1.jpg"></a></p>
-          <p><a href="https://hdblog.me/refer/demo"><img src="https://t2.pixhost.to/thumbs/100/demo.jpg"></a></p>
+          <p><a href="https://javclub.me/refer/demo"><img src="https://t2.pixhost.to/thumbs/100/demo.jpg"></a></p>
           <p>BTFile:</p>
           <p><img src="https://img1.example.com/not-preview.jpg"></p>
         </div></article></main></body></html>`,
       });
       return;
     }
-    if (options.url === 'https://hdblog.me/refer/demo') {
+    if (options.url === 'https://javclub.me/refer/demo') {
       options.onload({
         status: 200,
         finalUrl: 'https://pixhost.to/show/100/demo.jpg',
@@ -141,15 +141,15 @@ test('fetches hdblog Preview images including refer -> Pixhost resolution', asyn
   const result = await withGmGetValue(() => (
     fetchHdblogPreviewForCode('SVMGM-050', gmRequest, browser.window.document)
   ));
-  assert.equal(result.articleUrl, 'https://hdblog.me/964139/svmgm-050/');
+  assert.equal(result.articleUrl, 'https://javclub.me/964139/svmgm-050/');
   assert.deepEqual(result.imageUrls, [
     'https://img1.example.com/full-1.jpg',
     'https://img2.pixhost.to/images/100/demo.jpg',
   ]);
   assert.deepEqual(requested, [
-    'https://hdblog.me/?s=SVMGM-050',
-    'https://hdblog.me/964139/svmgm-050/',
-    'https://hdblog.me/refer/demo',
+    'https://javclub.me/?s=SVMGM-050',
+    'https://javclub.me/964139/svmgm-050/',
+    'https://javclub.me/refer/demo',
     'https://pixhost.to/show/100/demo.jpg',
   ]);
 });
@@ -163,19 +163,19 @@ test('EBWH-365 prefers the normal 6M Preview over the 4K60fps variant for agaghh
 
   const gmRequest = (options) => {
     requested.push(options.url);
-    if (options.url === 'https://hdblog.me/?s=EBWH-365') {
+    if (options.url === 'https://javclub.me/?s=EBWH-365') {
       options.onload({
         status: 200,
         finalUrl: options.url,
         responseText: `<!doctype html><html><body><main id="genesis-content">
           <article class="entry"><h2 class="entry-title">
-            <a href="https://hdblog.me/988344/ebwh-365/">[4K] EBWH-365 sample</a>
+            <a href="https://javclub.me/988344/ebwh-365/">[4K] EBWH-365 sample</a>
           </h2></article>
         </main></body></html>`,
       });
       return;
     }
-    if (options.url === 'https://hdblog.me/988344/ebwh-365/') {
+    if (options.url === 'https://javclub.me/988344/ebwh-365/') {
       options.onload({
         status: 200,
         finalUrl: options.url,
@@ -209,8 +209,8 @@ test('EBWH-365 prefers the normal 6M Preview over the 4K60fps variant for agaghh
 
   assert.deepEqual(result.imageUrls, [normalImage]);
   assert.deepEqual(requested, [
-    'https://hdblog.me/?s=EBWH-365',
-    'https://hdblog.me/988344/ebwh-365/',
+    'https://javclub.me/?s=EBWH-365',
+    'https://javclub.me/988344/ebwh-365/',
     normalShow,
   ]);
 
@@ -249,15 +249,15 @@ test('agaghhh falls back to the 4K Preview only when every normal Preview is una
 
   const gmRequest = (options) => {
     requested.push(options.url);
-    if (options.url === 'https://hdblog.me/?s=FALL-365') {
+    if (options.url === 'https://javclub.me/?s=FALL-365') {
       options.onload({
         status: 200,
         finalUrl: options.url,
-        responseText: '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://hdblog.me/999365/fall-365/">FALL-365</a></h2></article></main>',
+        responseText: '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://javclub.me/999365/fall-365/">FALL-365</a></h2></article></main>',
       });
       return;
     }
-    if (options.url === 'https://hdblog.me/999365/fall-365/') {
+    if (options.url === 'https://javclub.me/999365/fall-365/') {
       options.onload({
         status: 200,
         finalUrl: options.url,
@@ -296,8 +296,8 @@ test('agaghhh falls back to the 4K Preview only when every normal Preview is una
 
   assert.deepEqual(result.imageUrls, [fourKImage]);
   assert.deepEqual(requested, [
-    'https://hdblog.me/?s=FALL-365',
-    'https://hdblog.me/999365/fall-365/',
+    'https://javclub.me/?s=FALL-365',
+    'https://javclub.me/999365/fall-365/',
     normalShow,
     fourKShow,
   ]);
@@ -310,19 +310,19 @@ test('EBWH-319 removed Pixhost Preview is not injected or added to forum downloa
   const requested = [];
   const gmRequest = (options) => {
     requested.push(options.url);
-    if (options.url === 'https://hdblog.me/?s=EBWH-319') {
+    if (options.url === 'https://javclub.me/?s=EBWH-319') {
       options.onload({
         status: 200,
         finalUrl: options.url,
         responseText: `<!doctype html><html><body><main id="genesis-content">
           <article class="entry"><h2 class="entry-title">
-            <a href="https://hdblog.me/900669/ebwh-319/">EBWH-319 sample</a>
+            <a href="https://javclub.me/900669/ebwh-319/">EBWH-319 sample</a>
           </h2></article>
         </main></body></html>`,
       });
       return;
     }
-    if (options.url === 'https://hdblog.me/900669/ebwh-319/') {
+    if (options.url === 'https://javclub.me/900669/ebwh-319/') {
       options.onload({
         status: 200,
         finalUrl: options.url,
@@ -354,11 +354,11 @@ test('EBWH-319 removed Pixhost Preview is not injected or added to forum downloa
     fetchHdblogPreviewForCode('EBWH-319', gmRequest, browser.window.document)
   ));
 
-  assert.equal(result.articleUrl, 'https://hdblog.me/900669/ebwh-319/');
+  assert.equal(result.articleUrl, 'https://javclub.me/900669/ebwh-319/');
   assert.deepEqual(result.imageUrls, []);
   assert.deepEqual(requested, [
-    'https://hdblog.me/?s=EBWH-319',
-    'https://hdblog.me/900669/ebwh-319/',
+    'https://javclub.me/?s=EBWH-319',
+    'https://javclub.me/900669/ebwh-319/',
     'https://pixhost.to/show/9005/ebwh-319-preview.jpg',
   ]);
 
@@ -391,7 +391,7 @@ test('download jobs name all main-post and Preview images A/B/C in order', () =>
 
   renderAgaghhhHdblogPreview(dom.window.document, {
     code: 'SVMGM-050',
-    articleUrl: 'https://hdblog.me/964139/svmgm-050/',
+    articleUrl: 'https://javclub.me/964139/svmgm-050/',
     imageUrls: [
       'https://img.example.com/p1.jpg',
       'https://img.example.com/p2.jpg',
@@ -446,7 +446,7 @@ test('x1080x settings exposes an independent hdblog preview switch', () => {
     const input = overlay.querySelector('[data-setting="hdblog-preview"]');
     assert.ok(input);
     assert.equal(input.checked, false);
-    assert.match(overlay.textContent, /显示 hdblog 大预览图/);
+    assert.match(overlay.textContent, /显示 JavClub 大预览图/);
   } finally {
     if (oldGet === undefined) delete globalThis.GM_getValue;
     else globalThis.GM_getValue = oldGet;
@@ -467,7 +467,7 @@ test('CEMD-826 does not inject the same Pixhost asset again when .to and .cc poi
 
   const section = renderAgaghhhHdblogPreview(dom.window.document, {
     code: 'CEMD-826',
-    articleUrl: 'https://hdblog.me/915341/cemd-826/',
+    articleUrl: 'https://javclub.me/915341/cemd-826/',
     imageUrls: [`https://pixhost.cc/show/7097/${filename}`],
   });
 
@@ -490,7 +490,7 @@ test('Pixhost show/images/thumbs aliases share one identity while genuinely diff
 
   const section = renderAgaghhhHdblogPreview(dom.window.document, {
     code: 'CEMD-826',
-    articleUrl: 'https://hdblog.me/915341/cemd-826/',
+    articleUrl: 'https://javclub.me/915341/cemd-826/',
     imageUrls: [
       `https://img1.pixhost.cc/images/7097/${first}`,
       `https://img2.pixhost.cc/images/7097/${second}`,
@@ -503,4 +503,37 @@ test('Pixhost show/images/thumbs aliases share one identity while genuinely diff
   assert.equal(images.length, 1);
   assert.equal(images[0].getAttribute('src'), `https://img2.pixhost.cc/images/7097/${second}`);
   assert.equal(images[0].alt, 'CEMD-826 Preview 1');
+});
+
+test('JavClub 单结果搜索直接跳转 .html 时仍能读取 Preview', async () => {
+  const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://1080xin.com/' });
+  const requested = [];
+  const searchUrl = 'https://javclub.me/?s=START-662';
+  const articleUrl = 'https://javclub.me/1013749.html';
+  const previewUrl = 'https://imgsky.me/preview/start-662.jpg';
+  const gmRequest = (options) => {
+    requested.push(options.url);
+    const redirected = options.url === searchUrl;
+    const html = redirected
+      ? `<main id="genesis-content"><article class="entry">
+          <h1 class="entry-title">START-662 sample</h1>
+          <div class="entry-content">Search redirect article</div>
+        </article></main>`
+      : `<main id="genesis-content"><article class="entry"><div class="entry-content">
+          <p>Preview:</p><p><a href="${previewUrl}"><img src="${previewUrl}"></a></p>
+          <p>Btafile:</p>
+        </div></article></main>`;
+    if (options.url !== searchUrl && options.url !== articleUrl) {
+      throw new Error('unexpected search request ' + options.url);
+    }
+    options.onload({ status: 200, finalUrl: redirected ? articleUrl : options.url, responseText: html });
+  };
+  try {
+    const result = await fetchHdblogPreviewForCode('START-662', gmRequest, browser.window.document);
+    assert.equal(result.articleUrl, articleUrl);
+    assert.deepEqual(result.imageUrls, [previewUrl]);
+    assert.deepEqual(requested, [searchUrl, articleUrl]);
+  } finally {
+    browser.window.close();
+  }
 });

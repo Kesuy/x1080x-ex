@@ -14,7 +14,7 @@ export function isFc2cmadbUrl(value) {
 
 export function buildFc2cmadbHdblogSearchUrl(value) {
   const code = String(value ?? '').trim();
-  return /^\d{5,12}$/.test(code) ? 'https://hdblog.me/?s=' + code : '';
+  return /^\d{5,12}$/.test(code) ? 'https://javclub.me/?s=' + code : '';
 }
 
 export function isFc2cmadbHdblogSearchEnabled() {
@@ -51,8 +51,8 @@ export function enhanceFc2cmadbArticleCodes(documentObject) {
     link.href = searchUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    link.title = '在 HDBLOG 搜索 FC2-PPV-' + code;
-    link.setAttribute('aria-label', '在 HDBLOG 搜索番号 ' + code);
+    link.title = '在 JavClub 搜索 FC2-PPV-' + code;
+    link.setAttribute('aria-label', '在 JavClub 搜索番号 ' + code);
     link.setAttribute(LINK_ATTR, code);
     link.style.cursor = 'pointer';
     link.style.zIndex = '2';
@@ -71,7 +71,7 @@ export function installFc2cmadbEnhancement(windowObject = globalThis.window) {
   if (typeof GM_registerMenuCommand === 'function') {
     const enabled = isFc2cmadbHdblogSearchEnabled();
     GM_registerMenuCommand(
-      '⚙️ FC2CMADB：番号搜索 HDBLOG（' + (enabled ? '已开启，点击关闭' : '已关闭，点击开启') + '）',
+      '⚙️ FC2CMADB：番号搜索 JavClub（' + (enabled ? '已开启，点击关闭' : '已关闭，点击开启') + '）',
       () => {
         if (typeof GM_setValue !== 'function') return;
         GM_setValue(FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY, !enabled);

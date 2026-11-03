@@ -523,7 +523,7 @@ function threadCode(document) {
 
 export function buildHdblogSearchUrlForThreadCode(code) {
   const keyword = hdblogSearchCodeForThreadCode(code);
-  return keyword ? `http://hdblog.me/?s=${encodeURIComponent(keyword)}` : '';
+  return keyword ? `https://javclub.me/?s=${encodeURIComponent(keyword)}` : '';
 }
 
 function openSearchTab(document, url) {
@@ -551,8 +551,8 @@ function installHdblogSearchButton(document) {
     button.id = SEARCH_BUTTON_ID;
     button.type = 'button';
     button.textContent = '🔍';
-    button.title = '按当前番号在 hdblog 搜索';
-    button.setAttribute('aria-label', '在 hdblog 搜索当前番号');
+    button.title = '按当前番号在 JavClub 搜索';
+    button.setAttribute('aria-label', '在 JavClub 搜索当前番号');
     Object.assign(button.style, {
       float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
       padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
@@ -807,7 +807,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:8px">
         <input data-setting="cross-search" type="checkbox" style="margin-top:3px">
-        <span><strong>跨站搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">在帖子标题旁显示搜索按钮，识别番号后直接打开 hdblog 搜索；可独立于下载增强使用。</small></span>
+        <span><strong>跨站搜索按钮（🔍）</strong><small style="display:block;margin-top:2px;color:#666">在帖子标题旁显示搜索按钮，识别番号后直接打开 JavClub 搜索；可独立于下载增强使用。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
@@ -819,7 +819,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
-        <span><strong>显示 hdblog 大预览图</strong><small style="display:block;margin-top:2px;color:#666">按帖子番号搜索 hdblog，沿用 hdblog 的“搜索结果屏蔽关键词”，并把匹配文章的 Preview 大图显示到主楼。</small></span>
+        <span><strong>显示 JavClub 大预览图</strong><small style="display:block;margin-top:2px;color:#666">按帖子番号搜索 JavClub，沿用 JavClub 的“搜索结果屏蔽关键词”，并把匹配文章的 Preview 大图显示到主楼。</small></span>
       </label>
       <div data-hdblog-preview-load-settings style="margin:0 0 13px 24px">
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
@@ -836,11 +836,11 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
           <button type="button" data-action="reset-hdblog-preview-settings"
             style="padding:6px 10px;appearance:none;background:#fff !important;color:#333 !important;border:1px solid #bbb !important;border-radius:6px;cursor:pointer;font:inherit;line-height:1.4">恢复默认</button>
         </div>
-        <small style="display:block;margin-top:5px;color:#666">默认 30 秒、重试 2 次。仅在 HDBLOG 搜索到匹配文章，且文章加载失败或 Preview 已存在但加载失败时才重试；没有匹配文章或文章没有 Preview 时直接使用后备源。</small>
+        <small style="display:block;margin-top:5px;color:#666">默认 30 秒、重试 2 次。仅在 JavClub 搜索到匹配文章，且文章加载失败或 Preview 已存在但加载失败时才重试；没有匹配文章或文章没有 Preview 时直接使用后备源。</small>
       </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin:-5px 0 13px 24px">
         <input data-setting="javfree-preview-fallback" type="checkbox" style="margin-top:3px">
-        <span><strong>JavFree Preview 后备源</strong><small style="display:block;margin-top:2px;color:#666">hdblog 没有可用 Preview 时，再搜索 javfree.me，并只取封面后的第 1 张 Preview。</small></span>
+        <span><strong>JavFree Preview 后备源</strong><small style="display:block;margin-top:2px;color:#666">JavClub 没有可用 Preview 时，再搜索 javfree.me，并只取封面后的第 1 张 Preview。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px">
         <input data-setting="real-actress" type="checkbox" style="margin-top:3px">
@@ -1032,7 +1032,7 @@ export function openX1080xSettingsPanel(document = globalThis.document) {
     if (!Number.isInteger(previewTimeoutSeconds) || previewTimeoutSeconds < 3
       || previewTimeoutSeconds > 120
       || !Number.isInteger(previewRetries) || previewRetries < 0 || previewRetries > 5) {
-      document.defaultView?.alert('HDBLOG Preview 超时时间必须为 3–120 秒整数，失败重试次数必须为 0–5 的整数。');
+      document.defaultView?.alert('JavClub Preview 超时时间必须为 3–120 秒整数，失败重试次数必须为 0–5 的整数。');
       previewTimeoutInput.focus();
       return;
     }

@@ -201,7 +201,8 @@ test('hdblog 标签页把按钮放在归档标题同行并按文章顺序后台�
     const batchSplit = dom.window.document.querySelector('#x1080x-ex-batch-split');
     assert.equal(button.parentElement, batchSplit);
     assert.equal(batchSplit.parentElement, archiveDescription);
-    assert.equal(archiveDescription.firstElementChild, batchSplit);
+    assert.equal(archiveDescription.firstElementChild, progressButton);
+    assert.equal(progressButton.nextElementSibling, batchSplit);
     assert.equal(archiveDescription.nextElementSibling, firstArticle);
     assert.equal(dom.window.document.querySelector('#x1080x-ex-open-page-toolbar'), null);
     assert.equal(button.textContent, '批量打开本页（2）');
@@ -1626,8 +1627,8 @@ test('bulk download waits for HDblog Preview in flight, then saves cover and Pre
   const requests = [];
   const saved = [];
   let articleReply = null;
-  const searchUrl = 'https://hdblog.me/?s=FNS-267';
-  const articleUrl = 'https://hdblog.me/8765/fns-267/';
+  const searchUrl = 'https://javclub.me/?s=FNS-267';
+  const articleUrl = 'https://javclub.me/8765.html';
   const previewUrl = 'https://images.example.com/fns-267-preview.jpg';
   const originalGet = globalThis.GM_getValue;
   globalThis.GM_getValue = (key, fallback) => {
@@ -1696,6 +1697,76 @@ test('bulk download waits for HDblog Preview in flight, then saves cover and Pre
       /已处理 2\/2 · 已保存 2/);
   } finally {
     globalThis.GM_getValue = originalGet;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('JavClub 列表：定位按钮靠左，批量打开靠右；运行时主按钮与下拉保持同色', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body><main id="genesis-content">
+    <div class="archive-description">最新文章</div>
+    <article class="entry"><header class="entry-header"><h2 class="entry-title">
+      <a href="/1013749.html">START-662 新主题</a></h2></header></article>
+    <article class="entry"><header class="entry-header"><h2 class="entry-title">
+      <a href="/1013622.html">FC2-PPV 4999948 已访问</a></h2></header></article>
+  </main></body></html>`, { url: 'https://javclub.me/category/jav-censored/' });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1013622']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  const opened = [];
+  globalThis.GM_openInTab = (url) => opened.push(url);
+  const originalTimeout = dom.window.setTimeout;
+  dom.window.setTimeout = (callback) => { queueMicrotask(callback); return 1; };
+  try {
+    await import(`../src/userscript.js?javclub-toolbar-${Date.now()}`);
+    const doc = dom.window.document;
+    const locator = doc.getElementById('x1080x-ex-batch-progress-locator');
+    const split = doc.getElementById('x1080x-ex-batch-split');
+    const main = doc.getElementById('x1080x-ex-open-page');
+    const dropdown = doc.getElementById('x1080x-ex-batch-mode-trigger');
+    assert.ok(locator && split && main && dropdown);
+    assert.equal(locator.nextElementSibling, split, '定位应排在批量打开左侧');
+    assert.equal(main.style.background, dropdown.style.background);
+    assert.equal(main.getAttribute('data-x1080x-count'), '1');
+    assert.match(main.querySelector('svg[data-x1080x-icon="batch"]').innerHTML, /<rect/);
+    main.click();
+    assert.equal(main.style.background, dropdown.style.background, '打开时主按钮和下拉同时变红');
+    await waitFor(() => opened.length === 1, 'should open only the unread JavClub article');
+    assert.deepEqual(opened, ['https://javclub.me/1013749.html']);
+    await waitFor(() => main.getAttribute('data-x1080x-count') === '0',
+      'unopened count should update after completion');
+    assert.equal(main.style.background, dropdown.style.background, '完成后主按钮和下拉同时恢复蓝色');
+    assert.ok(store.get('x1080x-ex:hdblog-batch-open-history').includes('post:1013749'));
+  } finally {
+    dom.window.setTimeout = originalTimeout;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('JavClub .html 正文浏览记入沿用的 HDblog 历史，不会丢失旧记录', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body class="single-post">
+    <main id="genesis-content"><article class="entry">
+      <header class="entry-header"><h1 class="entry-title">START-662 Sample</h1></header>
+      <div class="entry-content"><p>Preview:</p></div>
+    </article></main></body></html>`, { url: 'https://javclub.me/1013749.html' });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1013622']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  try {
+    await import(`../src/userscript.js?javclub-article-${Date.now()}`);
+    const values = store.get('x1080x-ex:hdblog-batch-open-history');
+    assert.deepEqual(values, ['post:1013622', 'post:1013749']);
+  } finally {
     restore();
     dom.window.close();
   }

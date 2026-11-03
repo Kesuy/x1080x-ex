@@ -11,8 +11,8 @@ import {
 } from '../src/agaghhh-hdblog-preview.js';
 import { openX1080xSettingsPanel } from '../src/agaghhh-enhancement.js';
 
-const SEARCH = 'https://hdblog.me/?s=RTRY-001';
-const ARTICLE = 'https://hdblog.me/1234/rtry-001/';
+const SEARCH = 'https://javclub.me/?s=RTRY-001';
+const ARTICLE = 'https://javclub.me/1234.html';
 const IMAGE = 'https://img.example.com/rtry-001-preview.jpg';
 const resultPage = `<main id="genesis-content"><article class="entry">
   <h2 class="entry-title"><a href="${ARTICLE}">RTRY-001 Sample</a></h2>

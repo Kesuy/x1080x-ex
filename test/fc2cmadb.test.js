@@ -40,8 +40,8 @@ test('FC2CMADB URL guard and numeric HDblog search URLs', () => {
   assert.equal(isFc2cmadbUrl('https://fc2cmadb.com/actresses/9791'), true);
   assert.equal(isFc2cmadbUrl('https://www.fc2cmadb.com/articles/4616649'), true);
   assert.equal(isFc2cmadbUrl('https://fake-fc2cmadb.com/actresses/9791'), false);
-  assert.equal(buildFc2cmadbHdblogSearchUrl('4616649'), 'https://hdblog.me/?s=4616649');
-  assert.equal(buildFc2cmadbHdblogSearchUrl(' 3179361 '), 'https://hdblog.me/?s=3179361');
+  assert.equal(buildFc2cmadbHdblogSearchUrl('4616649'), 'https://javclub.me/?s=4616649');
+  assert.equal(buildFc2cmadbHdblogSearchUrl(' 3179361 '), 'https://javclub.me/?s=3179361');
   assert.equal(buildFc2cmadbHdblogSearchUrl('FC2-PPV-4616649'), '');
   assert.equal(buildFc2cmadbHdblogSearchUrl('javascript:alert(1)'), '');
 });
@@ -59,8 +59,8 @@ test('converts only matching number badges to search links and keeps cover click
   });
   const links = [...dom.window.document.querySelectorAll('a[data-x1080x-fc2cmadb-hdblog-search]')];
   assert.deepEqual(links.map((link) => link.href), [
-    'https://hdblog.me/?s=4616649',
-    'https://hdblog.me/?s=3179361',
+    'https://javclub.me/?s=4616649',
+    'https://javclub.me/?s=3179361',
   ]);
   assert.equal(links[0].target, '_blank');
   assert.equal(links[0].rel, 'noopener noreferrer');
@@ -110,7 +110,7 @@ test('new card inserted after page load also gets an HDblog search link', async 
       'a[data-x1080x-fc2cmadb-hdblog-search="3179361"]'
     );
     assert.ok(link);
-    assert.equal(link.href, 'https://hdblog.me/?s=3179361');
+    assert.equal(link.href, 'https://javclub.me/?s=3179361');
     observer.disconnect();
   });
   dom.window.close();

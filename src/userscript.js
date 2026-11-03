@@ -8,6 +8,7 @@ import {
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
 import { pendingAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
+import { isHdblogArticleUrl } from './hdblog-search.js';
 import {
   DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
   LEGACY_AGAGHHH_DOMAIN,
@@ -100,7 +101,7 @@ const BATCH_OPEN_HISTORY_ATTR = 'data-x1080x-batch-opened';
 const BATCH_OPEN_HISTORY_STYLE_ID = 'x1080x-ex-batch-open-history-style';
 const HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY = 'x1080x-ex:hdblog-batch-open-interval-min-ms';
 const HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = 'x1080x-ex:hdblog-batch-open-interval-max-ms';
-const DEFAULT_DOMAINS = '1080xin.com\nagaghhh.cc\nhdblog.me\nfc2cmadb.com';
+const DEFAULT_DOMAINS = '1080xin.com\nagaghhh.cc\njavclub.me\nhdblog.me\nfc2cmadb.com';
 const BUTTON_ID = 'x1080x-ex-download';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_SPLIT_ID = 'x1080x-ex-batch-split';
@@ -145,6 +146,8 @@ function getConfiguredDomains() {
   return [...new Set([
     ...(isLegacyDefault ? parseDomainList(DEFAULT_DOMAINS) : domains),
     ...getAgaghhhDomains(),
+    'javclub.me', // Always enable the new site even with legacy custom domain settings.
+    'hdblog.me', // Keep the historical host and saved post IDs compatible.
   ])];
 }
 
@@ -269,7 +272,7 @@ function isBatchOpenEnabledForCurrentHost() {
   if (isAgaghhhHost(host)) {
     return GM_getValue(AGAGHHH_BATCH_OPEN_ENABLED_KEY, true) !== false;
   }
-  if (host === 'hdblog.me' || host.endsWith('.hdblog.me')) {
+  if (['javclub.me', 'hdblog.me'].some((domain) => host === domain || host.endsWith(`.${domain}`))) {
     return GM_getValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, true) !== false;
   }
   return true;
@@ -292,7 +295,7 @@ function batchOpenHistoryConfig() {
       kind: 'agaghhh',
     };
   }
-  if (host === 'hdblog.me' || host.endsWith('.hdblog.me')) {
+  if (['javclub.me', 'hdblog.me'].some((domain) => host === domain || host.endsWith(`.${domain}`))) {
     return {
       enabledKey: HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY,
       limitKey: HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY,
@@ -358,7 +361,7 @@ function batchOpenHistoryId(value) {
       const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
       return pathMatch ? `tid:${pathMatch[1]}` : '';
     }
-    const postMatch = url.pathname.match(/^\/(\d+)(?:\/|$)/);
+    const postMatch = url.pathname.match(/^\/(\d+)(?:\/|\.html$)/i);
     if (postMatch) return `post:${postMatch[1]}`;
     return `url:${url.pathname}${url.search}`;
   } catch {
@@ -829,7 +832,7 @@ function styleHdblogPreviewImage(image, fullUrl) {
 }
 
 function expandHdblogPreviewImages() {
-  if (!isAllowedHost(location.hostname, ['hdblog.me'])) return 0;
+  if (!isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me'])) return 0;
   const content = document.querySelector(
     'main#genesis-content article.entry .entry-content, article.entry .entry-content, .entry-content'
   );
@@ -893,7 +896,7 @@ function readBatchOpenIntervalMs(key, fallback) {
 }
 
 function batchOpenTiming() {
-  const isHdblog = isAllowedHost(location.hostname, ['hdblog.me']);
+  const isHdblog = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
   const timing = isHdblog ? HDBLOG_OPEN_TIMING : DEFAULT_OPEN_TIMING;
   const minKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MIN_KEY;
   const maxKey = isHdblog ? HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY : AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY;
@@ -976,7 +979,7 @@ function renderCompactBatchControl(button, kind, label, count = '', tooltip = la
     svg.setAttribute('aria-hidden', 'true');
     svg.setAttribute('focusable', 'false');
     svg.innerHTML = kind === 'batch'
-      ? '<rect x="3" y="7" width="13" height="13" rx="2"/><path d="M8 4h11a2 2 0 0 1 2 2v11"/><path d="m11 12 7-7m-5 0h5v5"/>'
+      ? '<rect x="8" y="4" width="12" height="12" rx="2"/><rect x="4" y="8" width="12" height="12" rx="2"/>'
       : '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>';
     const hidden = doc.createElement('span');
     hidden.className = 'x1080x-visually-hidden';
@@ -1051,7 +1054,10 @@ function setBatchButtonIdle(button, count) {
   renderCompactBatchControl(button, 'batch', label, count, tooltip);
   button.style.background = '#398bd4';
   const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
-  if (dropdown) dropdown.disabled = false;
+  if (dropdown) {
+    dropdown.disabled = false;
+    dropdown.style.background = '#398bd4';
+  }
   updateBatchModeMenu(document);
 }
 
@@ -1092,6 +1098,7 @@ async function openCurrentPageThreads(button) {
     label: '↗ 批量打开中',
   });
   button.style.background = '#b84b4b';
+  if (dropdown) dropdown.style.background = '#b84b4b';
 
   const onCloudflare = (event) => {
     if (!event || event.sessionId !== state.sessionId || state.cfChallenge) return;
@@ -1113,6 +1120,7 @@ async function openCurrentPageThreads(button) {
       `${opened}/${threads.length}`,
       `检测到 Cloudflare 人机验证，已停止继续打开。\n已打开 ${opened}/${threads.length} 个主题，请先手动完成验证。`);
     button.style.background = '#b36b22';
+    if (dropdown) dropdown.style.background = '#b36b22';
   };
   const checkCloudflare = () => {
     if (typeof GM_getValue === 'function') {
@@ -1961,8 +1969,13 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
   });
   button.addEventListener('click', () => void locateCurrentBatchProgress(button));
   refreshBatchProgressLocatorButton(button);
-  if (prependButton) {
-    const batchWrapper = document.getElementById(BATCH_SPLIT_ID);
+  const batchWrapper = document.getElementById(BATCH_SPLIT_ID);
+  const isJavclubToolbar = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
+  if (isJavclubToolbar && batchWrapper?.parentElement === host) {
+    button.style.float = 'none';
+    button.style.margin = '0';
+    batchWrapper.before(button); // Locator on the left, batch open on the right.
+  } else if (prependButton) {
     if (batchWrapper?.parentElement === host) batchWrapper.after(button);
     else host.prepend(button);
   } else {
@@ -2008,12 +2021,20 @@ function addBatchOpenButton() {
         Object.assign(host.style, {
           minHeight: '42px',
           margin: '0 0 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: '8px',
         });
         firstArticle.before(host);
       }
     }
   }
   if (!threads.length || !host) return;
+  const isJavclubToolbar = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
+  if (isJavclubToolbar) {
+    Object.assign(host.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' });
+  }
 
   const split = document.createElement('div');
   split.id = BATCH_SPLIT_ID;
@@ -2022,8 +2043,8 @@ function addBatchOpenButton() {
     alignItems: 'stretch',
     position: 'relative',
     zIndex: '20',
-    float: 'right',
-    margin: prependButton ? '0 0 0 12px' : '0 8px 6px 12px',
+    float: isJavclubToolbar ? 'none' : 'right',
+    margin: isJavclubToolbar ? '0' : (prependButton ? '0 0 0 12px' : '0 8px 6px 12px'),
     whiteSpace: 'nowrap',
   });
 
@@ -2222,6 +2243,9 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
       rememberBatchOpenedThread(location.href);
     }
     addDownloadButton();
+  }
+  if (isHdblogArticleUrl(location.href) && isBatchOpenHistoryEnabled()) {
+    rememberBatchOpenedThread(location.href);
   }
   if (isBatchOpenPage()) {
     applyBatchOpenHistory(document);

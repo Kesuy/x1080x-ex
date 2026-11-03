@@ -154,7 +154,7 @@ export function isJavfreeHost(locationObject = globalThis.location) {
 
 function isHdblogHost(locationObject = globalThis.location) {
   const hostname = String(locationObject?.hostname ?? '').toLowerCase().replace(/\.$/, '');
-  return hostname === 'hdblog.me' || hostname.endsWith('.hdblog.me');
+  return ['javclub.me', 'hdblog.me'].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
 export function extractJavfreeVideoCode(value) {
@@ -636,7 +636,7 @@ export function openJavfreeSettingsPanel(document = globalThis.document) {
     </label>
     <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
       <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
-      <span><strong>复制番号按钮（📋）</strong><small style="display:block;margin-top:2px;color:#666">详情页标题旁显示复制按钮，行为与 HDblog 一致。</small></span>
+      <span><strong>复制番号按钮（📋）</strong><small style="display:block;margin-top:2px;color:#666">详情页标题旁显示复制按钮，行为与 JavClub 一致。</small></span>
     </label>
     <label style="display:flex;align-items:flex-start;gap:9px">
       <input data-setting="preview-download" type="checkbox" style="margin-top:3px">
@@ -736,7 +736,7 @@ export function installJavfreeEnhancement(
 }
 
 function hdblogCodeFromLocation(document, locationObject) {
-  // HDblog 404 页面会把标题/主标题改成 ERROR-404，因此优先从原始 URL slug
+  // JavClub / 旧 HDblog 404 页面可能把标题/主标题改成 ERROR-404，因此优先从原始 URL slug
   // 提取番号；正常文章的 slug 本身也就是番号，这比错误页标题更可靠。
   try {
     const slug = new URL(locationObject?.href || document?.baseURI || '')
@@ -761,7 +761,7 @@ export function isDeletedHdblogArticlePage(document, locationObject = document?.
   } catch {
     return false;
   }
-  if (!/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return false;
+  if (!/^\/\d+\.html$/i.test(url.pathname) && !/^\/\d+\/[^/?#]+\/?$/i.test(url.pathname)) return false;
 
   const bodyClass = String(document.body?.className || '');
   const signalTexts = [
@@ -965,7 +965,7 @@ export async function installHdblogJavfreeFallback(
       await fetchJavfreePreviewForCode(code, request, document)
     );
   } catch (error) {
-    console.warn('[x1080x-ex] JavFree preview fallback failed on hdblog', {
+    console.warn('[x1080x-ex] JavFree preview fallback failed on JavClub', {
       code,
       error: error?.message || String(error),
     });
