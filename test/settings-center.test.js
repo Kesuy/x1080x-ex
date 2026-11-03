@@ -164,3 +164,26 @@ test('unified center styles qBittorrent action button and all existing site foot
   });
   dom.window.close();
 });
+
+test('dynamically added qBittorrent, domain tools and image hosts stay in their own tabs', () => {
+  const dom = new JSDOM('<body></body>', { url: 'https://example.org/' });
+  withStore(new Map(), () => {
+    const host = openUnifiedSettingsCenter(dom.window.document, { initialSite: 'x1080x' });
+    const xForm = formIn(host, 'x1080x');
+    assert.equal(xForm.querySelector('[data-settings-section="batch"]').hidden, false);
+    assert.equal(xForm.querySelector('[data-settings-section="qbittorrent"]').hidden, true);
+    assert.equal(xForm.querySelector('[data-settings-section="site-tools"]').hidden, true);
+    xForm.querySelector('[data-settings-tab="qbittorrent"]').click();
+    assert.equal(xForm.querySelector('[data-settings-section="batch"]').hidden, true);
+    assert.equal(xForm.querySelector('[data-settings-section="qbittorrent"]').hidden, false);
+    assert.equal(xForm.querySelector('[data-settings-section="site-tools"]').hidden, true);
+
+    const javclub = switchSite(host, 'javclub');
+    assert.equal(javclub.querySelector('[data-settings-section="layout"]').hidden, false);
+    assert.equal(javclub.querySelector('[data-settings-section="image-hosts"]').hidden, true);
+    javclub.querySelector('[data-settings-tab="image-hosts"]').click();
+    assert.equal(javclub.querySelector('[data-settings-section="layout"]').hidden, true);
+    assert.equal(javclub.querySelector('[data-settings-section="image-hosts"]').hidden, false);
+  });
+  dom.window.close();
+});
