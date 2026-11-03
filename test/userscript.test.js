@@ -1416,7 +1416,7 @@ test('local recovery import restores modern marks and unopened counts without ch
     await import(`../src/userscript.js?history-recovery-import=${Date.now()}`);
     assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（2）');
     await waitFor(() => pendingLegacyRequests.length === 2, 'automatic migration should be pending while a file is imported');
-    menus.get('📥 导入旧论坛历史恢复文件')();
+    assert.equal((await import('../src/settings-actions.js')).runSiteSettingsTool('import-history'), true);
     const root = dom.window.document.getElementById('x1080x-ex-history-import').shadowRoot;
     const input = root.querySelector('input[type="file"]');
     Object.defineProperty(input, 'files', { value: [{ size: 200, text: async () => JSON.stringify({
@@ -1479,7 +1479,7 @@ test('recorded resource IDs and hydrated title aliases survive a custom domain c
     await waitFor(() => values.get('x1080x-ex:agaghhh-history-title-aliases')?.includes('code:FNS-267'),
       'the actual asynchronously rendered title must be saved');
     assert.deepEqual(values.get('x1080x-ex:1080xin-resource-history'), ['resource:earlier', 'resource:recordedID']);
-    menus.get('🌐 设置 x1080x 站点域名')();
+    assert.equal((await import('../src/settings-actions.js')).runSiteSettingsTool('primary-domain'), true);
     assert.equal(values.get('x1080x-ex:agaghhh-primary-domain'), 'second.example.net');
     assert.ok(values.get('x1080x-ex:agaghhh-domain-aliases').includes('first.example.net'));
   } finally { visited.window.close(); await Promise.resolve(); restoreVisit(); }
