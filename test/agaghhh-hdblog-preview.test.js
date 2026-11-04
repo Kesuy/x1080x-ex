@@ -543,7 +543,7 @@ test('JavClub 单结果搜索直接跳转 .html 时仍能读取 Preview', async 
 test('x1080x JavClub Preview extraction excludes YARPP 関連作品 thumbnails and links', async () => {
   // Regression fixture for the reported article URL; this is a representative
   // DOM structure, not a saved copy of the live page.
-  const dom = new JSDOM(\`<!doctype html><body>
+  const dom = new JSDOM(`<!doctype html><body>
     <main id="genesis-content"><article class="entry"><div class="entry-content">
       <p>Preview:</p>
       <p><a href="https://images.example.test/real-preview.jpg">
@@ -562,7 +562,7 @@ test('x1080x JavClub Preview extraction excludes YARPP 関連作品 thumbnails a
       </div>
       <p><img src="https://images.example.test/other-below-related.jpg"></p>
     </div></article></main>
-  </body>\`, { url: 'https://javclub.me/781063.html' });
+  </body>`, { url: 'https://javclub.me/781063.html' });
 
   try {
     const result = await collectHdblogPreviewImageUrls(
@@ -577,7 +577,7 @@ test('x1080x JavClub Preview extraction excludes YARPP 関連作品 thumbnails a
 });
 
 test('x1080x JavClub Preview extraction stops at 関連作品 heading even without YARPP classes', async () => {
-  const dom = new JSDOM(\`<!doctype html><body><article class="entry">
+  const dom = new JSDOM(`<!doctype html><body><article class="entry">
     <div class="entry-content">
       <p>Preview:</p>
       <p><img src="https://images.example.test/real-preview.jpg"></p>
@@ -587,7 +587,7 @@ test('x1080x JavClub Preview extraction stops at 関連作品 heading even witho
         </a></div>
       </section>
     </div>
-  </article></body>\`, { url: 'https://javclub.me/781063.html' });
+  </article></body>`, { url: 'https://javclub.me/781063.html' });
   try {
     const result = await collectHdblogPreviewImageUrls(
       dom.window.document, dom.window.location.href
@@ -599,7 +599,7 @@ test('x1080x JavClub Preview extraction stops at 関連作品 heading even witho
 });
 
 test('x1080x JavClub Preview remains empty if only headingless related-work cards follow Preview', async () => {
-  const dom = new JSDOM(\`<!doctype html><body><article class="entry">
+  const dom = new JSDOM(`<!doctype html><body><article class="entry">
     <div class="entry-content">
       <p>Preview:</p>
       <div class="yarpp-custom-thumbnails">
@@ -608,7 +608,7 @@ test('x1080x JavClub Preview remains empty if only headingless related-work card
         </a>
       </div>
     </div>
-  </article></body>\`, { url: 'https://javclub.me/781063.html' });
+  </article></body>`, { url: 'https://javclub.me/781063.html' });
   try {
     const result = await collectHdblogPreviewImageUrls(
       dom.window.document, dom.window.location.href
