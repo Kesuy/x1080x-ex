@@ -4,6 +4,7 @@ import { JSDOM } from 'jsdom';
 import { buildDownloadJobs } from '../src/core.js';
 import {
   chooseHdblogSearchResult,
+  collectHdblogPreviewImageUrls,
   fetchHdblogPreviewForCode,
   renderAgaghhhHdblogPreview,
 } from '../src/agaghhh-hdblog-preview.js';
@@ -535,5 +536,85 @@ test('JavClub 单结果搜索直接跳转 .html 时仍能读取 Preview', async 
     assert.deepEqual(requested, [searchUrl, articleUrl]);
   } finally {
     browser.window.close();
+  }
+});
+
+
+test('x1080x JavClub Preview extraction excludes YARPP 関連作品 thumbnails and links', async () => {
+  // Regression fixture for the reported article URL; this is a representative
+  // DOM structure, not a saved copy of the live page.
+  const dom = new JSDOM(\`<!doctype html><body>
+    <main id="genesis-content"><article class="entry"><div class="entry-content">
+      <p>Preview:</p>
+      <p><a href="https://images.example.test/real-preview.jpg">
+        <img src="https://images.example.test/real-preview-thumb.jpg">
+      </a></p>
+      <div class="yarpp yarpp-related yarpp-template-yarpp-template-thumbnail">
+        <h2>関連作品</h2>
+        <ul class="yarpp-custom-thumbnails">
+          <li><a href="https://javclub.me/999999.html">
+            <img src="https://images.example.test/related-thumbnail.jpg">
+          </a></li>
+          <li><a href="https://pixhost.to/show/901/related.jpg">
+            <img src="https://t1.pixhost.to/thumbs/901/related.jpg">
+          </a></li>
+        </ul>
+      </div>
+      <p><img src="https://images.example.test/other-below-related.jpg"></p>
+    </div></article></main>
+  </body>\`, { url: 'https://javclub.me/781063.html' });
+
+  try {
+    const result = await collectHdblogPreviewImageUrls(
+      dom.window.document,
+      'https://javclub.me/781063.html',
+      () => { throw new Error('Related works must never be requested'); }
+    );
+    assert.deepEqual(result, ['https://images.example.test/real-preview.jpg']);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('x1080x JavClub Preview extraction stops at 関連作品 heading even without YARPP classes', async () => {
+  const dom = new JSDOM(\`<!doctype html><body><article class="entry">
+    <div class="entry-content">
+      <p>Preview:</p>
+      <p><img src="https://images.example.test/real-preview.jpg"></p>
+      <section><h2>関連作品</h2>
+        <div><a href="https://javclub.me/999998.html">
+          <img src="https://images.example.test/related-thumbnail.jpg">
+        </a></div>
+      </section>
+    </div>
+  </article></body>\`, { url: 'https://javclub.me/781063.html' });
+  try {
+    const result = await collectHdblogPreviewImageUrls(
+      dom.window.document, dom.window.location.href
+    );
+    assert.deepEqual(result, ['https://images.example.test/real-preview.jpg']);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('x1080x JavClub Preview remains empty if only headingless related-work cards follow Preview', async () => {
+  const dom = new JSDOM(\`<!doctype html><body><article class="entry">
+    <div class="entry-content">
+      <p>Preview:</p>
+      <div class="yarpp-custom-thumbnails">
+        <a href="https://javclub.me/999997.html">
+          <img src="https://images.example.test/only-related-thumbnail.jpg">
+        </a>
+      </div>
+    </div>
+  </article></body>\`, { url: 'https://javclub.me/781063.html' });
+  try {
+    const result = await collectHdblogPreviewImageUrls(
+      dom.window.document, dom.window.location.href
+    );
+    assert.deepEqual(result, []);
+  } finally {
+    dom.window.close();
   }
 });
