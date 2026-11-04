@@ -53,6 +53,10 @@ const CONTAINER_ID = 'x1080x-ex-agaghhh-hdblog-preview';
 const PREVIEW_IMAGE_ATTR = 'data-x1080x-hdblog-preview-url';
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
 const PREVIEW_BOUNDARY_PATTERN = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+// YARPP recommendation cards live in the same article body as Preview on JavClub.
+// This must match the boundary enforced by the on-site hdblog-preview module.
+const RELATED_CONTENT_SELECTOR = '.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, .related-posts-container, [class*="related-posts"]';
+const RELATED_HEADING_PATTERN = /^(?:関連作品|関連記事|関連動画|Related(?:\s+(?:Posts|Articles|Videos|Works))?)\s*[:：]?$/i;
 
 function normalizeText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -330,14 +334,27 @@ function previewRange(document) {
   const nodes = textNodesUnder(content);
   const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText(node.nodeValue)));
   if (!marker) return null;
-  const boundary = nodes.find((node) => (
-    isAfter(marker, node) && PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))
+  const textBoundary = nodes.find((node) => (
+    isAfter(marker, node) && (
+      PREVIEW_BOUNDARY_PATTERN.test(normalizeText(node.nodeValue))
+      || RELATED_HEADING_PATTERN.test(normalizeText(node.nodeValue))
+    )
   )) || null;
+  // Some articles have no visible related-work heading; the recommendation
+  // container itself must still terminate the Preview scan.
+  const relatedBoundary = [...content.querySelectorAll(RELATED_CONTENT_SELECTOR)]
+    .find((node) => isAfter(marker, node)) || null;
+  const boundary = relatedBoundary && (!textBoundary || isAfter(relatedBoundary, textBoundary))
+    ? relatedBoundary : textBoundary;
   return { content, marker, boundary };
 }
 
 function inPreviewRange(range, node) {
   if (!range || !isAfter(range.marker, node)) return false;
+  const element = node.nodeType === 1 ? node : node.parentElement;
+  // Never treat recommendation thumbnails as Preview, even when a theme moves
+  // the recommendation block inside the surrounding Preview markup.
+  if (element?.closest?.(RELATED_CONTENT_SELECTOR)) return false;
   return !range.boundary || !isAfter(range.boundary, node);
 }
 
