@@ -34,6 +34,18 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Validate Chinese release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          NOTES_FILE=".github/release-notes/v${VERSION}.md"
+          if [ ! -f "$NOTES_FILE" ]; then
+            echo "::error::缺少中文发布说明：$NOTES_FILE"
+            exit 1
+          fi
+          NOTES_FILE="$NOTES_FILE" node -e 'const fs = require("node:fs"); const note = fs.readFileSync(process.env.NOTES_FILE, "utf8").trim(); const han = (note.match(/[\u3400-\u9fff]/gu) || []).length; if (han < 20) { console.error("发布说明必须包含实质中文更新内容（不少于20个汉字）"); process.exit(1); }'
+
       - name: Update built userscript on main
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -49,19 +61,20 @@ jobs:
           git commit -m "release: update built userscript for v$VERSION"
           git push
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release with Chinese notes
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         shell: bash
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "$TAG already exists; skipping release creation."
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file "$NOTES_FILE"
+            gh release upload "$TAG" dist/x1080x-ex.user.js --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$TAG" dist/x1080x-ex.user.js \
               --repo "$GITHUB_REPOSITORY" \
               --target "$(git rev-parse HEAD)" \
               --title "$TAG" \
-              --generate-notes
+              --notes-file "$NOTES_FILE"
           fi
-
