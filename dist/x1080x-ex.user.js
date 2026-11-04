@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.35
+// @version      1.10.36
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -4528,6 +4528,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
   var PREVIEW_IMAGE_ATTR = "data-x1080x-hdblog-preview-url";
   var IMAGE_EXTENSION_PATTERN4 = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
   var PREVIEW_BOUNDARY_PATTERN4 = /^(?:btfile|katfile|freedl|rapidgator|downloads?(?:\s+links?)?|links?|magnets?(?:\s+links?)?|torrents?(?:\s+links?)?|password|information|filed\s+under|tagged\s+with|leave\s+a\s+reply|comments?|下载(?:链接)?|下載(?:連結)?|磁力(?:链接|連結)?|种子|種子|解压密码|解壓密碼)\b/i;
+  var RELATED_CONTENT_SELECTOR2 = '.yarpp, .yarpp-related, .yarpp-custom-thumbnails, .related-posts, .related-posts-container, [class*="related-posts"]';
+  var RELATED_HEADING_PATTERN = /^(?:関連作品|関連記事|関連動画|Related(?:\s+(?:Posts|Articles|Videos|Works))?)\s*[:：]?$/i;
   function normalizeText6(value) {
     return String(value ?? "").replace(/\s+/g, " ").trim();
   }
@@ -4769,11 +4771,15 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const nodes = textNodesUnder5(content);
     const marker = nodes.find((node) => /^preview\s*[:：]?$/i.test(normalizeText6(node.nodeValue)));
     if (!marker) return null;
-    const boundary = nodes.find((node) => isAfter5(marker, node) && PREVIEW_BOUNDARY_PATTERN4.test(normalizeText6(node.nodeValue))) || null;
+    const textBoundary = nodes.find((node) => isAfter5(marker, node) && (PREVIEW_BOUNDARY_PATTERN4.test(normalizeText6(node.nodeValue)) || RELATED_HEADING_PATTERN.test(normalizeText6(node.nodeValue)))) || null;
+    const relatedBoundary = [...content.querySelectorAll(RELATED_CONTENT_SELECTOR2)].find((node) => isAfter5(marker, node)) || null;
+    const boundary = relatedBoundary && (!textBoundary || isAfter5(relatedBoundary, textBoundary)) ? relatedBoundary : textBoundary;
     return { content, marker, boundary };
   }
   function inPreviewRange4(range, node) {
     if (!range || !isAfter5(range.marker, node)) return false;
+    const element = node.nodeType === 1 ? node : node.parentElement;
+    if (element?.closest?.(RELATED_CONTENT_SELECTOR2)) return false;
     return !range.boundary || !isAfter5(range.boundary, node);
   }
   async function collectHdblogPreviewImageUrls(document2, articleUrl, gmRequest2, healthDocument = null, timeoutMs = REQUEST_TIMEOUT6) {
