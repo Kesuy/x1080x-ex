@@ -315,7 +315,7 @@ test('JavClub 页面完全没有分页控件时仍按 /page/N/ 逐页匹配保�
     });
     assert.equal(result.status, 'found');
     assert.equal(result.url, third);
-    assert.deepEqual(fetched, [second, third, root + 'page/4/']);
+    assert.deepEqual(fetched, [second, third]);
     assert.equal(result.checked, 3);
   } finally {
     dom.window.close();
