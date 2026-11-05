@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.38
+// @version      1.10.39
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -5320,7 +5320,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       }
       const threads = collectThreads(page);
       if (!threads.length) {
-        return { status: "unreadable", checked, pageUrl: normalized };
+        return candidate ? { ...candidate, inspected: checked, approximate: true, unreadablePageUrl: normalized } : { status: "unreadable", checked, pageUrl: normalized };
       }
       const signature = threads.map((thread) => thread.url).join("\n");
       if (seenThreadSets.has(signature)) {
@@ -5368,6 +5368,62 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     if (candidate) return { ...candidate, inspected: checked, approximate: true };
     return { status: checked >= maxPages ? "limit" : "end", checked, visitedFound };
+  }
+
+  // src/modern-board-progress-resume.js
+  var MODERN_BOARD_RESUME_KEY = "x1080x-ex:modern-board-locator-resume-v1";
+  var MODERN_BOARD_RESUME_MAX_HOPS = 12;
+  var MODERN_BOARD_RESUME_MAX_AGE_MS = 5 * 60 * 1e3;
+  function normalizedBoardScope(value) {
+    try {
+      const url = new URL(value);
+      const match = url.pathname.match(/^\/boards\/([a-z0-9]+)\/?$/i);
+      return /^https?:$/.test(url.protocol) && match ? url.origin + "/boards/" + match[1] : "";
+    } catch {
+      return "";
+    }
+  }
+  function parseModernBoardResume(value, currentUrl, now = Date.now()) {
+    let state;
+    try {
+      state = typeof value === "string" ? JSON.parse(value) : value;
+    } catch {
+      return null;
+    }
+    const scope = normalizedBoardScope(currentUrl);
+    if (!scope || !state || state.version !== 1 || state.scope !== scope) return null;
+    if (!Number.isFinite(state.startedAt) || now < state.startedAt || now - state.startedAt > MODERN_BOARD_RESUME_MAX_AGE_MS) return null;
+    if (!Array.isArray(state.visitedUrls) || state.visitedUrls.length < 1 || state.visitedUrls.length > MODERN_BOARD_RESUME_MAX_HOPS || state.visitedUrls.some((url) => normalizedBoardScope(url) !== scope)) return null;
+    try {
+      if (new URL(state.targetUrl).href !== new URL(currentUrl).href) return null;
+    } catch {
+      return null;
+    }
+    return state;
+  }
+  function nextModernBoardResumeState(currentUrl, targetUrl, previous = null, now = Date.now()) {
+    const scope = normalizedBoardScope(currentUrl);
+    if (!scope || normalizedBoardScope(targetUrl) !== scope) {
+      return { status: "invalid" };
+    }
+    const current = new URL(currentUrl).href;
+    const target = new URL(targetUrl).href;
+    if (current === target) return { status: "invalid" };
+    const prior = previous?.version === 1 && previous.scope === scope && Number.isFinite(previous.startedAt) && now - previous.startedAt <= MODERN_BOARD_RESUME_MAX_AGE_MS && now >= previous.startedAt && Array.isArray(previous.visitedUrls) ? previous : null;
+    const visitedUrls = prior ? prior.visitedUrls : [];
+    if (visitedUrls.includes(target) || visitedUrls.length >= MODERN_BOARD_RESUME_MAX_HOPS) {
+      return { status: "limit" };
+    }
+    return {
+      status: "ready",
+      state: {
+        version: 1,
+        scope,
+        targetUrl: target,
+        startedAt: prior?.startedAt || now,
+        visitedUrls: [...visitedUrls, target]
+      }
+    };
   }
 
   // src/torrent.js
@@ -6579,6 +6635,7 @@ ${settings.password}`;
   });
   var batchOpenState = null;
   var batchProgressScanState = null;
+  var modernBoardResumeStarted = false;
   function getConfiguredDomains() {
     const stored = typeof GM_getValue === "function" ? GM_getValue(STORAGE_KEY2, null) : null;
     const domains = stored === null || stored === void 0 ? parseDomainList(DEFAULT_DOMAINS) : parseDomainList(stored);
@@ -8115,9 +8172,37 @@ ${failures.join("\n")}
       });
     });
   }
-  async function locateCurrentBatchProgress(button) {
+  function clearPendingModernBoardResume() {
+    try {
+      window.sessionStorage?.removeItem(MODERN_BOARD_RESUME_KEY);
+    } catch {
+    }
+  }
+  function readPendingModernBoardResume() {
+    try {
+      const raw = window.sessionStorage?.getItem(MODERN_BOARD_RESUME_KEY);
+      if (!raw) return null;
+      const state = parseModernBoardResume(raw, location.href);
+      if (!state) clearPendingModernBoardResume();
+      return state;
+    } catch {
+      return null;
+    }
+  }
+  function resumeModernBoardProgressIfReady() {
+    if (modernBoardResumeStarted || batchProgressScanState) return false;
+    if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return false;
+    if (!readPendingModernBoardResume()) return false;
+    const button = document.getElementById(BATCH_PROGRESS_BUTTON_ID);
+    if (!button || !collectForumThreadLinks(document).length) return false;
+    modernBoardResumeStarted = true;
+    void locateCurrentBatchProgress(button, { resumed: true });
+    return true;
+  }
+  async function locateCurrentBatchProgress(button, { resumed = false } = {}) {
     if (batchProgressScanState) {
       batchProgressScanState.cancelled = true;
+      clearPendingModernBoardResume();
       renderCompactBatchControl(
         button,
         "locator",
@@ -8134,6 +8219,8 @@ ${failures.join("\n")}
       return;
     }
     const scan = { cancelled: false };
+    let handedOffToHydratedPage = false;
+    const pendingResume = resumed ? readPendingModernBoardResume() : null;
     batchProgressScanState = scan;
     button.style.background = "#b36b22";
     renderCompactBatchControl(
@@ -8155,10 +8242,11 @@ ${failures.join("\n")}
       const currentPageStart = onLaterJavclubPage || onLaterModernBoardPage ? location.href : firstUrl;
       const plans = [
         { startUrl: currentPageStart, maxPages: 120, saved: false },
-        ...currentPageStart !== firstUrl ? [{ startUrl: firstUrl, maxPages: 120, saved: false }] : [],
-        ...matchingSavedProgress ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []
+        ...!resumed && currentPageStart !== firstUrl ? [{ startUrl: firstUrl, maxPages: 120, saved: false }] : [],
+        ...!resumed && matchingSavedProgress ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []
       ];
       let result = null;
+      let firstUnreadable = null;
       for (const plan of plans) {
         const attempt = await scanBatchProgressPages({
           startUrl: plan.startUrl,
@@ -8187,7 +8275,11 @@ ${failures.join("\n")}
         });
         if (scan.cancelled || attempt.status === "cancelled") return;
         result = attempt;
+        if (attempt.status === "unreadable" && !firstUnreadable) firstUnreadable = attempt;
         if (attempt.status === "found") break;
+      }
+      if (firstUnreadable && result?.status !== "found" && config.modern) {
+        result = firstUnreadable;
       }
       if (!result) return;
       if (scan.cancelled || result.status === "cancelled") return;
@@ -8195,9 +8287,9 @@ ${failures.join("\n")}
         renderCompactBatchControl(
           button,
           "locator",
-          "\u5DF2\u5B9A\u4F4D\u5230\u5386\u53F2\u4EA4\u754C",
+          "\u5DF2\u5B9A\u4F4D\u5230\u5386\u53F2\u5019\u9009",
           "",
-          "\u5DF2\u627E\u5230\u5DF2\u6D4F\u89C8\u4E0E\u672A\u6D4F\u89C8\u4E3B\u9898\u7684\u76F8\u90BB\u5206\u9875\uFF0C\u6B63\u5728\u8DF3\u8F6C\u6216\u6EDA\u52A8\u5B9A\u4F4D\u3002"
+          result.approximate ? "\u5DF2\u627E\u5230\u5305\u542B\u5DF2\u6D4F\u89C8\u4E0E\u672A\u6D4F\u89C8\u4E3B\u9898\u7684\u53C2\u8003\u9875\uFF1B\u540E\u7EED\u5206\u9875\u672A\u80FD\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u8BF7\u6838\u5BF9\u5B9E\u9645\u4EA4\u754C\u3002" : "\u5DF2\u627E\u5230\u5DF2\u6D4F\u89C8\u4E0E\u672A\u6D4F\u89C8\u4E3B\u9898\u7684\u76F8\u90BB\u5206\u9875\uFF0C\u6B63\u5728\u8DF3\u8F6C\u6216\u6EDA\u52A8\u5B9A\u4F4D\u3002"
         );
         rememberBatchProgressTarget(result.url);
         if (result.url !== location.href) window.location.assign(result.url);
@@ -8216,7 +8308,31 @@ ${failures.join("\n")}
         return;
       }
       if (result.status === "unreadable") {
-        window.alert(`\u7B2C ${result.checked + 1} \u9875\u672A\u8BFB\u53D6\u5230\u4E3B\u9898\uFF08\u53EF\u80FD\u9700\u8981\u767B\u5F55\u6216\u89E6\u53D1\u4E86\u7F51\u7AD9\u9A8C\u8BC1\uFF09\uFF0C\u4E0D\u80FD\u53EF\u9760\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u3002
+        if (config.modern && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) {
+          const next = nextModernBoardResumeState(location.href, result.pageUrl, pendingResume);
+          if (next.status === "ready") {
+            try {
+              window.sessionStorage?.setItem(MODERN_BOARD_RESUME_KEY, JSON.stringify(next.state));
+              handedOffToHydratedPage = true;
+              renderCompactBatchControl(
+                button,
+                "locator",
+                "\u6B63\u5728\u6253\u5F00\u52A8\u6001\u5206\u9875\u2026",
+                "",
+                "\u540E\u53F0\u672A\u80FD\u89E3\u6790\u8BE5\u5206\u9875\u3002\u5C06\u7531\u6D4F\u89C8\u5668\u6B63\u5E38\u6253\u5F00\u76EE\u6807\u9875\uFF0C\u7B49\u5F85\u771F\u5B9E\u4E3B\u9898\u5217\u8868\u52A0\u8F7D\u540E\u7EE7\u7EED\u5B9A\u4F4D\u3002"
+              );
+              window.location.assign(next.state.targetUrl);
+              return;
+            } catch {
+              handedOffToHydratedPage = false;
+              clearPendingModernBoardResume();
+            }
+          } else if (next.status === "limit") {
+            window.alert("\u5DF2\u8FBE\u5230\u52A8\u6001\u5206\u9875\u6062\u590D\u7684\u5B89\u5168\u4E0A\u9650\uFF0812\u9875\uFF09\u3002\u5B9A\u4F4D\u5DF2\u505C\u6B62\uFF0C\u907F\u514D\u81EA\u52A8\u8DF3\u9875\u5FAA\u73AF\u3002\u53EF\u4EE5\u4ECE\u66F4\u63A5\u8FD1\u6D4F\u89C8\u8FDB\u5EA6\u7684\u5206\u9875\u91CD\u65B0\u5F00\u59CB\u3002");
+            return;
+          }
+        }
+        window.alert(`\u7B2C ${result.checked + 1} \u9875\u672A\u8BFB\u53D6\u5230\u4E3B\u9898\uFF08\u53EF\u80FD\u662F\u7F51\u7AD9\u4EC5\u8FD4\u56DE\u52A8\u6001\u9875\u9762\u6846\u67B6\uFF0C\u6216\u9700\u8981\u767B\u5F55/\u9A8C\u8BC1\uFF09\uFF0C\u65E0\u6CD5\u7EE7\u7EED\u540E\u53F0\u626B\u63CF\u3002
 ${result.pageUrl}`);
       } else if (result.status === "limit") {
         window.alert("\u5DF2\u8FDE\u7EED\u68C0\u67E5 120 \u9875\uFF0C\u4ECD\u672A\u627E\u5230\u5DF2\u6253\u5F00\u4E0E\u672A\u6253\u5F00\u4E3B\u9898\u7684\u4EA4\u754C\u5904\u3002\u53EF\u4EE5\u5728\u66F4\u63A5\u8FD1\u5386\u53F2\u8FDB\u5EA6\u7684\u5206\u9875\u518D\u6B21\u5B9A\u4F4D\u3002");
@@ -8231,6 +8347,7 @@ ${result.pageUrl}`);
         window.alert(`\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u5931\u8D25\uFF1A${error?.message || error}\u3002\u8BF7\u786E\u8BA4\u4E24\u4E2A\u7AD9\u70B9\u5DF2\u767B\u5F55\u4E14\u5206\u9875\u53EF\u4EE5\u6B63\u5E38\u6253\u5F00\u3002`);
       }
     } finally {
+      if (!handedOffToHydratedPage) clearPendingModernBoardResume();
       if (batchProgressScanState === scan) batchProgressScanState = null;
       refreshBatchProgressLocatorButton(button);
     }
@@ -8261,7 +8378,14 @@ ${result.pageUrl}`);
     button.addEventListener("mouseleave", () => {
       if (!batchProgressScanState) button.style.background = "#6d7d87";
     });
-    button.addEventListener("click", () => void locateCurrentBatchProgress(button));
+    button.addEventListener("click", () => {
+      if (!batchProgressScanState && !modernBoardResumeStarted && readPendingModernBoardResume()) {
+        clearPendingModernBoardResume();
+        refreshBatchProgressLocatorButton(button);
+        return;
+      }
+      void locateCurrentBatchProgress(button);
+    });
     refreshBatchProgressLocatorButton(button);
     const batchWrapper = document.getElementById(BATCH_SPLIT_ID);
     const isJavclubToolbar = isAllowedHost(location.hostname, ["javclub.me", "hdblog.me"]);
@@ -8500,6 +8624,7 @@ ${title}`;
           setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
         }
       }
+      resumeModernBoardProgressIfReady();
     };
     const schedule = () => {
       if (timer !== null) window.clearTimeout(timer);
@@ -8546,6 +8671,15 @@ ${title}`;
       }
       startAutomaticLegacyHistoryMigration();
       observeModernBoard();
+      if (/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname) && readPendingModernBoardResume()) {
+        resumeModernBoardProgressIfReady();
+        window.setTimeout(() => {
+          if (!modernBoardResumeStarted && readPendingModernBoardResume()) {
+            clearPendingModernBoardResume();
+            window.alert("\u6D4F\u89C8\u5668\u5DF2\u6253\u5F00\u8BE5\u5206\u9875\uFF0C\u4F46 15 \u79D2\u5185\u4ECD\u672A\u663E\u793A\u53EF\u8BC6\u522B\u7684\u4E3B\u9898\u3002\u81EA\u52A8\u5B9A\u4F4D\u5DF2\u505C\u6B62\uFF0C\u8BF7\u68C0\u67E5\u767B\u5F55\u6216\u7F51\u7AD9\u9A8C\u8BC1\u3002");
+          }
+        }, 15e3);
+      }
     }
   }
 
