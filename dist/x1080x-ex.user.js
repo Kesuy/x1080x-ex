@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.36
+// @version      1.10.37
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -1221,6 +1221,15 @@
   }
   function getAgaghhhOrigin() {
     return `https://${getAgaghhhPrimaryDomain()}`;
+  }
+  function toAgaghhhPrimaryUrl(value) {
+    try {
+      const url = new URL(value);
+      if (!/^https?:$/.test(url.protocol) || !isAgaghhhHost(url)) return "";
+      return new URL(url.pathname + url.search + url.hash, getAgaghhhOrigin()).href;
+    } catch {
+      return "";
+    }
   }
 
   // src/clipboard.js
@@ -5101,6 +5110,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       ".archive-pagination .pagination-next a[href]",
       ".archive-pagination a.next[href]",
       ".pagination a.next[href]",
+      ".pagination a.next.page-numbers[href]",
+      ".navigation.pagination a.next[href]",
+      ".wp-pagenavi a.nextpostslink[href]",
+      ".posts-navigation .nav-previous a[href]",
+      ".nav-links .nav-previous a[href]",
       '.archive-pagination a[rel="next"][href]',
       'a[rel="next"][href]'
     ];
@@ -5111,8 +5125,37 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     }
     if (!link) {
       link = [...document2.querySelectorAll(
-        ".pg a[href], .archive-pagination a[href], .pagination a[href]"
-      )].find((anchor) => /^(?:下一页|下一頁|next|older(?: posts?)?|»|›|→)(?:\s*[»›→])?$/i.test(String(anchor.textContent || "").trim()));
+        ".pg a[href], .archive-pagination a[href], .pagination a[href], .navigation a[href], .wp-pagenavi a[href]"
+      )].find((anchor) => /^(?:下一页|下一頁|next(?:\s+page)?|older(?:\s+(?:posts?|entries))?|»|›|→)(?:\s*[»›→])?$/i.test(String(anchor.textContent || "").trim()));
+    }
+    if (!link) {
+      const current = new URL(baseUrl);
+      const pageScope = (value) => {
+        const url = new URL(value);
+        url.hash = "";
+        url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, "/").replace(/(\/forum-\d+-)\d+(\.html)$/i, (_, prefix, suffix) => prefix + "1" + suffix);
+        url.searchParams.delete("page");
+        url.searchParams.delete("paged");
+        url.searchParams.sort();
+        return url.href;
+      };
+      const pageNumber = (url) => Number.parseInt(
+        url.searchParams.get("paged") || url.searchParams.get("page") || url.pathname.match(/\/page\/(\d+)\/?$/i)?.[1] || url.pathname.match(/\/forum-\d+-(\d+)\.html$/i)?.[1] || "1",
+        10
+      );
+      const currentNumber = pageNumber(current);
+      const candidates = [...document2.querySelectorAll(
+        ".pg a[href], .archive-pagination a[href], .pagination a[href], .navigation a[href], .wp-pagenavi a[href], .pager a[href], a.page-numbers[href]"
+      )].flatMap((anchor) => {
+        try {
+          const url = new URL(anchor.getAttribute("href"), baseUrl);
+          const number = pageNumber(url);
+          return /^https?:$/.test(url.protocol) && pageScope(url.href) === pageScope(current.href) && Number.isInteger(number) && number > currentNumber ? [{ number, url: url.href }] : [];
+        } catch {
+          return [];
+        }
+      }).sort((a, b) => a.number - b.number);
+      if (candidates.length) return candidates[0].url;
     }
     if (!link) {
       const nextButton = document2.querySelector(
@@ -5129,6 +5172,62 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     try {
       const url = new URL(link.getAttribute("href"), baseUrl);
       return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+  function rememberedBatchProgressUrl(map, scope, currentUrl, getScope) {
+    if (!map || typeof map !== "object" || !scope || typeof getScope !== "function") return "";
+    let current;
+    try {
+      current = new URL(currentUrl);
+    } catch {
+      return "";
+    }
+    const isJavclub = /^(?:javclub\.me|hdblog\.me)$/i.test(current.hostname);
+    const keys = [scope];
+    try {
+      const unnormalized = new URL(scope);
+      if (/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/$/i.test(unnormalized.pathname)) {
+        unnormalized.pathname = unnormalized.pathname.replace(/\/$/, "");
+        keys.push(unnormalized.href);
+      }
+    } catch {
+    }
+    if (isJavclub) {
+      for (const key of [...keys]) {
+        keys.push(key.replace("://javclub.me/", "://hdblog.me/"));
+        keys.push(key.replace("://hdblog.me/", "://javclub.me/"));
+      }
+    }
+    for (const key of new Set(keys)) {
+      const saved = map[key];
+      if (typeof saved?.url !== "string") continue;
+      try {
+        const target = new URL(saved.url, currentUrl);
+        if (isJavclub && /^(?:javclub\.me|hdblog\.me)$/i.test(target.hostname)) {
+          target.hostname = current.hostname;
+          target.protocol = current.protocol;
+          target.port = current.port;
+        }
+        if (getScope(target.href) === scope) return target.href;
+      } catch {
+      }
+    }
+    return "";
+  }
+  function inferWordPressArchiveNextUrl(document2, pageUrl) {
+    if (!document2?.querySelector("main#genesis-content article.entry .entry-title a[href]")) return "";
+    try {
+      const url = new URL(pageUrl);
+      if (!/^(?:javclub\.me|hdblog\.me)$/i.test(url.hostname)) return "";
+      const basePath = url.pathname.replace(/\/page\/\d+\/?$/i, "/");
+      if (!/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/?$/i.test(basePath)) return "";
+      const number = Number.parseInt(url.pathname.match(/\/page\/(\d+)\/?$/i)?.[1] || "1", 10);
+      if (!Number.isSafeInteger(number) || number < 1) return "";
+      url.pathname = basePath.replace(/\/?$/, "/") + "page/" + (number + 1) + "/";
+      url.hash = "";
+      return url.href;
     } catch {
       return "";
     }
@@ -5167,7 +5266,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     let checked = 0;
     let visitedFound = false;
     let candidate = null;
+    let arrivedViaInferredLink = false;
     const seen = /* @__PURE__ */ new Set();
+    const seenThreadSets = /* @__PURE__ */ new Set();
     while (pageUrl && checked < maxPages) {
       if (cancelled()) return { status: "cancelled", checked };
       const normalized = new URL(pageUrl, startUrl).href;
@@ -5177,7 +5278,15 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       if (normalized === currentUrl) {
         page = currentDocument;
       } else {
-        const html = await loadPage(normalized);
+        let html;
+        try {
+          html = await loadPage(normalized);
+        } catch (error) {
+          if (arrivedViaInferredLink && checked > 0 && /\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
+            return candidate ? { ...candidate, inspected: checked, approximate: true } : { status: "end", checked, visitedFound };
+          }
+          throw error;
+        }
         if (cancelled()) return { status: "cancelled", checked };
         page = parseBatchListPage(html, normalized, currentDocument);
       }
@@ -5185,6 +5294,11 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       if (!threads.length) {
         return { status: "unreadable", checked, pageUrl: normalized };
       }
+      const signature = threads.map((thread) => thread.url).join("\n");
+      if (seenThreadSets.has(signature)) {
+        return candidate ? { ...candidate, inspected: checked, approximate: true } : { status: "end", checked, visitedFound, repeatedPage: true };
+      }
+      seenThreadSets.add(signature);
       const opened = threads.filter((thread) => {
         const ids = typeof getIds === "function" ? getIds(thread) : [getId(thread.url)];
         return Array.isArray(ids) && ids.some((id) => id && history.has(id));
@@ -5215,11 +5329,14 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         }
       }
       previous = { ratio, url: normalized, checked, opened, unopened };
-      const next = nextBatchListPageUrl(page, normalized);
+      let next = nextBatchListPageUrl(page, normalized);
+      const inferred = !next;
+      if (!next) next = inferWordPressArchiveNextUrl(page, normalized);
       if (!next || next === normalized || getScope(next) !== scope || seen.has(next)) {
         return candidate ? { ...candidate, inspected: checked, approximate: true } : { status: "end", checked, visitedFound };
       }
       pageUrl = next;
+      arrivedViaInferredLink = inferred;
     }
     if (candidate) return { ...candidate, inspected: checked, approximate: true };
     return { status: checked >= maxPages ? "limit" : "end", checked, visitedFound };
@@ -6834,6 +6951,9 @@ ${domains.join("\n")}
       }
       url.searchParams.delete("paged");
       url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, "/");
+      if (/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/?$/i.test(url.pathname)) {
+        url.pathname = url.pathname.replace(/\/+$/, "") + "/";
+      }
       url.searchParams.sort();
       return url.href;
     } catch {
@@ -6845,6 +6965,12 @@ ${domains.join("\n")}
     if (!config || typeof GM_getValue !== "function") return {};
     const stored = GM_getValue(config.progressMapKey, {});
     return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  }
+  function batchProgressTarget() {
+    const scope = batchProgressScopeKey();
+    if (!scope) return "";
+    const saved = rememberedBatchProgressUrl(readBatchProgressMap(), scope, location.href, batchProgressScopeKey);
+    return batchOpenHistoryConfig()?.kind === "agaghhh" ? toAgaghhhPrimaryUrl(saved) : saved;
   }
   function startAutomaticLegacyHistoryMigration() {
     if (legacyHistoryMigrationStartedThisPage || !isAgaghhhHost(location) || currentHost() === LEGACY_AGAGHHH_DOMAIN || !/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname) || !isBatchOpenHistoryEnabled()) return;
@@ -7992,39 +8118,56 @@ ${failures.join("\n")}
     );
     try {
       const config = batchOpenHistoryConfig();
-      const result = await scanBatchProgressPages({
-        startUrl: firstBatchListPageUrl(location.href, config.kind),
-        currentUrl: location.href,
-        currentDocument: document,
-        historyIds,
-        loadPage: requestBatchListPageHtml,
-        collectThreads: collectForumThreadLinks,
-        getId: batchOpenHistoryId,
-        getIds: batchThreadHistoryKeys,
-        getScope: batchProgressScopeKey,
-        maxPages: 120,
-        onProgress: ({ checked, opened, unopened }) => {
-          renderCompactBatchControl(
-            button,
-            "locator",
-            `\u505C\u6B62\u67E5\u627E \xB7 \u7B2C ${checked} \u9875\uFF08\u5DF2\u5F00 ${opened} / \u672A\u5F00 ${unopened}\uFF09`,
-            "",
-            `\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\uFF1A\u6B63\u5728\u68C0\u67E5\u7B2C ${checked} \u9875\u3002
+      const firstUrl = firstBatchListPageUrl(location.href, config.kind);
+      const rememberedUrl = batchProgressTarget();
+      const matchingSavedProgress = rememberedUrl && batchProgressScopeKey(rememberedUrl) === batchProgressScopeKey(firstUrl) && rememberedUrl !== firstUrl ? rememberedUrl : "";
+      let savedPageReadable = false;
+      const currentPageStart = config.kind === "hdblog" && /^\/(?:category|tag)\/.+\/page\/\d+\/?$/i.test(location.pathname) ? location.href : firstUrl;
+      const plans = [
+        { startUrl: currentPageStart, maxPages: 120, saved: false },
+        ...currentPageStart !== firstUrl ? [{ startUrl: firstUrl, maxPages: 120, saved: false }] : [],
+        ...matchingSavedProgress ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []
+      ];
+      let result = null;
+      for (const plan of plans) {
+        const attempt = await scanBatchProgressPages({
+          startUrl: plan.startUrl,
+          currentUrl: location.href,
+          currentDocument: document,
+          historyIds,
+          loadPage: requestBatchListPageHtml,
+          collectThreads: collectForumThreadLinks,
+          getId: batchOpenHistoryId,
+          getIds: batchThreadHistoryKeys,
+          getScope: batchProgressScopeKey,
+          maxPages: plan.maxPages,
+          onProgress: ({ checked, opened, unopened }) => {
+            if (plan.saved) savedPageReadable = true;
+            renderCompactBatchControl(
+              button,
+              "locator",
+              `\u505C\u6B62\u67E5\u627E \xB7 \u5DF2\u67E5 ${checked} \u9875\uFF08\u5DF2\u5F00 ${opened} / \u672A\u5F00 ${unopened}\uFF09`,
+              "",
+              `\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\uFF1A\u6B63\u5728${plan.saved ? "\u68C0\u67E5\u4FDD\u5B58\u8FDB\u5EA6\u9644\u8FD1" : "\u4ECE\u7B2C\u4E00\u9875"}\u67E5\u627E\uFF0C\u5DF2\u67E5 ${checked} \u9875\u3002
 \u8BE5\u9875\u5DF2\u6D4F\u89C8 ${opened} \u6761\uFF0C\u672A\u6D4F\u89C8 ${unopened} \u6761\u3002
 \u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62\u3002`
-          );
-        },
-        cancelled: () => scan.cancelled
-      });
+            );
+          },
+          cancelled: () => scan.cancelled
+        });
+        if (scan.cancelled || attempt.status === "cancelled") return;
+        result = attempt;
+        if (attempt.status === "found") break;
+      }
+      if (!result) return;
       if (scan.cancelled || result.status === "cancelled") return;
       if (result.status === "found") {
         renderCompactBatchControl(
           button,
           "locator",
-          `\u5DF2\u5B9A\u4F4D\u5230\u7B2C ${result.checked} \u9875`,
+          "\u5DF2\u5B9A\u4F4D\u5230\u5386\u53F2\u4EA4\u754C",
           "",
-          `\u5DF2\u627E\u5230\u6D4F\u89C8\u8FDB\u5EA6\uFF1A\u7B2C ${result.checked} \u9875\u3002
-\u6B63\u5728\u8DF3\u8F6C\u6216\u6EDA\u52A8\u5230\u672A\u6D4F\u89C8\u4E3B\u9898\u3002`
+          "\u5DF2\u627E\u5230\u5DF2\u6D4F\u89C8\u4E0E\u672A\u6D4F\u89C8\u4E3B\u9898\u7684\u76F8\u90BB\u5206\u9875\uFF0C\u6B63\u5728\u8DF3\u8F6C\u6216\u6EDA\u52A8\u5B9A\u4F4D\u3002"
         );
         rememberBatchProgressTarget(result.url);
         if (result.url !== location.href) window.location.assign(result.url);
@@ -8035,13 +8178,21 @@ ${failures.join("\n")}
         }
         return;
       }
+      if (matchingSavedProgress && savedPageReadable && ["end", "limit"].includes(result.status)) {
+        window.alert("\u672A\u627E\u5230\u7CBE\u786E\u7684\u5DF2\u6D4F\u89C8/\u672A\u6D4F\u89C8\u4EA4\u754C\uFF0C\u5C06\u8F6C\u5230\u672C\u680F\u76EE\u4FDD\u5B58\u7684\u4E0A\u6B21\u6279\u91CF\u6253\u5F00\u8FDB\u5EA6\u3002\n\u8FD9\u662F\u8FDB\u5EA6\u53C2\u8003\u70B9\uFF0C\u4E0D\u4E00\u5B9A\u662F\u5B9E\u9645\u4EA4\u754C\u9875\u3002");
+        rememberBatchProgressTarget(matchingSavedProgress);
+        if (matchingSavedProgress !== location.href) window.location.assign(matchingSavedProgress);
+        else collectForumThreadLinks(document).find((thread) => !isBatchThreadVisited(thread, new Set(historyIds)))?.link?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        return;
+      }
       if (result.status === "unreadable") {
         window.alert(`\u7B2C ${result.checked + 1} \u9875\u672A\u8BFB\u53D6\u5230\u4E3B\u9898\uFF08\u53EF\u80FD\u9700\u8981\u767B\u5F55\u6216\u89E6\u53D1\u4E86\u7F51\u7AD9\u9A8C\u8BC1\uFF09\uFF0C\u4E0D\u80FD\u53EF\u9760\u5B9A\u4F4D\u6D4F\u89C8\u8FDB\u5EA6\u3002
 ${result.pageUrl}`);
       } else if (result.status === "limit") {
-        window.alert("\u5DF2\u68C0\u67E5\u524D 120 \u9875\uFF0C\u4ECD\u672A\u627E\u5230\u5DF2\u6253\u5F00\u4E0E\u672A\u6253\u5F00\u4E3B\u9898\u7684\u4EA4\u754C\u5904\u3002\u8BF7\u5728\u66F4\u63A5\u8FD1\u5386\u53F2\u8FDB\u5EA6\u7684\u5217\u8868\u9875\u5C1D\u8BD5\uFF0C\u6216\u589E\u52A0\u626B\u63CF\u4E0A\u9650\u3002");
+        window.alert("\u5DF2\u8FDE\u7EED\u68C0\u67E5 120 \u9875\uFF0C\u4ECD\u672A\u627E\u5230\u5DF2\u6253\u5F00\u4E0E\u672A\u6253\u5F00\u4E3B\u9898\u7684\u4EA4\u754C\u5904\u3002\u53EF\u4EE5\u5728\u66F4\u63A5\u8FD1\u5386\u53F2\u8FDB\u5EA6\u7684\u5206\u9875\u518D\u6B21\u5B9A\u4F4D\u3002");
       } else if (result.status === "end") {
-        window.alert(result.visitedFound ? "\u5DF2\u68C0\u67E5\u5B8C\u80FD\u8BBF\u95EE\u7684\u5206\u9875\uFF0C\u6CA1\u6709\u627E\u5230\u660E\u786E\u7684\u5DF2\u6253\u5F00/\u672A\u6253\u5F00\u5206\u754C\u9875\u3002" : "\u5DF2\u68C0\u67E5\u5B8C\u80FD\u8BBF\u95EE\u7684\u5206\u9875\uFF0C\u4F46\u6CA1\u6709\u5728\u8FD9\u4E9B\u4E3B\u9898\u4E2D\u627E\u5230\u811A\u672C\u4FDD\u5B58\u7684\u6253\u5F00\u8BB0\u5F55\u3002");
+        window.alert(result.visitedFound ? `\u5DF2\u68C0\u67E5 ${result.checked} \u9875\uFF0C\u6709\u90E8\u5206\u5DF2\u6D4F\u89C8\u4E3B\u9898\uFF0C\u4F46\u6CA1\u6709\u660E\u786E\u7684\u5DF2\u6D4F\u89C8/\u672A\u6D4F\u89C8\u4EA4\u754C\u3002` : `\u5DF2\u68C0\u67E5 ${result.checked} \u9875\uFF0C\u672C\u680F\u76EE\u672A\u5339\u914D\u5230\u811A\u672C\u4FDD\u5B58\u7684\u6D4F\u89C8\u8BB0\u5F55\uFF08\u73B0\u6709 ${historyIds.length} \u6761\uFF09\u3002
+\u8BF7\u786E\u8BA4\u5F53\u524D\u680F\u76EE\u5305\u542B\u4EE5\u524D\u8BBF\u95EE\u7684\u4E3B\u9898\uFF1B\u82E5\u53EA\u68C0\u67E5\u4E86 1 \u9875\uFF0C\u53EF\u80FD\u662F\u5206\u9875\u94FE\u63A5\u5C1A\u65E0\u6CD5\u8BC6\u522B\u3002`);
       } else {
         window.alert("\u65E0\u6CD5\u8BC6\u522B\u5F53\u524D\u5217\u8868\u7684\u5206\u9875\u4F4D\u7F6E\u3002");
       }
