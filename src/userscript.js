@@ -2094,7 +2094,15 @@ function addBatchProgressLocatorButton(host, prependButton = false) {
   button.addEventListener('mouseleave', () => {
     if (!batchProgressScanState) button.style.background = '#6d7d87';
   });
-  button.addEventListener('click', () => void locateCurrentBatchProgress(button));
+  button.addEventListener('click', () => {
+    // During a pending hydration handoff, a manual click means stop.
+    if (!batchProgressScanState && !modernBoardResumeStarted && readPendingModernBoardResume()) {
+      clearPendingModernBoardResume();
+      refreshBatchProgressLocatorButton(button);
+      return;
+    }
+    void locateCurrentBatchProgress(button);
+  });
   refreshBatchProgressLocatorButton(button);
   const batchWrapper = document.getElementById(BATCH_SPLIT_ID);
   const isJavclubToolbar = isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me']);
@@ -2345,6 +2353,7 @@ function observeModernBoard() {
         setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
       }
     }
+    resumeModernBoardProgressIfReady();
   };
   const schedule = () => {
     if (timer !== null) window.clearTimeout(timer);
@@ -2405,5 +2414,16 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   }
   startAutomaticLegacyHistoryMigration();
   observeModernBoard();
+  if (/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname) && readPendingModernBoardResume()) {
+    // The page might already be hydrated at document-idle. Otherwise the
+    // MutationObserver resumes as soon as React renders the list.
+    resumeModernBoardProgressIfReady();
+    window.setTimeout(() => {
+      if (!modernBoardResumeStarted && readPendingModernBoardResume()) {
+        clearPendingModernBoardResume();
+        window.alert('浏览器已打开该分页，但 15 秒内仍未显示可识别的主题。自动定位已停止，请检查登录或网站验证。');
+      }
+    }, 15000);
+  }
   }
 }
