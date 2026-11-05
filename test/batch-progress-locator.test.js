@@ -6,6 +6,7 @@ import {
   firstBatchListPageUrl,
   nextBatchListPageUrl,
   scanBatchProgressPages,
+  rememberedBatchProgressUrl,
 } from '../src/batch-progress-locator.js';
 
 function agaghhhPage(tids, nextPage = 0) {
@@ -206,4 +207,77 @@ test('从已解析分页读取下一页时使用正确的 base URL', async () =>
   } finally {
     dom.window.close();
   }
+});
+
+
+test('JavClub 纯数字分页没有下一页按钮时仍能追踪下一页', async () => {
+  const root = 'https://javclub.me/category/jav-censored/';
+  const second = root + 'page/2/';
+  const firstHtml = hdblogPage([1013749, 1013748]).replace('</main>',
+    '<nav class="pagination"><span class="current">1</span>'
+    + '<a class="page-numbers" href="/category/jav-censored/page/2/">2</a>'
+    + '<a class="page-numbers" href="/category/jav-censored/page/3/">3</a>'
+    + '</nav></main>');
+  const secondHtml = hdblogPage([1013747, 1013746, 1013745]);
+  const dom = new JSDOM(firstHtml, { url: root });
+  try {
+    assert.equal(nextBatchListPageUrl(dom.window.document), second);
+    const result = await scanBatchProgressPages({
+      startUrl: root,
+      currentUrl: root,
+      currentDocument: dom.window.document,
+      historyIds: ['post:1013747', 'post:1013746'],
+      loadPage: async (url) => {
+        assert.equal(url, second);
+        return secondHtml;
+      },
+      collectThreads: collectForumThreadLinks,
+      getId: hdblogId,
+      getScope: hdblogScope,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, second);
+    assert.equal(result.opened, 2);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('JavClub 不会把其他分类的数字分页当成下一页', () => {
+  const root = 'https://javclub.me/category/jav-censored/';
+  const dom = new JSDOM('<nav class="pagination">'
+    + '<a class="page-numbers" href="/category/jav-uncensored/page/2/">2</a>'
+    + '</nav>', { url: root });
+  try {
+    assert.equal(nextBatchListPageUrl(dom.window.document), '');
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('旧 hdblog.me 进度图在 javclub.me 仍可用于同一栏目', () => {
+  const current = 'https://javclub.me/tag/fc2-ppv/';
+  const legacy = 'https://hdblog.me/tag/fc2-ppv/';
+  const map = {
+    [legacy]: { url: 'https://hdblog.me/tag/fc2-ppv/page/36/', updatedAt: 123 },
+  };
+  const scope = (url) => {
+    const parsed = new URL(url);
+    parsed.pathname = parsed.pathname.replace(/\/page\/\d+\/?$/, '/');
+    return parsed.href;
+  };
+  assert.equal(
+    rememberedBatchProgressUrl(map, current, current, scope),
+    'https://javclub.me/tag/fc2-ppv/page/36/'
+  );
+  assert.equal(
+    rememberedBatchProgressUrl(map, 'https://javclub.me/category/other/', current, scope),
+    ''
+  );
+  assert.equal(
+    rememberedBatchProgressUrl({
+      [legacy]: { url: 'https://hdblog.me/category/other/page/6/' },
+    }, current, current, scope),
+    ''
+  );
 });
