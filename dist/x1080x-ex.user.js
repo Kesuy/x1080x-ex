@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.37
+// @version      1.10.38
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -5232,6 +5232,29 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       return "";
     }
   }
+  function inferModernBoardNextUrl(document2, pageUrl) {
+    try {
+      const url = new URL(pageUrl);
+      if (!/^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) return "";
+      if (!document2?.querySelector('article.thread-row:not(.is-sticky) a.resource-title[href*="/resources/"]')) {
+        return "";
+      }
+      const current = url.searchParams.get("page") || "1";
+      if (!/^[1-9]\d{0,5}$/.test(current)) return "";
+      const currentPage = Number(current);
+      if (!Number.isSafeInteger(currentPage)) return "";
+      const nextControl = document2.querySelector(
+        '.pg button[aria-label="\u4E0B\u4E00\u9875"], .pg button[aria-label="\u4E0B\u4E00\u9801"], .pg button[aria-label="Next page" i], .pg button[title="\u4E0B\u4E00\u9875"], .pg button[title="Next page" i], .pagination button[aria-label="\u4E0B\u4E00\u9875"], .pagination button[aria-label="Next page" i]'
+      );
+      if (nextControl && (nextControl.disabled || nextControl.getAttribute("aria-disabled") === "true")) {
+        return "";
+      }
+      url.searchParams.set("page", String(currentPage + 1));
+      return url.href;
+    } catch {
+      return "";
+    }
+  }
   function parseBatchListPage(html, pageUrl, document2) {
     const Parser = document2?.defaultView?.DOMParser || globalThis.DOMParser;
     if (!Parser) throw new Error("\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u89E3\u6790\u5206\u9875\u5185\u5BB9");
@@ -5282,8 +5305,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         try {
           html = await loadPage(normalized);
         } catch (error) {
-          if (arrivedViaInferredLink && checked > 0 && /\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
-            return candidate ? { ...candidate, inspected: checked, approximate: true } : { status: "end", checked, visitedFound };
+          if (arrivedViaInferredLink && checked > 0) {
+            if (candidate) {
+              return { ...candidate, inspected: checked, approximate: true };
+            }
+            if (/\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
+              return { status: "end", checked, visitedFound };
+            }
           }
           throw error;
         }
@@ -5331,7 +5359,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       previous = { ratio, url: normalized, checked, opened, unopened };
       let next = nextBatchListPageUrl(page, normalized);
       const inferred = !next;
-      if (!next) next = inferWordPressArchiveNextUrl(page, normalized);
+      if (!next) next = inferModernBoardNextUrl(page, normalized) || inferWordPressArchiveNextUrl(page, normalized);
       if (!next || next === normalized || getScope(next) !== scope || seen.has(next)) {
         return candidate ? { ...candidate, inspected: checked, approximate: true } : { status: "end", checked, visitedFound };
       }
@@ -8122,7 +8150,9 @@ ${failures.join("\n")}
       const rememberedUrl = batchProgressTarget();
       const matchingSavedProgress = rememberedUrl && batchProgressScopeKey(rememberedUrl) === batchProgressScopeKey(firstUrl) && rememberedUrl !== firstUrl ? rememberedUrl : "";
       let savedPageReadable = false;
-      const currentPageStart = config.kind === "hdblog" && /^\/(?:category|tag)\/.+\/page\/\d+\/?$/i.test(location.pathname) ? location.href : firstUrl;
+      const onLaterJavclubPage = config.kind === "hdblog" && /^\/(?:category|tag)\/.+\/page\/\d+\/?$/i.test(location.pathname);
+      const onLaterModernBoardPage = config.kind === "agaghhh" && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname) && /^[2-9]\d*$/.test(new URL(location.href).searchParams.get("page") || "");
+      const currentPageStart = onLaterJavclubPage || onLaterModernBoardPage ? location.href : firstUrl;
       const plans = [
         { startUrl: currentPageStart, maxPages: 120, saved: false },
         ...currentPageStart !== firstUrl ? [{ startUrl: firstUrl, maxPages: 120, saved: false }] : [],
