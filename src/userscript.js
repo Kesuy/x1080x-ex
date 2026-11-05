@@ -582,6 +582,11 @@ function batchProgressScopeKey(value = location.href) {
     }
     url.searchParams.delete('paged');
     url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
+    // WordPress accepts both /category/name and /category/name/.
+    // Normalize both to the SAME scope before comparing against /page/N/.
+    if (/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/?$/i.test(url.pathname)) {
+      url.pathname = url.pathname.replace(/\/+$/, '') + '/';
+    }
     url.searchParams.sort();
     return url.href;
   } catch {
