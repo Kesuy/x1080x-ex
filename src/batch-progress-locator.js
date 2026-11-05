@@ -138,6 +138,25 @@ export function rememberedBatchProgressUrl(map, scope, currentUrl, getScope) {
   return '';
 }
 
+// JavClub may omit next-page links in archive markup. Only category/tag
+// pages get a guessed WordPress /page/N/ URL; the scanner validates each page.
+export function inferWordPressArchiveNextUrl(document, pageUrl) {
+  if (!document?.querySelector('main#genesis-content article.entry .entry-title a[href]')) return '';
+  try {
+    const url = new URL(pageUrl);
+    if (!/^(?:javclub\.me|hdblog\.me)$/i.test(url.hostname)) return '';
+    const basePath = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
+    if (!/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/?$/i.test(basePath)) return '';
+    const number = Number.parseInt(url.pathname.match(/\/page\/(\d+)\/?$/i)?.[1] || '1', 10);
+    if (!Number.isSafeInteger(number) || number < 1) return '';
+    url.pathname = basePath.replace(/\/?$/, '/') + 'page/' + (number + 1) + '/';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
 export function parseBatchListPage(html, pageUrl, document) {
   const Parser = document?.defaultView?.DOMParser || globalThis.DOMParser;
   if (!Parser) throw new Error('浏览器不支持解析分页内容');
@@ -173,7 +192,9 @@ export async function scanBatchProgressPages({
   let checked = 0;
   let visitedFound = false;
   let candidate = null;
+  let arrivedViaInferredLink = false;
   const seen = new Set();
+  const seenThreadSets = new Set();
 
   while (pageUrl && checked < maxPages) {
     if (cancelled()) return { status: 'cancelled', checked };
@@ -185,7 +206,19 @@ export async function scanBatchProgressPages({
     if (normalized === currentUrl) {
       page = currentDocument;
     } else {
-      const html = await loadPage(normalized);
+      let html;
+      try {
+        html = await loadPage(normalized);
+      } catch (error) {
+        // A guessed /page/N/ can go beyond the archive end (404/410).
+        if (arrivedViaInferredLink && checked > 0
+          && /\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
+          return candidate
+            ? { ...candidate, inspected: checked, approximate: true }
+            : { status: 'end', checked, visitedFound };
+        }
+        throw error;
+      }
       if (cancelled()) return { status: 'cancelled', checked };
       page = parseBatchListPage(html, normalized, currentDocument);
     }
@@ -194,6 +227,14 @@ export async function scanBatchProgressPages({
     if (!threads.length) {
       return { status: 'unreadable', checked, pageUrl: normalized };
     }
+    // Some servers redirect missing page numbers back to the same articles.
+    const signature = threads.map((thread) => thread.url).join('\n');
+    if (seenThreadSets.has(signature)) {
+      return candidate
+        ? { ...candidate, inspected: checked, approximate: true }
+        : { status: 'end', checked, visitedFound, repeatedPage: true };
+    }
+    seenThreadSets.add(signature);
     const opened = threads.filter((thread) => {
       const ids = typeof getIds === 'function'
         ? getIds(thread)
@@ -232,13 +273,16 @@ export async function scanBatchProgressPages({
     }
     previous = { ratio, url: normalized, checked, opened, unopened };
 
-    const next = nextBatchListPageUrl(page, normalized);
+    let next = nextBatchListPageUrl(page, normalized);
+    const inferred = !next;
+    if (!next) next = inferWordPressArchiveNextUrl(page, normalized);
     if (!next || next === normalized || getScope(next) !== scope || seen.has(next)) {
       return candidate
         ? { ...candidate, inspected: checked, approximate: true }
         : { status: 'end', checked, visitedFound };
     }
     pageUrl = next;
+    arrivedViaInferredLink = inferred;
   }
   if (candidate) return { ...candidate, inspected: checked, approximate: true };
   return { status: checked >= maxPages ? 'limit' : 'end', checked, visitedFound };
