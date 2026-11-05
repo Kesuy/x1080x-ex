@@ -1898,11 +1898,11 @@ async function locateCurrentBatchProgress(button) {
       && batchProgressScopeKey(rememberedUrl) === batchProgressScopeKey(firstUrl)
       && rememberedUrl !== firstUrl ? rememberedUrl : '';
     let savedPageReadable = false;
-    // A short scan around the last recorded batch cursor can find older
-    // history that the first 120 archive pages do not contain.
+    // First check the actual listing for a boundary. Only probe older saved
+    // progress when the current archive scan cannot find a reliable match.
     const plans = [
-      ...(matchingSavedProgress ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []),
       { startUrl: firstUrl, maxPages: 120, saved: false },
+      ...(matchingSavedProgress ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []),
     ];
     let result = null;
     for (const plan of plans) {
