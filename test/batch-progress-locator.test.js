@@ -207,3 +207,61 @@ test('从已解析分页读取下一页时使用正确的 base URL', async () =>
     dom.window.close();
   }
 });
+test('JavClub 数字分页：没有下一页按钮时仍继续查到已有历史的第三页', async () => {
+  const base = 'https://javclub.me/category/jav-censored/';
+  const urls = [base, base + 'page/2/', base + 'page/3/'];
+  const page = (posts, n, hasNext) => '<!doctype html><html><head></head><body>' +
+    '<main id="genesis-content">' +
+    posts.map((id) => '<article class="entry"><header class="entry-header"><h2 class="entry-title">' +
+      '<a href="/' + id + '.html">主题 ' + id + '</a></h2></header></article>').join('') +
+    '</main><nav class="navigation pagination"><div class="nav-links">' +
+    '<span class="page-numbers current" aria-current="page">' + n + '</span>' +
+    (hasNext ? '<a class="page-numbers" href="' + urls[n] + '">' + (n + 1) + '</a>' : '') +
+    '</div></nav></body></html>';
+  const pages = new Map([
+    [urls[0], page([3002, 3001], 1, true)],
+    [urls[1], page([3000, 2999], 2, true)],
+    [urls[2], page([2998, 2997], 3, false)],
+  ]);
+  const dom = new JSDOM(pages.get(base), { url: base });
+  const fetched = [];
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: base,
+      currentUrl: base,
+      currentDocument: dom.window.document,
+      historyIds: ['post:2998', 'post:2997'],
+      loadPage: async (url) => { fetched.push(url); return pages.get(url); },
+      collectThreads: collectForumThreadLinks,
+      getId: hdblogId,
+      getScope: hdblogScope,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, urls[2]);
+    assert.deepEqual(fetched, [urls[1], urls[2]]);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('JavClub 支持多种主题的下一页文字，但不凭空猜测分页 URL', () => {
+  const base = 'https://javclub.me/category/jav-uncensored/';
+  for (const label of ['Next Page »', 'Older Entries →', '下一頁', '› Next']) {
+    const dom = new JSDOM('<nav class="navigation pagination"><div class="nav-links">' +
+      '<a href="/category/jav-uncensored/page/2/">' + label + '</a></div></nav>', { url: base });
+    try {
+      assert.equal(nextBatchListPageUrl(dom.window.document), base + 'page/2/', label);
+    } finally {
+      dom.window.close();
+    }
+  }
+
+  const dom = new JSDOM('<nav class="navigation pagination"><span class="current">1</span>' +
+    '<a href="/category/jav-uncensored/page/3/">3</a></nav>', { url: base });
+  try {
+    assert.equal(nextBatchListPageUrl(dom.window.document), '',
+      '缺少连续分页时不合成一个未证实的 URL');
+  } finally {
+    dom.window.close();
+  }
+});
