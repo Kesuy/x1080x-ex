@@ -33,8 +33,8 @@ test('stop automatic page walking on hop limit and repeated page', () => {
     assert.equal(plan.status, 'ready');
   }
   assert.equal(plan.state.visitedUrls.length, MODERN_BOARD_RESUME_MAX_HOPS);
-  assert.equal(nextModernBoardResumeState(board + '?page=20', page9, plan.state).status, 'limit');
-  assert.equal(nextModernBoardResumeState(board + '?page=20', board + '?page=21', plan.state).status, 'limit');
+  assert.equal(nextModernBoardResumeState(board + '?page=20', page9, plan.state, 123480).status, 'limit');
+  assert.equal(nextModernBoardResumeState(board + '?page=20', board + '?page=21', plan.state, 123480).status, 'limit');
 });
 
 test('pending dynamic browser resume expires and cannot attach to a different page', () => {
