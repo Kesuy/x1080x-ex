@@ -1916,6 +1916,7 @@ function resumeModernBoardProgressIfReady() {
 async function locateCurrentBatchProgress(button, { resumed = false } = {}) {
   if (batchProgressScanState) {
     batchProgressScanState.cancelled = true;
+    clearPendingModernBoardResume();
     renderCompactBatchControl(button, 'locator', '正在停止查找…', '',
       '定位浏览进度：正在停止跨页查找…');
     return;
@@ -1928,6 +1929,8 @@ async function locateCurrentBatchProgress(button, { resumed = false } = {}) {
   }
 
   const scan = { cancelled: false };
+  let handedOffToHydratedPage = false;
+  const pendingResume = resumed ? readPendingModernBoardResume() : null;
   batchProgressScanState = scan;
   button.style.background = '#b36b22';
   renderCompactBatchControl(button, 'locator', '正在查找分页（再次点击停止）', '',
@@ -1952,10 +1955,13 @@ async function locateCurrentBatchProgress(button, { resumed = false } = {}) {
       ? location.href : firstUrl;
     const plans = [
       { startUrl: currentPageStart, maxPages: 120, saved: false },
-      ...(currentPageStart !== firstUrl ? [{ startUrl: firstUrl, maxPages: 120, saved: false }] : []),
-      ...(matchingSavedProgress ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []),
+      ...(!resumed && currentPageStart !== firstUrl
+        ? [{ startUrl: firstUrl, maxPages: 120, saved: false }] : []),
+      ...(!resumed && matchingSavedProgress
+        ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []),
     ];
     let result = null;
+    let firstUnreadable = null;
     for (const plan of plans) {
       const attempt = await scanBatchProgressPages({
         startUrl: plan.startUrl,
@@ -1978,15 +1984,23 @@ async function locateCurrentBatchProgress(button, { resumed = false } = {}) {
       });
       if (scan.cancelled || attempt.status === 'cancelled') return;
       result = attempt;
+      if (attempt.status === 'unreadable' && !firstUnreadable) firstUnreadable = attempt;
       if (attempt.status === 'found') break;
       // An obsolete saved page should never block the normal scan.
+    }
+    // Do not lose an actual unreadable page just because a later fallback
+    // plan ended without a match.
+    if (firstUnreadable && result?.status !== 'found' && config.modern) {
+      result = firstUnreadable;
     }
     if (!result) return;
 
     if (scan.cancelled || result.status === 'cancelled') return;
     if (result.status === 'found') {
-      renderCompactBatchControl(button, 'locator', '已定位到历史交界', '',
-        '已找到已浏览与未浏览主题的相邻分页，正在跳转或滚动定位。');
+      renderCompactBatchControl(button, 'locator', '已定位到历史候选', '',
+        result.approximate
+          ? '已找到包含已浏览与未浏览主题的参考页；后续分页未能完成验证，请核对实际交界。'
+          : '已找到已浏览与未浏览主题的相邻分页，正在跳转或滚动定位。');
       rememberBatchProgressTarget(result.url);
       if (result.url !== location.href) window.location.assign(result.url);
       else {
@@ -2011,7 +2025,29 @@ async function locateCurrentBatchProgress(button, { resumed = false } = {}) {
       return;
     }
     if (result.status === 'unreadable') {
-      window.alert(`第 ${result.checked + 1} 页未读取到主题（可能需要登录或触发了网站验证），不能可靠定位浏览进度。\n${result.pageUrl}`);
+      // Next.js sometimes returns only a shell to background fetch, while a
+      // normal browser navigation hydrates the real topic list. Recover in
+      // the same tab with bounded automatic continuation; never jump off-board.
+      if (config.modern && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) {
+        const next = nextModernBoardResumeState(location.href, result.pageUrl, pendingResume);
+        if (next.status === 'ready') {
+          try {
+            window.sessionStorage?.setItem(MODERN_BOARD_RESUME_KEY, JSON.stringify(next.state));
+            handedOffToHydratedPage = true;
+            renderCompactBatchControl(button, 'locator', '正在打开动态分页…', '',
+              '后台未能解析该分页。将由浏览器正常打开目标页，等待真实主题列表加载后继续定位。');
+            window.location.assign(next.state.targetUrl);
+            return;
+          } catch {
+            handedOffToHydratedPage = false;
+            clearPendingModernBoardResume();
+          }
+        } else if (next.status === 'limit') {
+          window.alert('已达到动态分页恢复的安全上限（12页）。定位已停止，避免自动跳页循环。可以从更接近浏览进度的分页重新开始。');
+          return;
+        }
+      }
+      window.alert(`第 ${result.checked + 1} 页未读取到主题（可能是网站仅返回动态页面框架，或需要登录/验证），无法继续后台扫描。\n${result.pageUrl}`);
     } else if (result.status === 'limit') {
       window.alert('已连续检查 120 页，仍未找到已打开与未打开主题的交界处。可以在更接近历史进度的分页再次定位。');
     } else if (result.status === 'end') {
@@ -2026,6 +2062,7 @@ async function locateCurrentBatchProgress(button, { resumed = false } = {}) {
       window.alert(`定位浏览进度失败：${error?.message || error}。请确认两个站点已登录且分页可以正常打开。`);
     }
   } finally {
+    if (!handedOffToHydratedPage) clearPendingModernBoardResume();
     if (batchProgressScanState === scan) batchProgressScanState = null;
     refreshBatchProgressLocatorButton(button);
   }
