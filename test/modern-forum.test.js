@@ -10,6 +10,7 @@ import {
 import {
   firstBatchListPageUrl,
   nextBatchListPageUrl,
+  inferModernBoardNextUrl,
   scanBatchProgressPages,
 } from '../src/batch-progress-locator.js';
 
@@ -107,4 +108,127 @@ test('modern progress locator scans button pages and returns mixed read/unread b
   assert.deepEqual(pages, [boardUrl + '?page=2']);
   assert.equal(result.status, 'found');
   assert.equal(result.url, boardUrl + '?page=2');
+});
+
+
+const reportedBoard = 'https://1080xin.com/boards/7RHPO2w4jFUYiDhDsxz0wE';
+
+function unlinkedBoardPage(ids) {
+  return '<!doctype html><html><head></head><body><div class="thread-list">'
+    + ids.map((id) => '<article class="thread-row"><a class="resource-title" href="/resources/'
+      + id + '">主题 ' + id + '</a></article>').join('')
+    + '</div></body></html>';
+}
+
+test('reported x1080x board infers ?page=2 without a recognized next button', async () => {
+  const page2 = reportedBoard + '?page=2';
+  const first = new JSDOM(unlinkedBoardPage(['FRESH1', 'FRESH2']), { url: reportedBoard });
+  const fetched = [];
+  try {
+    assert.equal(nextBatchListPageUrl(first.window.document), '');
+    assert.equal(inferModernBoardNextUrl(first.window.document, reportedBoard), page2);
+    const result = await scanBatchProgressPages({
+      startUrl: reportedBoard,
+      currentUrl: reportedBoard,
+      currentDocument: first.window.document,
+      historyIds: ['resource:VISITED2'],
+      loadPage: async (url) => {
+        fetched.push(url);
+        assert.equal(url, page2);
+        return unlinkedBoardPage(['VISITED2', 'UNREAD2']);
+      },
+      collectThreads: collectForumThreadLinks,
+      getId: (url) => 'resource:' + new URL(url).pathname.split('/').at(-1),
+      getScope: (url) => new URL(url).pathname,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, page2);
+    assert.deepEqual(fetched, [page2]);
+  } finally {
+    first.window.close();
+  }
+});
+
+test('reported x1080x ?page=2 continues to ?page=3 while preserving category filters', () => {
+  const page2 = reportedBoard + '?category_id=FC2&page=2';
+  const dom = new JSDOM(unlinkedBoardPage(['P2']), { url: page2 });
+  try {
+    assert.equal(inferModernBoardNextUrl(dom.window.document, page2),
+      reportedBoard + '?category_id=FC2&page=3');
+    assert.equal(firstBatchListPageUrl(page2, 'agaghhh'),
+      reportedBoard + '?category_id=FC2');
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('modern board explicit disabled next button prevents speculative further pages', () => {
+  const dom = new JSDOM('<div class="pg"><button aria-label="下一页" disabled>下一页</button></div>'
+    + unlinkedBoardPage(['READ']), { url: reportedBoard });
+  try {
+    assert.equal(inferModernBoardNextUrl(dom.window.document, reportedBoard), '');
+    dom.window.document.querySelector('button').disabled = false;
+    assert.equal(inferModernBoardNextUrl(dom.window.document, reportedBoard),
+      reportedBoard + '?page=2');
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('modern board speculative page 404 stops normally and cannot loop forever', async () => {
+  const dom = new JSDOM(unlinkedBoardPage(['X1', 'X2']), { url: reportedBoard });
+  let calls = 0;
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: reportedBoard,
+      currentUrl: reportedBoard,
+      currentDocument: dom.window.document,
+      historyIds: ['resource:OLDER'],
+      loadPage: async () => { calls += 1; throw new Error('HTTP 404'); },
+      collectThreads: collectForumThreadLinks,
+      getId: (url) => 'resource:' + new URL(url).pathname.split('/').at(-1),
+      getScope: (url) => new URL(url).pathname,
+    });
+    assert.equal(result.status, 'end');
+    assert.equal(result.checked, 1);
+    assert.equal(calls, 1);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('modern board speculative page repeating previous topics ends without false progress', async () => {
+  const html = unlinkedBoardPage(['AAA', 'BBB']);
+  const dom = new JSDOM(html, { url: reportedBoard });
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: reportedBoard,
+      currentUrl: reportedBoard,
+      currentDocument: dom.window.document,
+      historyIds: ['resource:NEVER'],
+      loadPage: async () => html,
+      collectThreads: collectForumThreadLinks,
+      getId: (url) => 'resource:' + new URL(url).pathname.split('/').at(-1),
+      getScope: (url) => new URL(url).pathname,
+    });
+    assert.equal(result.status, 'end');
+    assert.equal(result.repeatedPage, true);
+    assert.equal(result.checked, 1);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('modern board inference rejects unrelated routes and empty or invalid pagination data', () => {
+  const doc = new JSDOM(unlinkedBoardPage(['ID']), { url: reportedBoard });
+  const empty = new JSDOM('<article class="thread-row"></article>', { url: reportedBoard });
+  try {
+    assert.equal(inferModernBoardNextUrl(doc.window.document, reportedBoard + '?page=0'), '');
+    assert.equal(inferModernBoardNextUrl(doc.window.document, reportedBoard + '?page=abc'), '');
+    assert.equal(inferModernBoardNextUrl(doc.window.document, 'https://1080xin.com/resources/id?page=1'), '');
+    assert.equal(inferModernBoardNextUrl(empty.window.document, reportedBoard), '');
+  } finally {
+    doc.window.close();
+    empty.window.close();
+  }
 });
