@@ -387,6 +387,12 @@ function readBatchOpenHistory() {
   if (!config || typeof GM_getValue !== 'function') return [];
   const rawStored = GM_getValue(config.historyKey, []);
   const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
+  // Earlier HDBlog versions could save a whole permalink rather than post:ID.
+  // Keep the original key untouched, but recognize its numeric ID on JavClub.
+  const hdblogLegacyIds = config.kind === 'hdblog' && Array.isArray(stored)
+    ? stored.map((value) => String(value).match(/^url:\/(\d+)(?:\/|\.html(?:[?#]|$))/i)?.[1])
+      .filter(Boolean).map((id) => 'post:' + id)
+    : [];
   // Previous beta releases temporarily saved modern resource IDs in the old key.
   const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
   const aliases = config.kind === 'agaghhh'
@@ -398,6 +404,7 @@ function readBatchOpenHistory() {
     : [];
   const values = [
     ...(Array.isArray(stored) ? stored : []),
+    ...hdblogLegacyIds,
     ...(Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : []),
     ...(Array.isArray(aliases) ? aliases : []),
     ...resolvedAliases,
@@ -579,6 +586,10 @@ function batchProgressScopeKey(value = location.href) {
       url.searchParams.sort();
       return legacyOrigin + url.pathname + url.search;
     }
+    if (!isAllowedHost(url.hostname, ['javclub.me', 'hdblog.me'])) return '';
+    // Use one logical scope after the HDBlog -> JavClub domain migration.
+    url.hostname = 'javclub.me';
+    url.protocol = 'https:';
     url.searchParams.delete('paged');
     url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
     url.searchParams.sort();
@@ -598,11 +609,27 @@ function readBatchProgressMap() {
 function batchProgressTarget() {
   const scope = batchProgressScopeKey();
   if (!scope) return '';
-  const entry = readBatchProgressMap()[scope];
-  if (typeof entry?.url !== 'string') return '';
-  return batchOpenHistoryConfig()?.kind === 'agaghhh'
-    ? toAgaghhhPrimaryUrl(entry.url)
-    : entry.url;
+  const map = readBatchProgressMap();
+  const kind = batchOpenHistoryConfig()?.kind;
+  const entries = [map[scope]];
+  if (kind === 'hdblog') {
+    // Existing users may have saved their progress when the domain was hdblog.me.
+    entries.push(map[scope.replace(/^https:\/\/javclub\.me/i, 'https://hdblog.me')]);
+  }
+  const entry = entries.filter((item) => typeof item?.url === 'string')
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0];
+  if (!entry) return '';
+  if (kind === 'agaghhh') return toAgaghhhPrimaryUrl(entry.url);
+  try {
+    const target = new URL(entry.url, location.href);
+    if (!isAllowedHost(target.hostname, ['javclub.me', 'hdblog.me'])) return '';
+    target.hostname = currentHost();
+    target.protocol = location.protocol;
+    // Never offer a saved progress link from a different category/search list.
+    return batchProgressScopeKey(target.href) === scope ? target.href : '';
+  } catch {
+    return '';
+  }
 }
 
 function startAutomaticLegacyHistoryMigration() {
@@ -1928,12 +1955,20 @@ async function locateCurrentBatchProgress(button) {
     }
     if (result.status === 'unreadable') {
       window.alert(`第 ${result.checked + 1} 页未读取到主题（可能需要登录或触发了网站验证），不能可靠定位浏览进度。\n${result.pageUrl}`);
-    } else if (result.status === 'limit') {
-      window.alert('已检查前 120 页，仍未找到已打开与未打开主题的交界处。请在更接近历史进度的列表页尝试，或增加扫描上限。');
-    } else if (result.status === 'end') {
-      window.alert(result.visitedFound
-        ? '已检查完能访问的分页，没有找到明确的已打开/未打开分界页。'
-        : '已检查完能访问的分页，但没有在这些主题中找到脚本保存的打开记录。');
+    } else if (result.status === 'limit' || result.status === 'end') {
+      const savedTarget = batchProgressTarget();
+      const description = result.status === 'limit'
+        ? '已检查前 120 页，尚未找到浏览进度分界。'
+        : result.visitedFound
+          ? '已检查 ' + result.checked + ' 页，但没有找到明确的已打开/未打开分界。'
+          : '已检查 ' + result.checked + ' 页，未匹配到脚本记录。可能是分页提前结束、历史记录属于其他分类，或旧记录采用不同的网址格式。';
+      if (savedTarget && savedTarget !== location.href) {
+        if (window.confirm(description + '\n\n找到了本列表之前保存的批量打开进度。是否跳转到该位置？\n' + savedTarget)) {
+          window.location.assign(savedTarget);
+        }
+      } else {
+        window.alert(description + '\n请确认当前分类正确，以及列表底部的下一页能正常打开。');
+      }
     } else {
       window.alert('无法识别当前列表的分页位置。');
     }
