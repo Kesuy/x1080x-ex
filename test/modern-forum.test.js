@@ -263,7 +263,7 @@ test('x1080x 页2已有稀疏浏览记录、第9页返回空壳时保留之前�
   const base = 'https://1080xin.com/boards/7RHPO2w4jFUYiDhDsxz0wE';
   const makePage = (num) => unlinkedBoardPage(
     Array.from({ length: 20 }, (_, i) => num === 2 && i === 0
-      ? 'VISITED-201' : 'UNREAD-' + num + '-' + i));
+      ? 'VISITED201' : 'UNREAD' + num + 'X' + i));
   const start = new JSDOM(makePage(1), { url: base });
   const fetched = [];
   try {
@@ -271,7 +271,7 @@ test('x1080x 页2已有稀疏浏览记录、第9页返回空壳时保留之前�
       startUrl: base,
       currentUrl: base,
       currentDocument: start.window.document,
-      historyIds: ['resource:VISITED-201'],
+      historyIds: ['resource:VISITED201'],
       loadPage: async (url) => {
         fetched.push(url);
         const n = Number(new URL(url).searchParams.get('page'));
