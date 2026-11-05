@@ -232,3 +232,28 @@ test('modern board inference rejects unrelated routes and empty or invalid pagin
     empty.window.close();
   }
 });
+
+
+test('modern board keeps a found mixed page if the inferred next request fails', async () => {
+  const first = new JSDOM(unlinkedBoardPage(['READ1', 'READ2', 'UNREAD1']),
+    { url: reportedBoard });
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: reportedBoard,
+      currentUrl: reportedBoard,
+      currentDocument: first.window.document,
+      historyIds: ['resource:READ1', 'resource:READ2'],
+      loadPage: async () => { throw new Error('network unavailable'); },
+      collectThreads: collectForumThreadLinks,
+      getId: (url) => 'resource:' + new URL(url).pathname.split('/').at(-1),
+      getScope: (url) => new URL(url).pathname,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, reportedBoard);
+    assert.equal(result.approximate, true);
+    assert.equal(result.opened, 2);
+    assert.equal(result.unopened, 1);
+  } finally {
+    first.window.close();
+  }
+});
