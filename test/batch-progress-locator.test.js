@@ -412,3 +412,21 @@ test('JavClub 分页推算只允许真实文章归档、不能跨域或构造无
     finally { empty.window.close(); }
   } finally { dom.window.close(); }
 });
+
+
+test('JavClub 兼容无尾斜杠的旧版进度索引', () => {
+  const scope = 'https://javclub.me/category/av-censored/';
+  const olderKey = 'https://javclub.me/category/av-censored';
+  const result = rememberedBatchProgressUrl({
+    [olderKey]: {
+      url: 'https://javclub.me/category/av-censored/page/36/',
+      updatedAt: 100,
+    },
+  }, scope, scope, (value) => {
+    const url = new URL(value);
+    url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
+    url.pathname = url.pathname.replace(/\/?$/, '/');
+    return url.href;
+  });
+  assert.equal(result, 'https://javclub.me/category/av-censored/page/36/');
+});
