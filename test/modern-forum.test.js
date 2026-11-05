@@ -257,3 +257,59 @@ test('modern board keeps a found mixed page if the inferred next request fails',
     first.window.close();
   }
 });
+
+
+test('x1080x 页2已有稀疏浏览记录、第9页返回空壳时保留之前的定位候选', async () => {
+  const base = 'https://1080xin.com/boards/7RHPO2w4jFUYiDhDsxz0wE';
+  const makePage = (num) => unlinkedBoardPage(
+    Array.from({ length: 20 }, (_, i) => num === 2 && i === 0
+      ? 'VISITED-201' : 'UNREAD-' + num + '-' + i));
+  const start = new JSDOM(makePage(1), { url: base });
+  const fetched = [];
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: base,
+      currentUrl: base,
+      currentDocument: start.window.document,
+      historyIds: ['resource:VISITED-201'],
+      loadPage: async (url) => {
+        fetched.push(url);
+        const n = Number(new URL(url).searchParams.get('page'));
+        return n === 9 ? '<!doctype html><html><head></head><body><div id="__next"></div></body></html>'
+          : makePage(n);
+      },
+      collectThreads: collectForumThreadLinks,
+      getId: (url) => 'resource:' + new URL(url).pathname.split('/').at(-1),
+      getScope: (url) => new URL(url).pathname,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, base + '?page=2');
+    assert.equal(result.checked, 2, '候选的页码应为第2页');
+    assert.equal(result.inspected, 8, '后续检查过8页');
+    assert.equal(result.approximate, true);
+    assert.equal(result.unreadablePageUrl, base + '?page=9');
+    assert.equal(fetched.length, 8);
+  } finally {
+    start.window.close();
+  }
+});
+
+test('只有未浏览主题且后续页为空时，不能凭空伪造浏览进度候选', async () => {
+  const url = reportedBoard;
+  const dom = new JSDOM(unlinkedBoardPage(['UNREAD']), { url });
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: url, currentUrl: url, currentDocument: dom.window.document,
+      historyIds: ['resource:NOT_ON_THIS_BOARD'],
+      loadPage: async () => '<!doctype html><html><head></head><body><div id="__next"></div></body></html>',
+      collectThreads: collectForumThreadLinks,
+      getId: (link) => 'resource:' + new URL(link).pathname.split('/').at(-1),
+      getScope: (link) => new URL(link).pathname,
+    });
+    assert.equal(result.status, 'unreadable');
+    assert.equal(result.checked, 1);
+    assert.equal(result.pageUrl, url + '?page=2');
+  } finally {
+    dom.window.close();
+  }
+});
