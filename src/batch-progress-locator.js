@@ -257,12 +257,17 @@ export async function scanBatchProgressPages({
       try {
         html = await loadPage(normalized);
       } catch (error) {
-        // A guessed /page/N/ can go beyond the archive end (404/410).
-        if (arrivedViaInferredLink && checked > 0
-          && /\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
-          return candidate
-            ? { ...candidate, inspected: checked, approximate: true }
-            : { status: 'end', checked, visitedFound };
+        if (arrivedViaInferredLink && checked > 0) {
+          // Preserve the previously confirmed mixed visited/unvisited page
+          // if a *speculatively inferred* next page cannot be loaded. It is
+          // still only an approximate location, not a proven boundary.
+          if (candidate) {
+            return { ...candidate, inspected: checked, approximate: true };
+          }
+          // A guessed /page/N/ or ?page=N may go beyond the archive end.
+          if (/\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
+            return { status: 'end', checked, visitedFound };
+          }
         }
         throw error;
       }
