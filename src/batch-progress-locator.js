@@ -25,6 +25,11 @@ export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
     '.archive-pagination .pagination-next a[href]',
     '.archive-pagination a.next[href]',
     '.pagination a.next[href]',
+    '.pagination a.next.page-numbers[href]',
+    '.navigation.pagination a.next[href]',
+    '.wp-pagenavi a.nextpostslink[href]',
+    '.posts-navigation .nav-previous a[href]',
+    '.nav-links .nav-previous a[href]',
     '.archive-pagination a[rel="next"][href]',
     'a[rel="next"][href]',
   ];
@@ -35,9 +40,47 @@ export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
   }
   if (!link) {
     link = [...document.querySelectorAll(
-      '.pg a[href], .archive-pagination a[href], .pagination a[href]'
-    )].find((anchor) => /^(?:下一页|下一頁|next|older(?: posts?)?|»|›|→)(?:\s*[»›→])?$/i
+      '.pg a[href], .archive-pagination a[href], .pagination a[href], .navigation a[href], .wp-pagenavi a[href]'
+    )].find((anchor) => /^(?:下一页|下一頁|next(?:\s+page)?|older(?:\s+(?:posts?|entries))?|»|›|→)(?:\s*[»›→])?$/i
       .test(String(anchor.textContent || '').trim()));
+  }
+  if (!link) {
+    // WordPress/Genesis themes may show numbered pagination without a "next"
+    // class or label. Follow the smallest later page in this exact listing.
+    const current = new URL(baseUrl);
+    const pageScope = (value) => {
+      const url = new URL(value);
+      url.hash = '';
+      url.pathname = url.pathname
+        .replace(/\/page\/\d+\/?$/i, '/')
+        .replace(/(\/forum-\d+-)\d+(\.html)$/i, (_, prefix, suffix) => prefix + '1' + suffix);
+      url.searchParams.delete('page');
+      url.searchParams.delete('paged');
+      url.searchParams.sort();
+      return url.href;
+    };
+    const pageNumber = (url) => Number.parseInt(
+      url.searchParams.get('paged')
+        || url.searchParams.get('page')
+        || url.pathname.match(/\/page\/(\d+)\/?$/i)?.[1]
+        || url.pathname.match(/\/forum-\d+-(\d+)\.html$/i)?.[1]
+        || '1', 10
+    );
+    const currentNumber = pageNumber(current);
+    const candidates = [...document.querySelectorAll(
+      '.pg a[href], .archive-pagination a[href], .pagination a[href], .navigation a[href], .wp-pagenavi a[href], .pager a[href], a.page-numbers[href]'
+    )].flatMap((anchor) => {
+      try {
+        const url = new URL(anchor.getAttribute('href'), baseUrl);
+        const number = pageNumber(url);
+        return /^https?:$/.test(url.protocol) && pageScope(url.href) === pageScope(current.href)
+          && Number.isInteger(number) && number > currentNumber
+          ? [{ number, url: url.href }] : [];
+      } catch {
+        return [];
+      }
+    }).sort((a, b) => a.number - b.number);
+    if (candidates.length) return candidates[0].url;
   }
   if (!link) {
     // The redesigned forum uses buttons for paging instead of anchor hrefs.
@@ -56,6 +99,72 @@ export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
   try {
     const url = new URL(link.getAttribute('href'), baseUrl);
     return /^https?:$/.test(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+// Reuse HDblog progress pointers after the JavClub domain migration without
+// changing the saved history or writing over the old domain's stored values.
+export function rememberedBatchProgressUrl(map, scope, currentUrl, getScope) {
+  if (!map || typeof map !== 'object' || !scope || typeof getScope !== 'function') return '';
+  let current;
+  try {
+    current = new URL(currentUrl);
+  } catch {
+    return '';
+  }
+  const isJavclub = /^(?:javclub\.me|hdblog\.me)$/i.test(current.hostname);
+  const keys = [scope];
+  // Older versions stored the root category without a final slash. Probe
+  // that original key as an alias; never rewrite the user's saved map.
+  try {
+    const unnormalized = new URL(scope);
+    if (/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/$/i.test(unnormalized.pathname)) {
+      unnormalized.pathname = unnormalized.pathname.replace(/\/$/, '');
+      keys.push(unnormalized.href);
+    }
+  } catch {
+    // Non-URL scopes are left untouched.
+  }
+  if (isJavclub) {
+    for (const key of [...keys]) {
+      keys.push(key.replace('://javclub.me/', '://hdblog.me/'));
+      keys.push(key.replace('://hdblog.me/', '://javclub.me/'));
+    }
+  }
+  for (const key of new Set(keys)) {
+    const saved = map[key];
+    if (typeof saved?.url !== 'string') continue;
+    try {
+      const target = new URL(saved.url, currentUrl);
+      if (isJavclub && /^(?:javclub\.me|hdblog\.me)$/i.test(target.hostname)) {
+        target.hostname = current.hostname;
+        target.protocol = current.protocol;
+        target.port = current.port;
+      }
+      if (getScope(target.href) === scope) return target.href;
+    } catch {
+      // Ignore an obsolete or invalid pointer and try other domain aliases.
+    }
+  }
+  return '';
+}
+
+// JavClub may omit next-page links in archive markup. Only category/tag
+// pages get a guessed WordPress /page/N/ URL; the scanner validates each page.
+export function inferWordPressArchiveNextUrl(document, pageUrl) {
+  if (!document?.querySelector('main#genesis-content article.entry .entry-title a[href]')) return '';
+  try {
+    const url = new URL(pageUrl);
+    if (!/^(?:javclub\.me|hdblog\.me)$/i.test(url.hostname)) return '';
+    const basePath = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
+    if (!/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/?$/i.test(basePath)) return '';
+    const number = Number.parseInt(url.pathname.match(/\/page\/(\d+)\/?$/i)?.[1] || '1', 10);
+    if (!Number.isSafeInteger(number) || number < 1) return '';
+    url.pathname = basePath.replace(/\/?$/, '/') + 'page/' + (number + 1) + '/';
+    url.hash = '';
+    return url.href;
   } catch {
     return '';
   }
@@ -96,7 +205,9 @@ export async function scanBatchProgressPages({
   let checked = 0;
   let visitedFound = false;
   let candidate = null;
+  let arrivedViaInferredLink = false;
   const seen = new Set();
+  const seenThreadSets = new Set();
 
   while (pageUrl && checked < maxPages) {
     if (cancelled()) return { status: 'cancelled', checked };
@@ -108,7 +219,19 @@ export async function scanBatchProgressPages({
     if (normalized === currentUrl) {
       page = currentDocument;
     } else {
-      const html = await loadPage(normalized);
+      let html;
+      try {
+        html = await loadPage(normalized);
+      } catch (error) {
+        // A guessed /page/N/ can go beyond the archive end (404/410).
+        if (arrivedViaInferredLink && checked > 0
+          && /\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
+          return candidate
+            ? { ...candidate, inspected: checked, approximate: true }
+            : { status: 'end', checked, visitedFound };
+        }
+        throw error;
+      }
       if (cancelled()) return { status: 'cancelled', checked };
       page = parseBatchListPage(html, normalized, currentDocument);
     }
@@ -117,6 +240,14 @@ export async function scanBatchProgressPages({
     if (!threads.length) {
       return { status: 'unreadable', checked, pageUrl: normalized };
     }
+    // Some servers redirect missing page numbers back to the same articles.
+    const signature = threads.map((thread) => thread.url).join('\n');
+    if (seenThreadSets.has(signature)) {
+      return candidate
+        ? { ...candidate, inspected: checked, approximate: true }
+        : { status: 'end', checked, visitedFound, repeatedPage: true };
+    }
+    seenThreadSets.add(signature);
     const opened = threads.filter((thread) => {
       const ids = typeof getIds === 'function'
         ? getIds(thread)
@@ -155,13 +286,16 @@ export async function scanBatchProgressPages({
     }
     previous = { ratio, url: normalized, checked, opened, unopened };
 
-    const next = nextBatchListPageUrl(page, normalized);
+    let next = nextBatchListPageUrl(page, normalized);
+    const inferred = !next;
+    if (!next) next = inferWordPressArchiveNextUrl(page, normalized);
     if (!next || next === normalized || getScope(next) !== scope || seen.has(next)) {
       return candidate
         ? { ...candidate, inspected: checked, approximate: true }
         : { status: 'end', checked, visitedFound };
     }
     pageUrl = next;
+    arrivedViaInferredLink = inferred;
   }
   if (candidate) return { ...candidate, inspected: checked, approximate: true };
   return { status: checked >= maxPages ? 'limit' : 'end', checked, visitedFound };

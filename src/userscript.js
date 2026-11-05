@@ -25,6 +25,7 @@ import {
   firstBatchListPageUrl,
   nextBatchListPageUrl as nextListPageUrl,
   scanBatchProgressPages,
+  rememberedBatchProgressUrl,
 } from './batch-progress-locator.js';
 import { requestTorrentBytes } from './torrent.js';
 import {
@@ -581,6 +582,11 @@ function batchProgressScopeKey(value = location.href) {
     }
     url.searchParams.delete('paged');
     url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
+    // WordPress accepts both /category/name and /category/name/.
+    // Normalize both to the SAME scope before comparing against /page/N/.
+    if (/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/?$/i.test(url.pathname)) {
+      url.pathname = url.pathname.replace(/\/+$/, '') + '/';
+    }
     url.searchParams.sort();
     return url.href;
   } catch {
@@ -598,11 +604,10 @@ function readBatchProgressMap() {
 function batchProgressTarget() {
   const scope = batchProgressScopeKey();
   if (!scope) return '';
-  const entry = readBatchProgressMap()[scope];
-  if (typeof entry?.url !== 'string') return '';
+  const saved = rememberedBatchProgressUrl(readBatchProgressMap(), scope, location.href, batchProgressScopeKey);
   return batchOpenHistoryConfig()?.kind === 'agaghhh'
-    ? toAgaghhhPrimaryUrl(entry.url)
-    : entry.url;
+    ? toAgaghhhPrimaryUrl(saved)
+    : saved;
 }
 
 function startAutomaticLegacyHistoryMigration() {
@@ -1892,29 +1897,55 @@ async function locateCurrentBatchProgress(button) {
     `定位浏览进度：正在跨页查找（共有 ${historyIds.length} 条历史记录）。\n再次点击可停止。`);
   try {
     const config = batchOpenHistoryConfig();
-    const result = await scanBatchProgressPages({
-      startUrl: firstBatchListPageUrl(location.href, config.kind),
-      currentUrl: location.href,
-      currentDocument: document,
-      historyIds,
-      loadPage: requestBatchListPageHtml,
-      collectThreads: collectForumThreadLinks,
-      getId: batchOpenHistoryId,
-      getIds: batchThreadHistoryKeys,
-      getScope: batchProgressScopeKey,
-      maxPages: 120,
-      onProgress: ({ checked, opened, unopened }) => {
-        renderCompactBatchControl(button, 'locator',
-          `停止查找 · 第 ${checked} 页（已开 ${opened} / 未开 ${unopened}）`, '',
-          `定位浏览进度：正在检查第 ${checked} 页。\n该页已浏览 ${opened} 条，未浏览 ${unopened} 条。\n再次点击可停止。`);
-      },
-      cancelled: () => scan.cancelled,
-    });
+    const firstUrl = firstBatchListPageUrl(location.href, config.kind);
+    const rememberedUrl = batchProgressTarget();
+    const matchingSavedProgress = rememberedUrl
+      && batchProgressScopeKey(rememberedUrl) === batchProgressScopeKey(firstUrl)
+      && rememberedUrl !== firstUrl ? rememberedUrl : '';
+    let savedPageReadable = false;
+    // A user already browsing /category/.../page/4/ should search forward
+    // from page 4, not silently restart at page one. Fall back to page one
+    // only when the current-page scan cannot find a boundary.
+    const currentPageStart = config.kind === 'hdblog'
+      && /^\/(?:category|tag)\/.+\/page\/\d+\/?$/i.test(location.pathname)
+      ? location.href : firstUrl;
+    const plans = [
+      { startUrl: currentPageStart, maxPages: 120, saved: false },
+      ...(currentPageStart !== firstUrl ? [{ startUrl: firstUrl, maxPages: 120, saved: false }] : []),
+      ...(matchingSavedProgress ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []),
+    ];
+    let result = null;
+    for (const plan of plans) {
+      const attempt = await scanBatchProgressPages({
+        startUrl: plan.startUrl,
+        currentUrl: location.href,
+        currentDocument: document,
+        historyIds,
+        loadPage: requestBatchListPageHtml,
+        collectThreads: collectForumThreadLinks,
+        getId: batchOpenHistoryId,
+        getIds: batchThreadHistoryKeys,
+        getScope: batchProgressScopeKey,
+        maxPages: plan.maxPages,
+        onProgress: ({ checked, opened, unopened }) => {
+          if (plan.saved) savedPageReadable = true;
+          renderCompactBatchControl(button, 'locator',
+            `停止查找 · 已查 ${checked} 页（已开 ${opened} / 未开 ${unopened}）`, '',
+            `定位浏览进度：正在${plan.saved ? '检查保存进度附近' : '从第一页'}查找，已查 ${checked} 页。\n该页已浏览 ${opened} 条，未浏览 ${unopened} 条。\n再次点击可停止。`);
+        },
+        cancelled: () => scan.cancelled,
+      });
+      if (scan.cancelled || attempt.status === 'cancelled') return;
+      result = attempt;
+      if (attempt.status === 'found') break;
+      // An obsolete saved page should never block the normal scan.
+    }
+    if (!result) return;
 
     if (scan.cancelled || result.status === 'cancelled') return;
     if (result.status === 'found') {
-      renderCompactBatchControl(button, 'locator', `已定位到第 ${result.checked} 页`, '',
-        `已找到浏览进度：第 ${result.checked} 页。\n正在跳转或滚动到未浏览主题。`);
+      renderCompactBatchControl(button, 'locator', '已定位到历史交界', '',
+        '已找到已浏览与未浏览主题的相邻分页，正在跳转或滚动定位。');
       rememberBatchProgressTarget(result.url);
       if (result.url !== location.href) window.location.assign(result.url);
       else {
@@ -1926,14 +1957,26 @@ async function locateCurrentBatchProgress(button) {
       }
       return;
     }
+    if (matchingSavedProgress && savedPageReadable
+      && ['end', 'limit'].includes(result.status)) {
+      // The saved cursor is for this exact archive and its page was readable.
+      // It is a useful approximation, never claim it is the proven boundary.
+      window.alert('未找到精确的已浏览/未浏览交界，将转到本栏目保存的上次批量打开进度。\n这是进度参考点，不一定是实际交界页。');
+      rememberBatchProgressTarget(matchingSavedProgress);
+      if (matchingSavedProgress !== location.href) window.location.assign(matchingSavedProgress);
+      else collectForumThreadLinks(document)
+        .find((thread) => !isBatchThreadVisited(thread, new Set(historyIds)))
+        ?.link?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      return;
+    }
     if (result.status === 'unreadable') {
       window.alert(`第 ${result.checked + 1} 页未读取到主题（可能需要登录或触发了网站验证），不能可靠定位浏览进度。\n${result.pageUrl}`);
     } else if (result.status === 'limit') {
-      window.alert('已检查前 120 页，仍未找到已打开与未打开主题的交界处。请在更接近历史进度的列表页尝试，或增加扫描上限。');
+      window.alert('已连续检查 120 页，仍未找到已打开与未打开主题的交界处。可以在更接近历史进度的分页再次定位。');
     } else if (result.status === 'end') {
       window.alert(result.visitedFound
-        ? '已检查完能访问的分页，没有找到明确的已打开/未打开分界页。'
-        : '已检查完能访问的分页，但没有在这些主题中找到脚本保存的打开记录。');
+        ? `已检查 ${result.checked} 页，有部分已浏览主题，但没有明确的已浏览/未浏览交界。`
+        : `已检查 ${result.checked} 页，本栏目未匹配到脚本保存的浏览记录（现有 ${historyIds.length} 条）。\n请确认当前栏目包含以前访问的主题；若只检查了 1 页，可能是分页链接尚无法识别。`);
     } else {
       window.alert('无法识别当前列表的分页位置。');
     }
