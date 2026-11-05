@@ -1903,11 +1903,15 @@ async function locateCurrentBatchProgress(button) {
       && batchProgressScopeKey(rememberedUrl) === batchProgressScopeKey(firstUrl)
       && rememberedUrl !== firstUrl ? rememberedUrl : '';
     let savedPageReadable = false;
-    // A user already browsing /category/.../page/4/ should search forward
-    // from page 4, not silently restart at page one. Fall back to page one
-    // only when the current-page scan cannot find a boundary.
-    const currentPageStart = config.kind === 'hdblog'
-      && /^\/(?:category|tag)\/.+\/page\/\d+\/?$/i.test(location.pathname)
+    // If the user is already on a later JavClub archive or x1080x board
+    // page, inspect its hydrated list first. Scanning from the first page
+    // may otherwise be slow or stop before reaching the user's progress.
+    const onLaterJavclubPage = config.kind === 'hdblog'
+      && /^\/(?:category|tag)\/.+\/page\/\d+\/?$/i.test(location.pathname);
+    const onLaterModernBoardPage = config.kind === 'agaghhh'
+      && /^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)
+      && /^[2-9]\d*$/.test(new URL(location.href).searchParams.get('page') || '');
+    const currentPageStart = onLaterJavclubPage || onLaterModernBoardPage
       ? location.href : firstUrl;
     const plans = [
       { startUrl: currentPageStart, maxPages: 120, saved: false },

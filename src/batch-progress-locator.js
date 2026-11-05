@@ -170,6 +170,40 @@ export function inferWordPressArchiveNextUrl(document, pageUrl) {
   }
 }
 
+// The React /boards interface may navigate with client-side pagination buttons
+// without anchor hrefs (or with different aria-labels between releases).
+// Its URL is still a stable ?page=N route. Infer only the next same-board page,
+// and let the scanner reject duplicates, empty pages or HTTP 404/410.
+export function inferModernBoardNextUrl(document, pageUrl) {
+  try {
+    const url = new URL(pageUrl);
+    if (!/^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) return '';
+    if (!document?.querySelector('article.thread-row:not(.is-sticky) a.resource-title[href*="/resources/"]')) {
+      return '';
+    }
+    const current = url.searchParams.get('page') || '1';
+    if (!/^[1-9]\d{0,5}$/.test(current)) return '';
+    const currentPage = Number(current);
+    if (!Number.isSafeInteger(currentPage)) return '';
+    // An explicit disabled "next page" control is authoritative. Absence
+    // of such a control is NOT evidence of the last page in a React list.
+    const nextControl = document.querySelector(
+      '.pg button[aria-label="下一页"], .pg button[aria-label="下一頁"],'
+      + ' .pg button[aria-label="Next page" i], .pg button[title="下一页"],'
+      + ' .pg button[title="Next page" i],'
+      + ' .pagination button[aria-label="下一页"],'
+      + ' .pagination button[aria-label="Next page" i]'
+    );
+    if (nextControl && (nextControl.disabled || nextControl.getAttribute('aria-disabled') === 'true')) {
+      return '';
+    }
+    url.searchParams.set('page', String(currentPage + 1));
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
 export function parseBatchListPage(html, pageUrl, document) {
   const Parser = document?.defaultView?.DOMParser || globalThis.DOMParser;
   if (!Parser) throw new Error('浏览器不支持解析分页内容');
@@ -223,12 +257,17 @@ export async function scanBatchProgressPages({
       try {
         html = await loadPage(normalized);
       } catch (error) {
-        // A guessed /page/N/ can go beyond the archive end (404/410).
-        if (arrivedViaInferredLink && checked > 0
-          && /\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
-          return candidate
-            ? { ...candidate, inspected: checked, approximate: true }
-            : { status: 'end', checked, visitedFound };
+        if (arrivedViaInferredLink && checked > 0) {
+          // Preserve the previously confirmed mixed visited/unvisited page
+          // if a *speculatively inferred* next page cannot be loaded. It is
+          // still only an approximate location, not a proven boundary.
+          if (candidate) {
+            return { ...candidate, inspected: checked, approximate: true };
+          }
+          // A guessed /page/N/ or ?page=N may go beyond the archive end.
+          if (/\bHTTP\s*(?:404|410)\b/i.test(String(error?.message || error))) {
+            return { status: 'end', checked, visitedFound };
+          }
         }
         throw error;
       }
@@ -288,7 +327,8 @@ export async function scanBatchProgressPages({
 
     let next = nextBatchListPageUrl(page, normalized);
     const inferred = !next;
-    if (!next) next = inferWordPressArchiveNextUrl(page, normalized);
+    if (!next) next = inferModernBoardNextUrl(page, normalized)
+      || inferWordPressArchiveNextUrl(page, normalized);
     if (!next || next === normalized || getScope(next) !== scope || seen.has(next)) {
       return candidate
         ? { ...candidate, inspected: checked, approximate: true }

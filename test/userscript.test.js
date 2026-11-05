@@ -1830,3 +1830,50 @@ test('JavClub 无尾斜杠分类首页：能跨页扫描，不能错误提示只
     dom.window.close();
   }
 });
+
+
+test('x1080x board 7RHPO2w4jFUYiDhDsxz0wE scans ?page=2 with no known pagination element', async () => {
+  const root = 'https://1080xin.com/boards/7RHPO2w4jFUYiDhDsxz0wE';
+  const page2 = root + '?page=2';
+  const dom = new JSDOM('<!doctype html><html><head></head><body>'
+    + '<div class="thread-list"><div class="pgt"></div>'
+    + '<article class="thread-row"><a class="resource-title" href="/resources/NEW1">NEW1</a></article>'
+    + '<article class="thread-row"><a class="resource-title" href="/resources/NEW2">NEW2</a></article>'
+    + '</div></body></html>', { url: root });
+  const restore = installDomGlobals(dom.window);
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:1080xin-resource-history', ['resource:VISITED2']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  const fetched = [];
+  dom.window.fetch = async (url) => {
+    fetched.push(String(url));
+    assert.equal(String(url), page2);
+    return {
+      ok: true,
+      text: async () => '<!doctype html><html><head></head><body><div class="thread-list">'
+        + '<article class="thread-row"><a class="resource-title" href="/resources/VISITED2">已浏览</a></article>'
+        + '<article class="thread-row"><a class="resource-title" href="/resources/UNREAD2">未浏览</a></article>'
+        + '</div></body></html>',
+    };
+  };
+  const alerts = [];
+  dom.window.alert = (message) => alerts.push(String(message));
+  try {
+    await import('../src/userscript.js?modern-board-no-next=' + Date.now());
+    const locator = dom.window.document.getElementById('x1080x-ex-batch-progress-locator');
+    assert.ok(locator);
+    locator.click();
+    await waitFor(() => values.get('x1080x-ex:agaghhh-batch-progress-map')
+      ? values.get('x1080x-ex:agaghhh-batch-progress-map')
+        ['https://agaghhh.cc/boards/7RHPO2w4jFUYiDhDsxz0wE']?.url === page2
+      : false, 'modern board progress must locate the visited/unvisited boundary on page 2');
+    assert.deepEqual(fetched, [page2]);
+    assert.deepEqual(alerts, []);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
