@@ -1898,10 +1898,15 @@ async function locateCurrentBatchProgress(button) {
       && batchProgressScopeKey(rememberedUrl) === batchProgressScopeKey(firstUrl)
       && rememberedUrl !== firstUrl ? rememberedUrl : '';
     let savedPageReadable = false;
-    // First check the actual listing for a boundary. Only probe older saved
-    // progress when the current archive scan cannot find a reliable match.
+    // A user already browsing /category/.../page/4/ should search forward
+    // from page 4, not silently restart at page one. Fall back to page one
+    // only when the current-page scan cannot find a boundary.
+    const currentPageStart = config.kind === 'hdblog'
+      && /^\/(?:category|tag)\/.+\/page\/\d+\/?$/i.test(location.pathname)
+      ? location.href : firstUrl;
     const plans = [
-      { startUrl: firstUrl, maxPages: 120, saved: false },
+      { startUrl: currentPageStart, maxPages: 120, saved: false },
+      ...(currentPageStart !== firstUrl ? [{ startUrl: firstUrl, maxPages: 120, saved: false }] : []),
       ...(matchingSavedProgress ? [{ startUrl: matchingSavedProgress, maxPages: 8, saved: true }] : []),
     ];
     let result = null;
@@ -1962,7 +1967,7 @@ async function locateCurrentBatchProgress(button) {
     if (result.status === 'unreadable') {
       window.alert(`第 ${result.checked + 1} 页未读取到主题（可能需要登录或触发了网站验证），不能可靠定位浏览进度。\n${result.pageUrl}`);
     } else if (result.status === 'limit') {
-      window.alert('已检查前 120 页，仍未找到已打开与未打开主题的交界处。请在更接近历史进度的列表页尝试，或增加扫描上限。');
+      window.alert('已连续检查 120 页，仍未找到已打开与未打开主题的交界处。可以在更接近历史进度的分页再次定位。');
     } else if (result.status === 'end') {
       window.alert(result.visitedFound
         ? `已检查 ${result.checked} 页，有部分已浏览主题，但没有明确的已浏览/未浏览交界。`
