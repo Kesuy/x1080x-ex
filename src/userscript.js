@@ -25,6 +25,7 @@ import {
   firstBatchListPageUrl,
   nextBatchListPageUrl as nextListPageUrl,
   scanBatchProgressPages,
+  rememberedBatchProgressUrl,
 } from './batch-progress-locator.js';
 import { requestTorrentBytes } from './torrent.js';
 import {
@@ -598,11 +599,10 @@ function readBatchProgressMap() {
 function batchProgressTarget() {
   const scope = batchProgressScopeKey();
   if (!scope) return '';
-  const entry = readBatchProgressMap()[scope];
-  if (typeof entry?.url !== 'string') return '';
+  const saved = rememberedBatchProgressUrl(readBatchProgressMap(), scope, location.href, batchProgressScopeKey);
   return batchOpenHistoryConfig()?.kind === 'agaghhh'
-    ? toAgaghhhPrimaryUrl(entry.url)
-    : entry.url;
+    ? toAgaghhhPrimaryUrl(saved)
+    : saved;
 }
 
 function startAutomaticLegacyHistoryMigration() {
