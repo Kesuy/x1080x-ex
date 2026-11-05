@@ -277,7 +277,12 @@ export async function scanBatchProgressPages({
 
     const threads = collectThreads(page);
     if (!threads.length) {
-      return { status: 'unreadable', checked, pageUrl: normalized };
+      // A modern React page may return an unhydrated HTML shell even though
+      // earlier pages contained a usable mixed visited/unvisited boundary.
+      // Keep that boundary rather than discarding it and reporting failure.
+      return candidate
+        ? { ...candidate, inspected: checked, approximate: true, unreadablePageUrl: normalized }
+        : { status: 'unreadable', checked, pageUrl: normalized };
     }
     // Some servers redirect missing page numbers back to the same articles.
     const signature = threads.map((thread) => thread.url).join('\n');
