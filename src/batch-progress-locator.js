@@ -116,9 +116,22 @@ export function rememberedBatchProgressUrl(map, scope, currentUrl, getScope) {
   }
   const isJavclub = /^(?:javclub\.me|hdblog\.me)$/i.test(current.hostname);
   const keys = [scope];
+  // Older versions stored the root category without a final slash. Probe
+  // that original key as an alias; never rewrite the user's saved map.
+  try {
+    const unnormalized = new URL(scope);
+    if (/^\/(?:category|tag)\/[a-z0-9-]+(?:\/[a-z0-9-]+)*\/$/i.test(unnormalized.pathname)) {
+      unnormalized.pathname = unnormalized.pathname.replace(/\/$/, '');
+      keys.push(unnormalized.href);
+    }
+  } catch {
+    // Non-URL scopes are left untouched.
+  }
   if (isJavclub) {
-    keys.push(scope.replace('://javclub.me/', '://hdblog.me/'));
-    keys.push(scope.replace('://hdblog.me/', '://javclub.me/'));
+    for (const key of [...keys]) {
+      keys.push(key.replace('://javclub.me/', '://hdblog.me/'));
+      keys.push(key.replace('://hdblog.me/', '://javclub.me/'));
+    }
   }
   for (const key of new Set(keys)) {
     const saved = map[key];
