@@ -5,6 +5,7 @@ import { collectForumThreadLinks } from '../src/core.js';
 import {
   firstBatchListPageUrl,
   nextBatchListPageUrl,
+  inferWordPressArchiveNextUrl,
   scanBatchProgressPages,
   rememberedBatchProgressUrl,
 } from '../src/batch-progress-locator.js';
@@ -280,4 +281,134 @@ test('旧 hdblog.me 进度图在 javclub.me 仍可用于同一栏目', () => {
     }, current, current, scope),
     ''
   );
+});
+
+
+test('JavClub 页面完全没有分页控件时仍按 /page/N/ 逐页匹配保存的记录', async () => {
+  const root = 'https://javclub.me/category/av-censored/';
+  const second = root + 'page/2/';
+  const third = root + 'page/3/';
+  const pages = new Map([
+    [root, hdblogPage([1101, 1100])],
+    [second, hdblogPage([1099, 1098])],
+    [third, hdblogPage([1097, 1096, 1095])],
+  ]);
+  const dom = new JSDOM(pages.get(root), { url: root });
+  try {
+    assert.equal(nextBatchListPageUrl(dom.window.document), '', '没有可识别的链接');
+    assert.equal(inferWordPressArchiveNextUrl(dom.window.document, root), second);
+    const fetched = [];
+    const result = await scanBatchProgressPages({
+      startUrl: root,
+      currentUrl: root,
+      currentDocument: dom.window.document,
+      historyIds: ['post:1097', 'post:1096'],
+      loadPage: async (url) => {
+        fetched.push(url);
+        const html = pages.get(url);
+        if (!html) throw new Error('HTTP 404');
+        return html;
+      },
+      collectThreads: collectForumThreadLinks,
+      getId: hdblogId,
+      getScope: hdblogScope,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, third);
+    assert.deepEqual(fetched, [second, third, root + 'page/4/']);
+    assert.equal(result.checked, 3);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('JavClub 从当前 /page/4/ 继续查，直接在后续分页找到已浏览记录', async () => {
+  const current = 'https://javclub.me/category/av-censored/page/4/';
+  const next = 'https://javclub.me/category/av-censored/page/5/';
+  const dom = new JSDOM(hdblogPage([141, 142]), { url: current });
+  try {
+    assert.equal(inferWordPressArchiveNextUrl(dom.window.document, current), next);
+    const fetched = [];
+    const result = await scanBatchProgressPages({
+      startUrl: current,
+      currentUrl: current,
+      currentDocument: dom.window.document,
+      historyIds: ['post:139', 'post:138'],
+      loadPage: async (url) => {
+        fetched.push(url);
+        return hdblogPage([139, 138]);
+      },
+      collectThreads: collectForumThreadLinks,
+      getId: hdblogId,
+      getScope: hdblogScope,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, next);
+    assert.deepEqual(fetched, [next]);
+    assert.equal(result.checked, 2);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('JavClub 推算分页遇到不存在的末页 404 时停止而不是继续请求或报网络异常', async () => {
+  const root = 'https://javclub.me/category/av-censored/';
+  const dom = new JSDOM(hdblogPage([501]), { url: root });
+  try {
+    let calls = 0;
+    const result = await scanBatchProgressPages({
+      startUrl: root,
+      currentUrl: root,
+      currentDocument: dom.window.document,
+      historyIds: ['post:800'],
+      loadPage: async () => { calls += 1; throw new Error('HTTP 404'); },
+      collectThreads: collectForumThreadLinks,
+      getId: hdblogId,
+      getScope: hdblogScope,
+    });
+    assert.equal(result.status, 'end');
+    assert.equal(result.checked, 1);
+    assert.equal(calls, 1);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('JavClub 假分页反复返回相同文章时结束，避免无限扫描', async () => {
+  const root = 'https://javclub.me/category/av-censored/';
+  const html = hdblogPage([901, 900]);
+  const dom = new JSDOM(html, { url: root });
+  try {
+    let calls = 0;
+    const result = await scanBatchProgressPages({
+      startUrl: root,
+      currentUrl: root,
+      currentDocument: dom.window.document,
+      historyIds: ['post:899'],
+      loadPage: async () => { calls += 1; return html; },
+      collectThreads: collectForumThreadLinks,
+      getId: hdblogId,
+      getScope: hdblogScope,
+    });
+    assert.equal(result.status, 'end');
+    assert.equal(result.checked, 1);
+    assert.equal(result.repeatedPage, true);
+    assert.equal(calls, 1);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('JavClub 分页推算只允许真实文章归档、不能跨域或构造无关地址', () => {
+  const root = 'https://javclub.me/category/av-censored/';
+  const dom = new JSDOM(hdblogPage([1]), { url: root });
+  try {
+    assert.equal(inferWordPressArchiveNextUrl(dom.window.document, 'https://example.com/category/av-censored/'), '');
+    assert.equal(inferWordPressArchiveNextUrl(dom.window.document, 'https://javclub.me/1013749.html'), '');
+    assert.equal(inferWordPressArchiveNextUrl(dom.window.document, root), root + 'page/2/');
+    assert.equal(inferWordPressArchiveNextUrl(dom.window.document, root + 'page/42/'), root + 'page/43/');
+    const empty = new JSDOM('<main id="genesis-content"></main>', { url: root });
+    try { assert.equal(inferWordPressArchiveNextUrl(empty.window.document, root), ''); }
+    finally { empty.window.close(); }
+  } finally { dom.window.close(); }
 });
