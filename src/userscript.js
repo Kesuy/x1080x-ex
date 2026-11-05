@@ -587,9 +587,8 @@ function batchProgressScopeKey(value = location.href) {
       return legacyOrigin + url.pathname + url.search;
     }
     if (!isAllowedHost(url.hostname, ['javclub.me', 'hdblog.me'])) return '';
-    // Use one logical scope after the HDBlog -> JavClub domain migration.
-    url.hostname = 'javclub.me';
-    url.protocol = 'https:';
+    // Keep older HDBlog progress-map keys unchanged for backward compatibility.
+    // JavClub can additionally read them through batchProgressTarget().
     url.searchParams.delete('paged');
     url.pathname = url.pathname.replace(/\/page\/\d+\/?$/i, '/');
     url.searchParams.sort();
