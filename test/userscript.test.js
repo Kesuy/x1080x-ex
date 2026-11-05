@@ -1781,3 +1781,68 @@ test('JavClub .html 正文浏览记入沿用的 HDblog 历史，不会丢失旧�
     dom.window.close();
   }
 });
+
+test('JavClub 兼容旧 HDBlog 保存的整条文章网址历史', async () => {
+  const dom = new JSDOM('<!doctype html><html><body>' +
+    '<main id="genesis-content"><article class="entry"><header class="entry-header">' +
+    '<h2 class="entry-title"><a href="/1013622.html">原来浏览过的文章</a></h2>' +
+    '</header></article><article class="entry"><header class="entry-header">' +
+    '<h2 class="entry-title"><a href="/1013749.html">新文章</a></h2>' +
+    '</header></article></main></body></html>',
+  { url: 'https://javclub.me/category/jav-censored/' });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['url:/1013622/old-slug/']],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  try {
+    await import('../src/userscript.js?javclub-old-url-history-' + Date.now());
+    const doc = dom.window.document;
+    assert.equal(doc.querySelector('a[href="/1013622.html"]').getAttribute('data-x1080x-batch-opened'), '1');
+    assert.equal(doc.querySelector('a[href="/1013749.html"]').hasAttribute('data-x1080x-batch-opened'), false);
+    assert.equal(doc.getElementById('x1080x-ex-open-page').getAttribute('data-x1080x-count'), '1');
+    assert.deepEqual(store.get('x1080x-ex:hdblog-batch-open-history'), ['url:/1013622/old-slug/'],
+      '兼容时不更改或丢弃原始历史数据');
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+test('JavClub 找不到分界时允许跳转到旧 HDBlog 域名保存的同分类进度', async () => {
+  const dom = new JSDOM('<!doctype html><html><body>' +
+    '<main id="genesis-content"><article class="entry"><header class="entry-header">' +
+    '<h2 class="entry-title"><a href="/1013749.html">最近文章</a></h2>' +
+    '</header></article></main></body></html>',
+  { url: 'https://javclub.me/category/jav-censored/' });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1013622']],
+    ['x1080x-ex:hdblog-batch-progress-map', {
+      'https://hdblog.me/category/jav-censored/': {
+        url: 'https://hdblog.me/category/jav-censored/page/12/',
+        updatedAt: 1000,
+      },
+    }],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  let prompt = '';
+  dom.window.confirm = (value) => { prompt = value; return false; };
+  try {
+    await import('../src/userscript.js?javclub-old-progress-' + Date.now());
+    dom.window.document.getElementById('x1080x-ex-batch-progress-locator').click();
+    await waitFor(() => Boolean(prompt), '应找到旧域名保存的进度');
+    assert.match(prompt, /https:\/\/javclub\.me\/category\/jav-censored\/page\/12\//);
+    assert.match(prompt, /已检查 1 页/);
+    assert.equal(store.get('x1080x-ex:hdblog-batch-progress-map')['https://hdblog.me/category/jav-censored/'].url,
+      'https://hdblog.me/category/jav-censored/page/12/', '不覆盖旧的进度数据');
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
