@@ -1877,3 +1877,92 @@ test('x1080x board 7RHPO2w4jFUYiDhDsxz0wE scans ?page=2 with no known pagination
     dom.window.close();
   }
 });
+
+
+test('x1080x no-history-match at page9 shell schedules same-tab browser hydration instead of an error', async () => {
+  const root = 'https://1080xin.com/boards/7RHPO2w4jFUYiDhDsxz0wE';
+  const makeBoard = (number) => '<!doctype html><html><head></head><body>'
+    + '<div class="thread-list"><div class="pgt"></div>'
+    + '<article class="thread-row"><a class="resource-title" href="/resources/DIFF' + number + '">主题</a></article>'
+    + '</div></body></html>';
+  const dom = new JSDOM(makeBoard(1), { url: root });
+  const restore = installDomGlobals(dom.window);
+  globalThis.GM_getValue = (key, fallback) => ({
+    'x1080x-ex:agaghhh-batch-open-history-enabled': true,
+    'x1080x-ex:1080xin-resource-history': ['resource:NOT_IN_FIRST_8_PAGES'],
+  })[key] ?? fallback;
+  globalThis.GM_setValue = () => {};
+  const fetched = [];
+  const alerts = [];
+  dom.window.alert = (message) => alerts.push(String(message));
+  dom.window.fetch = async (url) => {
+    const number = Number(new URL(url).searchParams.get('page'));
+    fetched.push(number);
+    return {
+      ok: true,
+      text: async () => number === 9
+        ? '<!doctype html><html><head></head><body><div id="__next"></div></body></html>'
+        : makeBoard(number),
+    };
+  };
+  try {
+    await import('../src/userscript.js?modern-shell-recovery-' + Date.now());
+    const button = dom.window.document.getElementById('x1080x-ex-batch-progress-locator');
+    assert.ok(button);
+    button.click();
+    await waitFor(() => Boolean(dom.window.sessionStorage.getItem(
+      'x1080x-ex:modern-board-locator-resume-v1')),
+      'should store a bounded same-tab hydration handoff to page 9');
+    const pending = JSON.parse(dom.window.sessionStorage.getItem(
+      'x1080x-ex:modern-board-locator-resume-v1'));
+    assert.equal(pending.targetUrl, root + '?page=9');
+    assert.deepEqual(pending.visitedUrls, [root + '?page=9']);
+    assert.deepEqual(fetched, [2, 3, 4, 5, 6, 7, 8, 9]);
+    assert.deepEqual(alerts, []);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
+
+test('x1080x resumed board uses actual hydrated document and clears pending state', async () => {
+  const root = 'https://1080xin.com/boards/7RHPO2w4jFUYiDhDsxz0wE';
+  const page9 = root + '?page=9';
+  const dom = new JSDOM('<!doctype html><html><head></head><body><div class="thread-list">'
+    + '<article class="thread-row"><a class="resource-title" href="/resources/VISITED">已浏览</a></article>'
+    + '<article class="thread-row"><a class="resource-title" href="/resources/NEW">未浏览</a></article>'
+    + '</div></body></html>', { url: page9 });
+  const restore = installDomGlobals(dom.window);
+  const state = {
+    version: 1,
+    scope: root,
+    targetUrl: page9,
+    startedAt: Date.now(),
+    visitedUrls: [page9],
+  };
+  dom.window.sessionStorage.setItem('x1080x-ex:modern-board-locator-resume-v1', JSON.stringify(state));
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:1080xin-resource-history', ['resource:VISITED']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  const alerts = [];
+  dom.window.alert = (message) => alerts.push(String(message));
+  dom.window.fetch = async () => ({
+    ok: true,
+    text: async () => '<!doctype html><html><head></head><body><div id="__next"></div></body></html>',
+  });
+  try {
+    await import('../src/userscript.js?modern-real-dom-resume-' + Date.now());
+    await waitFor(() => dom.window.sessionStorage.getItem(
+      'x1080x-ex:modern-board-locator-resume-v1') === null,
+      'resumed locator should use hydrated topic rows and finish');
+    assert.equal(values.get('x1080x-ex:agaghhh-batch-progress-map')
+      ['https://agaghhh.cc/boards/7RHPO2w4jFUYiDhDsxz0wE']?.url, page9);
+    assert.deepEqual(alerts, []);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
