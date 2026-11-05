@@ -27,6 +27,11 @@ import {
   scanBatchProgressPages,
   rememberedBatchProgressUrl,
 } from './batch-progress-locator.js';
+import {
+  MODERN_BOARD_RESUME_KEY,
+  parseModernBoardResume,
+  nextModernBoardResumeState,
+} from './modern-board-progress-resume.js';
 import { requestTorrentBytes } from './torrent.js';
 import {
   collectModernNativeAttachments,
@@ -138,6 +143,7 @@ const HDBLOG_OPEN_TIMING = Object.freeze({
 });
 let batchOpenState = null;
 let batchProgressScanState = null;
+let modernBoardResumeStarted = false;
 
 function getConfiguredDomains() {
   const stored = typeof GM_getValue === 'function' ? GM_getValue(STORAGE_KEY, null) : null;
@@ -1876,7 +1882,38 @@ async function requestBatchListPageHtml(url) {
   });
 }
 
-async function locateCurrentBatchProgress(button) {
+function clearPendingModernBoardResume() {
+  try {
+    window.sessionStorage?.removeItem(MODERN_BOARD_RESUME_KEY);
+  } catch {
+    // Session storage may be blocked in private browser contexts.
+  }
+}
+
+function readPendingModernBoardResume() {
+  try {
+    const raw = window.sessionStorage?.getItem(MODERN_BOARD_RESUME_KEY);
+    if (!raw) return null;
+    const state = parseModernBoardResume(raw, location.href);
+    if (!state) clearPendingModernBoardResume();
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+function resumeModernBoardProgressIfReady() {
+  if (modernBoardResumeStarted || batchProgressScanState) return false;
+  if (!/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname)) return false;
+  if (!readPendingModernBoardResume()) return false;
+  const button = document.getElementById(BATCH_PROGRESS_BUTTON_ID);
+  if (!button || !collectForumThreadLinks(document).length) return false;
+  modernBoardResumeStarted = true;
+  void locateCurrentBatchProgress(button, { resumed: true });
+  return true;
+}
+
+async function locateCurrentBatchProgress(button, { resumed = false } = {}) {
   if (batchProgressScanState) {
     batchProgressScanState.cancelled = true;
     renderCompactBatchControl(button, 'locator', '正在停止查找…', '',
