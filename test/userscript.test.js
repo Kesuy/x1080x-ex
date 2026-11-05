@@ -1889,7 +1889,7 @@ test('x1080x no-history-match at page9 shell schedules same-tab browser hydratio
   const restore = installDomGlobals(dom.window);
   globalThis.GM_getValue = (key, fallback) => ({
     'x1080x-ex:agaghhh-batch-open-history-enabled': true,
-    'x1080x-ex:1080xin-resource-history': ['resource:NOT_IN_FIRST_8_PAGES'],
+    'x1080x-ex:1080xin-resource-history': ['resource:NOTFOUND8'],
   })[key] ?? fallback;
   globalThis.GM_setValue = () => {};
   const fetched = [];
@@ -1929,6 +1929,7 @@ test('x1080x resumed board uses actual hydrated document and clears pending stat
   const root = 'https://1080xin.com/boards/7RHPO2w4jFUYiDhDsxz0wE';
   const page9 = root + '?page=9';
   const dom = new JSDOM('<!doctype html><html><head></head><body><div class="thread-list">'
+    + '<div class="pgt"></div>'
     + '<article class="thread-row"><a class="resource-title" href="/resources/VISITED">已浏览</a></article>'
     + '<article class="thread-row"><a class="resource-title" href="/resources/NEW">未浏览</a></article>'
     + '</div></body></html>', { url: page9 });
