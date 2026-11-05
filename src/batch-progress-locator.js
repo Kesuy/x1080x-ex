@@ -17,15 +17,24 @@ export function firstBatchListPageUrl(value, kind) {
 }
 
 export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
-  if (!document) return '';
+  if (!document || !baseUrl) return '';
+  // WordPress/Genesis/JavClub themes do not all use the same 'next' markup.
+  // Some expose only numbered page links, while others use an arrow or a
+  // translated label. Keep the legacy Discuz selectors working too.
   const selectors = [
     '#pgt .pg a.nxt[href]',
     '.pg a.nxt[href]',
     'a.nxt[href]',
     '.archive-pagination .pagination-next a[href]',
     '.archive-pagination a.next[href]',
-    '.pagination a.next[href]',
     '.archive-pagination a[rel="next"][href]',
+    '.pagination a.next[href]',
+    '.pagination a.next.page-numbers[href]',
+    '.nav-links a.next[href]',
+    '.wp-pagenavi a.nextpostslink[href]',
+    '.pagination-next a[href]',
+    '.pagination-next[href]',
+    'a.page-numbers.next[href]',
     'a[rel="next"][href]',
   ];
   let link = null;
@@ -33,11 +42,42 @@ export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
     link = document.querySelector(selector);
     if (link) break;
   }
+
+  const pagerLinks = [...document.querySelectorAll(
+    '.pg a[href], .archive-pagination a[href], .pagination a[href], ' +
+    '.wp-pagenavi a[href], .nav-links a[href], .paging-navigation a[href], ' +
+    '.posts-navigation a[href], .pager a[href], .navigation a[href], ' +
+    'a.page-numbers[href], [class*="pagination"] a[href]'
+  )];
   if (!link) {
-    link = [...document.querySelectorAll(
-      '.pg a[href], .archive-pagination a[href], .pagination a[href]'
-    )].find((anchor) => /^(?:下一页|下一頁|next|older(?: posts?)?|»|›|→)(?:\s*[»›→])?$/i
-      .test(String(anchor.textContent || '').trim()));
+    const nextLabel = /^(?:[»›→]\s*)?(?:下一[页頁]|下页|next(?:\s+(?:page|posts?|entries))?|older(?:\s+(?:page|posts?|entries))?)(?:\s*[»›→]+)?$/i;
+    link = pagerLinks.find((anchor) => nextLabel.test(String(anchor.textContent || '').trim()));
+  }
+  if (!link) {
+    // A JavClub archive may render only numbered links (1, 2, 3) without a
+    // named Next control. Use the actual +1 anchor; never guess a page URL.
+    const url = new URL(baseUrl);
+    const pathPage = url.pathname.match(/\/page\/(\d+)\/?$/i);
+    const active = document.querySelector(
+      '.archive-pagination .current, .pagination .current, ' +
+      '.wp-pagenavi .current, .nav-links [aria-current="page"], .pg strong'
+    );
+    const current = Number.parseInt(
+      pathPage?.[1] || url.searchParams.get('paged') ||
+      url.searchParams.get('page') || String(active?.textContent || '').trim() || '1',
+      10
+    );
+    if (Number.isInteger(current) && current > 0) {
+      link = pagerLinks.find((anchor) => {
+        if (String(anchor.textContent || '').trim() !== String(current + 1)) return false;
+        try {
+          const target = new URL(anchor.getAttribute('href'), baseUrl);
+          return /^https?:$/.test(target.protocol) && target.origin === url.origin;
+        } catch {
+          return false;
+        }
+      });
+    }
   }
   if (!link) {
     // The redesigned forum uses buttons for paging instead of anchor hrefs.
