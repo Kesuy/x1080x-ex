@@ -1781,3 +1781,52 @@ test('JavClub .html 正文浏览记入沿用的 HDblog 历史，不会丢失旧�
     dom.window.close();
   }
 });
+
+
+test('JavClub 无尾斜杠分类首页：能跨页扫描，不能错误提示只检查 1 页', async () => {
+  const root = 'https://javclub.me/category/av-censored';
+  const page2 = 'https://javclub.me/category/av-censored/page/2/';
+  const dom = new JSDOM('<!doctype html><html><head></head><body>'
+    + '<nav class="nav-primary"><div class="wrap"><ul class="genesis-nav-menu"></ul></div></nav>'
+    + '<main id="genesis-content">'
+    + '<article class="entry"><h2 class="entry-title"><a href="/1202.html">未浏览 1202</a></h2></article>'
+    + '<article class="entry"><h2 class="entry-title"><a href="/1201.html">未浏览 1201</a></h2></article>'
+    + '</main></body></html>', { url: root });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1199']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  const requests = [];
+  dom.window.fetch = async (url) => {
+    requests.push(String(url));
+    assert.equal(String(url), page2);
+    return {
+      ok: true,
+      text: async () => '<!doctype html><html><head></head><body>'
+        + '<main id="genesis-content">'
+        + '<article class="entry"><h2 class="entry-title"><a href="/1199.html">已浏览</a></h2></article>'
+        + '<article class="entry"><h2 class="entry-title"><a href="/1198.html">未浏览</a></h2></article>'
+        + '</main></body></html>',
+    };
+  };
+  const alerts = [];
+  dom.window.alert = (message) => alerts.push(String(message));
+  try {
+    await import('../src/userscript.js?javclub-no-trailing-slash=' + Date.now());
+    const locator = dom.window.document.getElementById('x1080x-ex-batch-progress-locator');
+    assert.ok(locator);
+    locator.click();
+    await waitFor(() => store.get('x1080x-ex:hdblog-batch-progress-map')
+      ? Object.values(store.get('x1080x-ex:hdblog-batch-progress-map')).some((entry) => entry.url === page2)
+      : false, 'no-slash archive should scan page 2 and locate a visited boundary');
+    assert.deepEqual(requests, [page2]);
+    assert.deepEqual(alerts, []);
+    assert.ok(store.get('x1080x-ex:hdblog-batch-progress-map')['https://javclub.me/category/av-censored/']);
+  } finally {
+    restore();
+    dom.window.close();
+  }
+});
