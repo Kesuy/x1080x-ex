@@ -25,6 +25,11 @@ export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
     '.archive-pagination .pagination-next a[href]',
     '.archive-pagination a.next[href]',
     '.pagination a.next[href]',
+    '.pagination a.next.page-numbers[href]',
+    '.navigation.pagination a.next[href]',
+    '.wp-pagenavi a.nextpostslink[href]',
+    '.posts-navigation .nav-previous a[href]',
+    '.nav-links .nav-previous a[href]',
     '.archive-pagination a[rel="next"][href]',
     'a[rel="next"][href]',
   ];
@@ -35,9 +40,47 @@ export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
   }
   if (!link) {
     link = [...document.querySelectorAll(
-      '.pg a[href], .archive-pagination a[href], .pagination a[href]'
-    )].find((anchor) => /^(?:下一页|下一頁|next|older(?: posts?)?|»|›|→)(?:\s*[»›→])?$/i
+      '.pg a[href], .archive-pagination a[href], .pagination a[href], .navigation a[href], .wp-pagenavi a[href]'
+    )].find((anchor) => /^(?:下一页|下一頁|next(?:\s+page)?|older(?:\s+(?:posts?|entries))?|»|›|→)(?:\s*[»›→])?$/i
       .test(String(anchor.textContent || '').trim()));
+  }
+  if (!link) {
+    // WordPress/Genesis themes may show numbered pagination without a "next"
+    // class or label. Follow the smallest later page in this exact listing.
+    const current = new URL(baseUrl);
+    const pageScope = (value) => {
+      const url = new URL(value);
+      url.hash = '';
+      url.pathname = url.pathname
+        .replace(/\/page\/\d+\/?$/i, '/')
+        .replace(/(\/forum-\d+-)\d+(\.html)$/i, (_, prefix, suffix) => prefix + '1' + suffix);
+      url.searchParams.delete('page');
+      url.searchParams.delete('paged');
+      url.searchParams.sort();
+      return url.href;
+    };
+    const pageNumber = (url) => Number.parseInt(
+      url.searchParams.get('paged')
+        || url.searchParams.get('page')
+        || url.pathname.match(/\/page\/(\d+)\/?$/i)?.[1]
+        || url.pathname.match(/\/forum-\d+-(\d+)\.html$/i)?.[1]
+        || '1', 10
+    );
+    const currentNumber = pageNumber(current);
+    const candidates = [...document.querySelectorAll(
+      '.pg a[href], .archive-pagination a[href], .pagination a[href], .navigation a[href], .wp-pagenavi a[href], .pager a[href], a.page-numbers[href]'
+    )].flatMap((anchor) => {
+      try {
+        const url = new URL(anchor.getAttribute('href'), baseUrl);
+        const number = pageNumber(url);
+        return /^https?:$/.test(url.protocol) && pageScope(url.href) === pageScope(current.href)
+          && Number.isInteger(number) && number > currentNumber
+          ? [{ number, url: url.href }] : [];
+      } catch {
+        return [];
+      }
+    }).sort((a, b) => a.number - b.number);
+    if (candidates.length) return candidates[0].url;
   }
   if (!link) {
     // The redesigned forum uses buttons for paging instead of anchor hrefs.
@@ -59,6 +102,40 @@ export function nextBatchListPageUrl(document, baseUrl = document?.baseURI) {
   } catch {
     return '';
   }
+}
+
+// Reuse HDblog progress pointers after the JavClub domain migration without
+// changing the saved history or writing over the old domain's stored values.
+export function rememberedBatchProgressUrl(map, scope, currentUrl, getScope) {
+  if (!map || typeof map !== 'object' || !scope || typeof getScope !== 'function') return '';
+  let current;
+  try {
+    current = new URL(currentUrl);
+  } catch {
+    return '';
+  }
+  const isJavclub = /^(?:javclub\.me|hdblog\.me)$/i.test(current.hostname);
+  const keys = [scope];
+  if (isJavclub) {
+    keys.push(scope.replace('://javclub.me/', '://hdblog.me/'));
+    keys.push(scope.replace('://hdblog.me/', '://javclub.me/'));
+  }
+  for (const key of new Set(keys)) {
+    const saved = map[key];
+    if (typeof saved?.url !== 'string') continue;
+    try {
+      const target = new URL(saved.url, currentUrl);
+      if (isJavclub && /^(?:javclub\.me|hdblog\.me)$/i.test(target.hostname)) {
+        target.hostname = current.hostname;
+        target.protocol = current.protocol;
+        target.port = current.port;
+      }
+      if (getScope(target.href) === scope) return target.href;
+    } catch {
+      // Ignore an obsolete or invalid pointer and try other domain aliases.
+    }
+  }
+  return '';
 }
 
 export function parseBatchListPage(html, pageUrl, document) {
