@@ -78,11 +78,12 @@ test('x1080x groups settings without replacing live form controls and saves shar
   dom.window.close();
 }));
 
-test('HDblog separates layout/download/preview/batch/history/filter and accepts dynamically inserted host settings', () => withSettings(() => {
+test('JavClub separates layout/download/preview/list/batch/history/filter and accepts dynamically inserted host settings', () => withSettings(() => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://hdblog.me/123/test/' });
   const overlay = openHdblogSettingsPanel(dom.window.document);
   const form = overlay.querySelector('form');
-  checkTabs(form, ['layout', 'download', 'preview', 'batch', 'history', 'filter']);
+  checkTabs(form, ['layout', 'download', 'preview', 'list', 'batch', 'history', 'filter']);
+  assert.equal(form.querySelector('[data-setting="top-pagination"]').closest('[data-settings-section]').dataset.settingsSection, 'list');
   assert.equal(form.querySelector('[data-setting="width"]').closest('[data-settings-section]').dataset.settingsSection, 'layout');
   assert.equal(form.querySelector('[data-setting="download-guard"]').closest('[data-settings-section]').dataset.settingsSection, 'download');
   assert.equal(form.querySelector('[data-setting="batch-open-history"]').closest('[data-settings-section]').dataset.settingsSection, 'history');
