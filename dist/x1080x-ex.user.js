@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.40
+// @version      1.10.41
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -33,6 +33,40 @@
     path.setAttribute("d", DOWNLOAD_ICON_PATH);
     svg.append(path);
     button.replaceChildren(svg);
+  }
+
+  // src/javclub-top-pagination.js
+  var JAVCLUB_TOP_PAGINATION_ENABLED_KEY = "x1080x-ex:javclub-top-pagination-enabled";
+  var JAVCLUB_TOP_PAGINATION_ID = "x1080x-ex-javclub-top-pagination";
+  function isJavclubTopPaginationEnabled() {
+    if (typeof GM_getValue !== "function") return true;
+    return GM_getValue(JAVCLUB_TOP_PAGINATION_ENABLED_KEY, true) !== false;
+  }
+  function installJavclubTopPagination(document2 = globalThis.document, locationObject = document2?.defaultView?.location) {
+    if (!document2) return false;
+    const existing = document2.getElementById(JAVCLUB_TOP_PAGINATION_ID);
+    const host = String(locationObject?.hostname || "").toLowerCase();
+    const isJavclub = ["javclub.me", "hdblog.me"].some((domain) => host === domain || host.endsWith("." + domain));
+    if (!isJavclub || !isJavclubTopPaginationEnabled()) {
+      existing?.remove();
+      return false;
+    }
+    const main = document2.querySelector("main#genesis-content");
+    const firstArticle = main?.querySelector(":scope > article.entry");
+    const bottom = main?.querySelector(":scope > .archive-pagination.pagination:not(#" + JAVCLUB_TOP_PAGINATION_ID + ")");
+    if (!firstArticle || !bottom?.querySelector("a[href]")) {
+      existing?.remove();
+      return false;
+    }
+    if (existing) return false;
+    const top = bottom.cloneNode(true);
+    top.id = JAVCLUB_TOP_PAGINATION_ID;
+    top.setAttribute("aria-label", "\u9876\u90E8\u7FFB\u9875");
+    top.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+    top.style.marginTop = "0";
+    top.style.marginBottom = "16px";
+    firstArticle.before(top);
+    return true;
   }
 
   // src/settings-actions.js
@@ -3321,6 +3355,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     </div>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">\u641C\u7D22 / \u5217\u8868\u9875\u529F\u80FD</div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+        <input data-setting="top-pagination" type="checkbox" style="margin-top:3px">
+        <span><strong>\u5728\u5217\u8868\u9876\u90E8\u663E\u793A\u7FFB\u9875\u680F</strong><small style="display:block;margin-top:2px;color:#666">\u590D\u5236\u7F51\u9875\u5E95\u90E8\u7684\u9875\u7801\u5230\u5217\u8868\u9876\u90E8\uFF08\u5206\u7C7B\u3001\u6807\u7B7E\u3001\u641C\u7D22\u548C\u9996\u9875\uFF09\uFF1B\u4FDD\u7559\u539F\u6765\u7684\u5E95\u90E8\u5206\u9875\u3002\u6CA1\u6709\u5206\u9875\u65F6\u4E0D\u4F1A\u65B0\u589E\u3002</small></span>
+      </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="batch-open" type="checkbox">
         \u663E\u793A\u201C\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u672C\u9875\u4E3B\u9898\u201D\u6309\u94AE
@@ -3419,6 +3457,14 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         ]
       },
       {
+        "key": "list",
+        "title": "\u5217\u8868\u4E0E\u5206\u9875",
+        "description": "\u5217\u8868\u9876\u90E8\u7FFB\u9875\u680F",
+        "settings": [
+          "top-pagination"
+        ]
+      },
+      {
         "key": "batch",
         "title": "\u6279\u91CF\u6253\u5F00",
         "description": "\u540E\u53F0\u987A\u5E8F\u6253\u5F00\u4E3B\u9898\u4E0E\u65F6\u95F4\u95F4\u9694",
@@ -3460,6 +3506,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const previewResetButton = panel.querySelector('[data-action="reset-javclub-preview-settings"]');
     const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
     const deletedJavfreeSearchInput = panel.querySelector('[data-setting="deleted-javfree-search"]');
+    const topPaginationInput = panel.querySelector('[data-setting="top-pagination"]');
     const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
     const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
     const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
@@ -3486,6 +3533,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     previewRetriesInput.value = String(previewLoadingSettings.retryCount);
     javfreePreviewInput.checked = isHdblogJavfreePreviewFallbackEnabled();
     deletedJavfreeSearchInput.checked = isHdblogDeletedJavfreeSearchEnabled();
+    topPaginationInput.checked = isJavclubTopPaginationEnabled();
     batchOpenInput.checked = isHdblogBatchOpenEnabled();
     const batchInterval = getHdblogBatchOpenInterval();
     batchIntervalMinInput.value = String(batchInterval.delayMin / 1e3);
@@ -3588,6 +3636,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(JAVCLUB_PREVIEW_RETRIES_KEY, previewRetries);
         GM_setValue(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
         GM_setValue(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, deletedJavfreeSearchInput.checked);
+        GM_setValue(JAVCLUB_TOP_PAGINATION_ENABLED_KEY, topPaginationInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
         GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
@@ -7325,6 +7374,51 @@ ${domains.join("\n")}
     const style = document2.createElement("style");
     style.id = BATCH_COMPACT_STYLE_ID;
     style.textContent = `
+    /* One palette and one hover target for both halves of the split button. */
+    #${BATCH_SPLIT_ID} {
+      --x1080x-batch-bg:#398bd4;
+      --x1080x-batch-hover:#287dc4;
+      --x1080x-batch-border:#2878c8;
+      border-radius:6px;
+      box-shadow:0 1px 3px rgba(0,0,0,.16);
+      transition:box-shadow .22s ease;
+    }
+    #${BATCH_SPLIT_ID}[data-x1080x-state="running"] {
+      --x1080x-batch-bg:#b84b4b;
+      --x1080x-batch-hover:#a43e3e;
+      --x1080x-batch-border:#9e4141;
+    }
+    #${BATCH_SPLIT_ID}[data-x1080x-state="warning"] {
+      --x1080x-batch-bg:#b36b22;
+      --x1080x-batch-hover:#9a581b;
+      --x1080x-batch-border:#94591c;
+    }
+    #${BATCH_SPLIT_ID}:hover { box-shadow:0 2px 8px rgba(0,0,0,.2); }
+    #${BATCH_SPLIT_ID} > #${BATCH_BUTTON_ID},
+    #${BATCH_SPLIT_ID} > #${BATCH_MODE_TRIGGER_ID} {
+      background:var(--x1080x-batch-bg) !important;
+      border-color:var(--x1080x-batch-border) !important;
+      color:#fff !important;
+      transition:background-color .22s ease,border-color .22s ease,box-shadow .22s ease;
+    }
+    #${BATCH_SPLIT_ID}:hover > #${BATCH_BUTTON_ID},
+    #${BATCH_SPLIT_ID}:hover > #${BATCH_MODE_TRIGGER_ID} {
+      background:var(--x1080x-batch-hover) !important;
+    }
+    #${BATCH_SPLIT_ID} > #${BATCH_MODE_TRIGGER_ID} {
+      border-left:1px solid rgba(255,255,255,.28) !important;
+    }
+    #${BATCH_SPLIT_ID} > #${BATCH_MODE_TRIGGER_ID}:disabled {
+      opacity:1;
+      cursor:default !important;
+    }
+    #${BATCH_SPLIT_ID} > button:focus-visible {
+      outline:2px solid rgba(255,255,255,.85);
+      outline-offset:-3px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #${BATCH_SPLIT_ID}, #${BATCH_SPLIT_ID} > button { transition:none; }
+    }
     #${BATCH_BUTTON_ID}[data-x1080x-compact],
     #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] {
       display:inline-flex;align-items:center;justify-content:center;
@@ -7419,6 +7513,12 @@ ${domains.join("\n")}
       if (event.key === "Escape") closeBatchModeMenu(document2);
     });
   }
+  function setBatchControlState(button, state) {
+    const split = button.ownerDocument.getElementById(BATCH_SPLIT_ID);
+    if (split && split.dataset.x1080xState !== state) {
+      split.dataset.x1080xState = state;
+    }
+  }
   function setBatchButtonIdle(button, count) {
     const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
     const label = unopenedOnly ? `\u6279\u91CF\u6253\u5F00\u672A\u6D4F\u89C8\uFF08${count}\uFF09` : `\u6279\u91CF\u6253\u5F00\u672C\u9875\uFF08${count}\uFF09`;
@@ -7428,12 +7528,9 @@ ${domains.join("\n")}
 \u5F53\u524D\u6A21\u5F0F\uFF1A\u6253\u5F00\u672C\u9875\u5168\u90E8\uFF0C\u5305\u62EC\u5DF2\u6709\u6D4F\u89C8\u8BB0\u5F55\u7684\u4E3B\u9898\u3002
 \u6309\u5217\u8868\u987A\u5E8F\u540E\u53F0\u6253\u5F00\uFF0C\u968F\u673A\u95F4\u9694\u3001\u5B9A\u671F\u505C\u987F\uFF1B\u518D\u6B21\u70B9\u51FB\u53EF\u505C\u6B62\u3002\u65C1\u8FB9\u7684 \u25BE \u53EF\u5207\u6362\u4EC5\u672A\u6D4F\u89C8\u3002`;
     renderCompactBatchControl(button, "batch", label, count, tooltip);
-    button.style.background = "#398bd4";
-    const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
-    if (dropdown) {
-      dropdown.disabled = false;
-      dropdown.style.background = "#398bd4";
-    }
+    setBatchControlState(button, "idle");
+    const dropdown = button.ownerDocument.getElementById(BATCH_MODE_TRIGGER_ID);
+    if (dropdown) dropdown.disabled = false;
     updateBatchModeMenu(document);
   }
   async function openCurrentPageThreads(button) {
@@ -7468,8 +7565,7 @@ ${domains.join("\n")}
       enabled: true,
       label: "\u2197 \u6279\u91CF\u6253\u5F00\u4E2D"
     });
-    button.style.background = "#b84b4b";
-    if (dropdown) dropdown.style.background = "#b84b4b";
+    setBatchControlState(button, "running");
     const onCloudflare = (event) => {
       if (!event || event.sessionId !== state.sessionId || state.cfChallenge) return;
       state.cfChallenge = event;
@@ -7493,8 +7589,7 @@ ${domains.join("\n")}
         `\u68C0\u6D4B\u5230 Cloudflare \u4EBA\u673A\u9A8C\u8BC1\uFF0C\u5DF2\u505C\u6B62\u7EE7\u7EED\u6253\u5F00\u3002
 \u5DF2\u6253\u5F00 ${opened}/${threads.length} \u4E2A\u4E3B\u9898\uFF0C\u8BF7\u5148\u624B\u52A8\u5B8C\u6210\u9A8C\u8BC1\u3002`
       );
-      button.style.background = "#b36b22";
-      if (dropdown) dropdown.style.background = "#b36b22";
+      setBatchControlState(button, "warning");
     };
     const checkCloudflare = () => {
       if (typeof GM_getValue === "function") {
@@ -7576,7 +7671,7 @@ ${isLongPause ? "\u5B9A\u671F\u957F\u505C\u987F" : "\u7B49\u5F85\u4E0B\u4E00\u4E
         `${finalLabel}
 ${state.cfChallenge ? "\u8BF7\u624B\u52A8\u5B8C\u6210 Cloudflare \u9A8C\u8BC1\u3002" : failures.length ? "\u8BF7\u67E5\u770B\u5931\u8D25\u63D0\u793A\u3002" : "\u53EF\u4EE5\u7EE7\u7EED\u4F7F\u7528\u6279\u91CF\u6253\u5F00\u6A21\u5F0F\u83DC\u5355\u3002"}`
       );
-      button.style.background = failures.length || state.cfChallenge ? "#b36b22" : "#398bd4";
+      setBatchControlState(button, failures.length || state.cfChallenge ? "warning" : "idle");
       window.setTimeout(() => {
         if (!batchOpenState) {
           setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
@@ -8493,7 +8588,6 @@ ${result.pageUrl}`);
       border: "1px solid #2878c8",
       borderRadius: "5px 0 0 5px",
       color: "#fff",
-      background: "#398bd4",
       cursor: "pointer",
       fontSize: "14px",
       lineHeight: "20px"
@@ -8510,10 +8604,9 @@ ${result.pageUrl}`);
     Object.assign(trigger.style, {
       padding: "7px 9px",
       border: "1px solid #2878c8",
-      borderLeft: "0",
+      borderLeft: "1px solid rgba(255,255,255,.28)",
       borderRadius: "0 5px 5px 0",
       color: "#fff",
-      background: "#398bd4",
       cursor: "pointer",
       fontSize: "15px",
       lineHeight: "20px"
@@ -8570,12 +8663,6 @@ ${result.pageUrl}`);
       updateBatchModeMenu(document);
       menu.hidden = !menu.hidden;
       trigger.setAttribute("aria-expanded", String(!menu.hidden));
-    });
-    button.addEventListener("mouseenter", () => {
-      if (!batchOpenState) button.style.background = "#246eaf";
-    });
-    button.addEventListener("mouseleave", () => {
-      if (!batchOpenState) button.style.background = "#398bd4";
     });
     button.addEventListener("click", () => void openCurrentPageThreads(button));
     split.append(button, trigger, menu);
@@ -8665,6 +8752,7 @@ ${title}`;
       if (isHdblogArticleUrl(location.href) && isBatchOpenHistoryEnabled()) {
         rememberBatchOpenedThread(location.href);
       }
+      installJavclubTopPagination(document, location);
       if (isBatchOpenPage()) {
         applyBatchOpenHistory(document);
         if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
