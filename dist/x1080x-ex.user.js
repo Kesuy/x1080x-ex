@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.41
+// @version      1.10.42
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -14,6 +14,8 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_listValues
+// @grant        GM_deleteValue
 // @grant        GM_addValueChangeListener
 // @grant        GM_removeValueChangeListener
 // @grant        GM_setClipboard
@@ -6913,6 +6915,43 @@ ${domains.join("\n")}
       return "";
     }
   }
+  var JAVCLUB_VISIT_LEDGER_PREFIX = "x1080x-ex:hdblog-visited-id-v2:";
+  var JAVCLUB_VISIT_LEDGER_REVISION = "x1080x-ex:hdblog-visited-id-v2-revision";
+  function javclubVisitMarkerKey(id) {
+    return /^post:\d+$/.test(id) ? JAVCLUB_VISIT_LEDGER_PREFIX + id : "";
+  }
+  function listJavclubVisitMarkers() {
+    if (typeof GM_listValues !== "function") return [];
+    try {
+      return GM_listValues().filter((key) => key.startsWith(JAVCLUB_VISIT_LEDGER_PREFIX)).map((key) => key.slice(JAVCLUB_VISIT_LEDGER_PREFIX.length)).filter((id) => /^post:\d+$/.test(id));
+    } catch {
+      return [];
+    }
+  }
+  function rememberJavclubVisitMarker(id) {
+    const key = javclubVisitMarkerKey(id);
+    if (!key || typeof GM_setValue !== "function") return;
+    GM_setValue(key, Date.now());
+    GM_setValue(JAVCLUB_VISIT_LEDGER_REVISION, `${id}:${Date.now()}:${Math.random()}`);
+    if (typeof GM_listValues !== "function" || typeof GM_deleteValue !== "function") return;
+    const ids = listJavclubVisitMarkers();
+    const limit = batchOpenHistoryLimit();
+    if (ids.length <= limit) return;
+    const oldest = ids.map((entry) => {
+      const entryKey = javclubVisitMarkerKey(entry);
+      return { entryKey, timestamp: Number(GM_getValue(entryKey, 0)) || 0 };
+    }).sort((a, b) => a.timestamp - b.timestamp);
+    for (const entry of oldest.slice(0, ids.length - limit)) {
+      if (entry.entryKey !== key) GM_deleteValue(entry.entryKey);
+    }
+  }
+  function forgetJavclubVisitMarker(id) {
+    const key = javclubVisitMarkerKey(id);
+    if (key && typeof GM_deleteValue === "function") {
+      GM_deleteValue(key);
+      GM_setValue(JAVCLUB_VISIT_LEDGER_REVISION, `removed:${id}:${Date.now()}`);
+    }
+  }
   function batchThreadHistoryKeys(thread) {
     if (!thread) return [];
     const id = batchOpenHistoryId(thread.url);
@@ -6920,7 +6959,7 @@ ${domains.join("\n")}
     return [...new Set([id, ...historyAliasesForTitle(title)].filter(Boolean))];
   }
   function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory())) {
-    return batchThreadHistoryKeys(thread).some((key) => history.has(key));
+    return batchThreadHistoryKeys(thread).some((key) => history.has(key) || batchOpenHistoryConfig()?.kind === "hdblog" && Boolean(javclubVisitMarkerKey(key)) && typeof GM_getValue === "function" && GM_getValue(javclubVisitMarkerKey(key), null) !== null);
   }
   function readBatchOpenHistory() {
     const config = batchOpenHistoryConfig();
@@ -6935,6 +6974,7 @@ ${domains.join("\n")}
     ] : [];
     const values = [
       ...Array.isArray(stored) ? stored : [],
+      ...config.kind === "hdblog" ? listJavclubVisitMarkers() : [],
       ...Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : [],
       ...Array.isArray(aliases) ? aliases : [],
       ...resolvedAliases
@@ -7147,6 +7187,7 @@ ${domains.join("\n")}
     if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== "function") return false;
     const id = batchOpenHistoryId(url);
     if (!id) return false;
+    if (config.kind === "hdblog") rememberJavclubVisitMarker(id);
     const rawStored = GM_getValue(config.historyKey, []);
     const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : rawStored;
     const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
@@ -7185,6 +7226,34 @@ ${domains.join("\n")}
       marked += 1;
     });
     return marked;
+  }
+  function installJavclubHistoryRefresh(document2) {
+    if (document2.documentElement?.dataset.x1080xJavclubHistoryRefresh) return;
+    if (batchOpenHistoryConfig()?.kind !== "hdblog" || !isBatchOpenPage()) return;
+    document2.documentElement.dataset.x1080xJavclubHistoryRefresh = "1";
+    let pending = null;
+    const refresh = () => {
+      if (pending !== null) return;
+      pending = window.setTimeout(() => {
+        pending = null;
+        if (!document2.documentElement?.isConnected) return;
+        applyBatchOpenHistory(document2);
+        if (!batchOpenState) {
+          const button = document2.getElementById(BATCH_BUTTON_ID);
+          if (button) setBatchButtonIdle(button, collectBatchOpenThreads(document2).length);
+        }
+      }, 80);
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    document2.addEventListener("visibilitychange", () => {
+      if (!document2.hidden) refresh();
+    });
+    if (typeof GM_addValueChangeListener === "function") {
+      for (const key of [HDBLOG_BATCH_OPEN_HISTORY_KEY2, JAVCLUB_VISIT_LEDGER_REVISION]) {
+        GM_addValueChangeListener(key, refresh);
+      }
+    }
   }
   function isThreadPage2() {
     const url = new URL(location.href);
@@ -7412,9 +7481,23 @@ ${domains.join("\n")}
       opacity:1;
       cursor:default !important;
     }
+    /* Do not draw the browser/site focus frame around just one half. */
+    #${BATCH_SPLIT_ID} > button:focus,
     #${BATCH_SPLIT_ID} > button:focus-visible {
-      outline:2px solid rgba(255,255,255,.85);
-      outline-offset:-3px;
+      outline:none !important;
+      box-shadow:none !important;
+    }
+    /* Keyboard focus belongs to the combined control, not its two pieces. */
+    #${BATCH_SPLIT_ID}:has(> button:focus-visible) {
+      outline:2px solid rgba(255,255,255,.92);
+      outline-offset:2px;
+    }
+    /* Older engines still get one continuous focus frame. */
+    @supports not selector(:has(> button:focus-visible)) {
+      #${BATCH_SPLIT_ID}:focus-within {
+        outline:2px solid rgba(255,255,255,.92);
+        outline-offset:2px;
+      }
     }
     @media (prefers-reduced-motion: reduce) {
       #${BATCH_SPLIT_ID}, #${BATCH_SPLIT_ID} > button { transition:none; }
@@ -7572,6 +7655,7 @@ ${domains.join("\n")}
       const historyId = batchOpenHistoryId(event.url);
       if (historyId && !state.previousHistory.has(historyId)) {
         const config = batchOpenHistoryConfig();
+        if (config?.kind === "hdblog") forgetJavclubVisitMarker(historyId);
         if (config && typeof GM_getValue === "function" && typeof GM_setValue === "function") {
           const raw = GM_getValue(config.historyKey, []);
           if (Array.isArray(raw)) {
@@ -8756,6 +8840,7 @@ ${title}`;
       if (isBatchOpenPage()) {
         applyBatchOpenHistory(document);
         if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
+        installJavclubHistoryRefresh(document);
       }
       startAutomaticLegacyHistoryMigration();
       observeModernBoard();
