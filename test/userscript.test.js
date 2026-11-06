@@ -1741,16 +1741,28 @@ test('JavClub 列表：按钮在顶栏右侧，先批量打开后定位；运行
     assert.equal(split.nextElementSibling, locator, '批量打开应在左、定位应在右');
     assert.equal(toolbar.style.right, '14px');
     assert.equal(doc.querySelector('.archive-description').contains(split), false);
-    assert.equal(main.style.background, dropdown.style.background);
+    assert.equal(split.dataset.x1080xState, 'idle');
+    assert.equal(main.style.background, '', '主按钮颜色由共享样式控制');
+    assert.equal(dropdown.style.background, '', '下拉按钮颜色由共享样式控制');
+    const compactStyles = doc.getElementById('x1080x-ex-batch-compact-controls').textContent;
+    assert.match(compactStyles, /--x1080x-batch-bg:#398bd4/);
+    assert.match(compactStyles, /data-x1080x-state="running"/);
+    assert.match(compactStyles, /#x1080x-ex-batch-split:hover > #x1080x-ex-open-page/);
+    assert.match(compactStyles, /#x1080x-ex-batch-split:hover > #x1080x-ex-batch-mode-trigger/);
+    assert.match(compactStyles, /transition:background-color/);
+    main.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: true }));
+    assert.equal(main.style.background, '', '鼠标移入不应覆盖统一配色');
     assert.equal(main.getAttribute('data-x1080x-count'), '1');
     assert.match(main.querySelector('svg[data-x1080x-icon="batch"]').innerHTML, /<rect/);
     main.click();
-    assert.equal(main.style.background, dropdown.style.background, '打开时主按钮和下拉同时变红');
+    assert.equal(split.dataset.x1080xState, 'running', '运行中由父容器统一设为红色');
+    assert.equal(dropdown.disabled, true, '运行时禁止更改打开模式');
     await waitFor(() => opened.length === 1, 'should open only the unread JavClub article');
     assert.deepEqual(opened, ['https://javclub.me/1013749.html']);
     await waitFor(() => main.getAttribute('data-x1080x-count') === '0',
       'unopened count should update after completion');
-    assert.equal(main.style.background, dropdown.style.background, '完成后主按钮和下拉同时恢复蓝色');
+    await waitFor(() => split.dataset.x1080xState === 'idle', '完成后整个按钮组恢复蓝色');
+    assert.equal(main.style.background, dropdown.style.background, '完成后没有单独残留的红色背景');
     assert.ok(store.get('x1080x-ex:hdblog-batch-open-history').includes('post:1013749'));
   } finally {
     dom.window.setTimeout = originalTimeout;
