@@ -6,6 +6,7 @@ import {
 } from '../src/settings-center.js';
 import { FC2CMADB_HDBLOG_SEARCH_ENABLED_KEY } from '../src/fc2cmadb.js';
 import { HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY } from '../src/hdblog-article.js';
+import { JAVCLUB_TOP_PAGINATION_ENABLED_KEY } from '../src/javclub-top-pagination.js';
 import { SHT_REPLY_PHRASE_KEY } from '../src/sehuatang.js';
 
 function withStore(values, run) {
@@ -91,6 +92,24 @@ test('switching sites retains unsaved edits and does not overwrite other site ke
     assert.equal(values.get(HDBLOG_ARTICLE_LAYOUT_ENABLED_KEY), false);
     assert.equal(host.shadowRoot.querySelector('[data-site-tab="javclub"]').hasAttribute('data-dirty'), false);
     assert.ok(dom.window.document.getElementById('x1080x-ex-unified-settings-center'));
+  });
+  dom.window.close();
+});
+
+test('JavClub top pagination has its own toggle in the centralized settings center', () => {
+  const dom = new JSDOM('<body></body>', { url: 'https://example.org/' });
+  const values = new Map();
+  withStore(values, () => {
+    const host = openUnifiedSettingsCenter(dom.window.document, { initialSite: 'javclub' });
+    const javclub = formIn(host, 'javclub');
+    const checkbox = javclub.querySelector('[data-setting="top-pagination"]');
+    assert.ok(checkbox, 'new toggle must be available even on an unrelated site');
+    assert.equal(checkbox.checked, true, 'top pagination is enabled by default');
+    assert.equal(checkbox.closest('[data-settings-section]').dataset.settingsSection, 'list');
+    assert.ok(javclub.querySelector('[data-settings-tab="list"]'));
+    checkbox.checked = false;
+    submit(dom.window.document, javclub);
+    assert.equal(values.get(JAVCLUB_TOP_PAGINATION_ENABLED_KEY), false);
   });
   dom.window.close();
 });
