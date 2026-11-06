@@ -1087,9 +1087,23 @@ function ensureBatchCompactStyles(document) {
       opacity:1;
       cursor:default !important;
     }
+    /* Do not draw the browser/site focus frame around just one half. */
+    #${BATCH_SPLIT_ID} > button:focus,
     #${BATCH_SPLIT_ID} > button:focus-visible {
-      outline:2px solid rgba(255,255,255,.85);
-      outline-offset:-3px;
+      outline:none !important;
+      box-shadow:none !important;
+    }
+    /* Keyboard focus belongs to the combined control, not its two pieces. */
+    #${BATCH_SPLIT_ID}:has(> button:focus-visible) {
+      outline:2px solid rgba(255,255,255,.92);
+      outline-offset:2px;
+    }
+    /* Older engines still get one continuous focus frame. */
+    @supports not selector(:has(> button:focus-visible)) {
+      #${BATCH_SPLIT_ID}:focus-within {
+        outline:2px solid rgba(255,255,255,.92);
+        outline-offset:2px;
+      }
     }
     @media (prefers-reduced-motion: reduce) {
       #${BATCH_SPLIT_ID}, #${BATCH_SPLIT_ID} > button { transition:none; }
