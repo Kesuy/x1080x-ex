@@ -8,6 +8,10 @@ import {
   getJavclubPreviewLoadingSettings,
 } from './javclub-preview-loading.js';
 import { organizeSettingsPanel } from './settings-layout.js';
+import {
+  JAVCLUB_TOP_PAGINATION_ENABLED_KEY,
+  isJavclubTopPaginationEnabled,
+} from './javclub-top-pagination.js';
 import { getAgaghhhOrigin } from './site-domains.js';
 import { isPixhostShowUrl, resolvePixhostShowUrl } from './pixhost.js';
 import { copyCodeWithButtonFeedback } from './clipboard.js';
@@ -1269,6 +1273,10 @@ export function openHdblogSettingsPanel(document = globalThis.document, { embedd
     </div>
     <div style="margin:2px 0 18px;padding:14px 15px;border:1px solid #e3e6ea;border-radius:8px;background:#f8f9fa">
       <div style="font-weight:700;margin-bottom:10px">搜索 / 列表页功能</div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:10px">
+        <input data-setting="top-pagination" type="checkbox" style="margin-top:3px">
+        <span><strong>在列表顶部显示翻页栏</strong><small style="display:block;margin-top:2px;color:#666">复制网页底部的页码到列表顶部（分类、标签、搜索和首页）；保留原来的底部分页。没有分页时不会新增。</small></span>
+      </label>
       <label style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
         <input data-setting="batch-open" type="checkbox">
         显示“后台顺序打开本页主题”按钮
@@ -1368,6 +1376,14 @@ export function openHdblogSettingsPanel(document = globalThis.document, { embedd
     ]
   },
   {
+    "key": "list",
+    "title": "列表与分页",
+    "description": "列表顶部翻页栏",
+    "settings": [
+      "top-pagination"
+    ]
+  },
+  {
     "key": "batch",
     "title": "批量打开",
     "description": "后台顺序打开主题与时间间隔",
@@ -1410,6 +1426,7 @@ export function openHdblogSettingsPanel(document = globalThis.document, { embedd
   const previewResetButton = panel.querySelector('[data-action="reset-javclub-preview-settings"]');
   const javfreePreviewInput = panel.querySelector('[data-setting="javfree-preview-fallback"]');
   const deletedJavfreeSearchInput = panel.querySelector('[data-setting="deleted-javfree-search"]');
+  const topPaginationInput = panel.querySelector('[data-setting="top-pagination"]');
   const batchOpenInput = panel.querySelector('[data-setting="batch-open"]');
   const batchIntervalMinInput = panel.querySelector('[data-setting="batch-open-interval-min"]');
   const batchIntervalMaxInput = panel.querySelector('[data-setting="batch-open-interval-max"]');
@@ -1437,6 +1454,7 @@ export function openHdblogSettingsPanel(document = globalThis.document, { embedd
   previewRetriesInput.value = String(previewLoadingSettings.retryCount);
   javfreePreviewInput.checked = isHdblogJavfreePreviewFallbackEnabled();
   deletedJavfreeSearchInput.checked = isHdblogDeletedJavfreeSearchEnabled();
+  topPaginationInput.checked = isJavclubTopPaginationEnabled();
   batchOpenInput.checked = isHdblogBatchOpenEnabled();
   const batchInterval = getHdblogBatchOpenInterval();
   batchIntervalMinInput.value = String(batchInterval.delayMin / 1000);
@@ -1552,6 +1570,7 @@ export function openHdblogSettingsPanel(document = globalThis.document, { embedd
       GM_setValue(JAVCLUB_PREVIEW_RETRIES_KEY, previewRetries);
       GM_setValue(HDBLOG_JAVFREE_PREVIEW_FALLBACK_ENABLED_KEY, javfreePreviewInput.checked);
       GM_setValue(HDBLOG_DELETED_JAVFREE_SEARCH_ENABLED_KEY, deletedJavfreeSearchInput.checked);
+      GM_setValue(JAVCLUB_TOP_PAGINATION_ENABLED_KEY, topPaginationInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_ENABLED_KEY, batchOpenInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MIN_KEY, batchIntervalMinMs);
       GM_setValue(HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY, batchIntervalMaxMs);
