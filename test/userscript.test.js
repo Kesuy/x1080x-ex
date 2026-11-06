@@ -1801,7 +1801,7 @@ test('JavClub concurrent tabs keep separately keyed records even if the shared h
     <main id="genesis-content">
       <div class="archive-description"><h1>AV Censored</h1></div>
       <article class="entry"><h2 class="entry-title"><a href="/1013749.html">START-662</a></h2></article>
-      <article class="entry"><h2 class="entry-title"><a href="/1013750.html">ROE-573</a></h2></article>
+      <article class="entry"><h2 class="entry-title"><a href="/1013750/roe-573/">ROE-573</a></h2></article>
     </main></body></html>`, { url: 'https://javclub.me/category/av-censored/' });
   const restore = installDomGlobals(dom.window);
   const before = ['GM_listValues', 'GM_deleteValue', 'GM_addValueChangeListener']
@@ -1809,6 +1809,7 @@ test('JavClub concurrent tabs keep separately keyed records even if the shared h
   const store = new Map([
     ['x1080x-ex:hdblog-batch-open-history-enabled', true],
     ['x1080x-ex:hdblog-batch-open-history', ['post:1013749']],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
   ]);
   const listeners = new Map();
   globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
@@ -1826,7 +1827,7 @@ test('JavClub concurrent tabs keep separately keyed records even if the shared h
     await import(`../src/userscript.js?javclub-lost-history-${Date.now()}`);
     const doc = dom.window.document;
     const first = doc.querySelector('a[href="/1013749.html"]');
-    const second = doc.querySelector('a[href="/1013750.html"]');
+    const second = doc.querySelector('a[href="/1013750/roe-573/"]');
     assert.equal(first.getAttribute('data-x1080x-batch-opened'), '1');
     assert.equal(second.getAttribute('data-x1080x-batch-opened'), null);
     // Simulate another background tab having persisted its own visit first,
@@ -1840,6 +1841,8 @@ test('JavClub concurrent tabs keep separately keyed records even if the shared h
     assert.equal(second.getAttribute('data-x1080x-batch-opened'), '1');
     assert.equal(store.get('x1080x-ex:hdblog-batch-open-history').includes('post:1013750'), false,
       'test confirms original shared array has dropped the item');
+    assert.equal(doc.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（0）',
+      'separately stored marker must also prevent a second bulk open');
   } finally {
     for (const [key, value] of before) {
       if (value === undefined) delete globalThis[key];
