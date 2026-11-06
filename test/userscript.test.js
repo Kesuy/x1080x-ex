@@ -1750,6 +1750,17 @@ test('JavClub 列表：按钮在顶栏右侧，先批量打开后定位；运行
     assert.match(compactStyles, /#x1080x-ex-batch-split:hover > #x1080x-ex-open-page/);
     assert.match(compactStyles, /#x1080x-ex-batch-split:hover > #x1080x-ex-batch-mode-trigger/);
     assert.match(compactStyles, /transition:background-color/);
+    assert.match(compactStyles, /#x1080x-ex-batch-split > button:focus,/);
+    assert.match(compactStyles, /outline:none !important;/,
+      'both halves suppress separate native and site focus borders');
+    assert.match(compactStyles, /box-shadow:none !important;/,
+      'site focus shadows must not frame only the main button');
+    assert.match(compactStyles, /#x1080x-ex-batch-split:has\(> button:focus-visible\)/,
+      'keyboard focus outline must surround the entire split control');
+    assert.match(compactStyles, /#x1080x-ex-batch-split:focus-within/,
+      'older browsers should retain a grouped focus fallback');
+    assert.doesNotMatch(compactStyles, /outline-offset:-3px/,
+      'old inset white rectangle on the left half must be removed');
     main.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: true }));
     assert.equal(main.style.background, '', '鼠标移入不应覆盖统一配色');
     assert.equal(main.getAttribute('data-x1080x-count'), '1');
