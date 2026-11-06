@@ -1795,6 +1795,61 @@ test('JavClub .html 正文浏览记入沿用的 HDblog 历史，不会丢失旧�
 });
 
 
+
+test('JavClub concurrent tabs keep separately keyed records even if the shared history array loses an update', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <main id="genesis-content">
+      <div class="archive-description"><h1>AV Censored</h1></div>
+      <article class="entry"><h2 class="entry-title"><a href="/1013749.html">START-662</a></h2></article>
+      <article class="entry"><h2 class="entry-title"><a href="/1013750.html">ROE-573</a></h2></article>
+    </main></body></html>`, { url: 'https://javclub.me/category/av-censored/' });
+  const restore = installDomGlobals(dom.window);
+  const before = ['GM_listValues', 'GM_deleteValue', 'GM_addValueChangeListener']
+    .map((key) => [key, globalThis[key]]);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1013749']],
+  ]);
+  const listeners = new Map();
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => {
+    store.set(key, value);
+    for (const cb of listeners.get(key) || []) cb(key, null, value, true);
+  };
+  globalThis.GM_listValues = () => [...store.keys()];
+  globalThis.GM_deleteValue = (key) => store.delete(key);
+  globalThis.GM_addValueChangeListener = (key, callback) => {
+    listeners.set(key, [...(listeners.get(key) || []), callback]);
+    return listeners.size;
+  };
+  try {
+    await import(`../src/userscript.js?javclub-lost-history-${Date.now()}`);
+    const doc = dom.window.document;
+    const first = doc.querySelector('a[href="/1013749.html"]');
+    const second = doc.querySelector('a[href="/1013750.html"]');
+    assert.equal(first.getAttribute('data-x1080x-batch-opened'), '1');
+    assert.equal(second.getAttribute('data-x1080x-batch-opened'), null);
+    // Simulate another background tab having persisted its own visit first,
+    // then overwriting the shared array with an older snapshot.
+    store.set('x1080x-ex:hdblog-visited-id-v2:post:1013750', Date.now());
+    store.set('x1080x-ex:hdblog-batch-open-history', ['post:1013749']);
+    globalThis.GM_setValue('x1080x-ex:hdblog-visited-id-v2-revision', 'post:1013750:remote');
+    await waitFor(() => second.getAttribute('data-x1080x-batch-opened') === '1',
+      'live shared-ledger update should mark the newly visited article');
+    doc.defaultView.dispatchEvent(new dom.window.Event('focus'));
+    assert.equal(second.getAttribute('data-x1080x-batch-opened'), '1');
+    assert.equal(store.get('x1080x-ex:hdblog-batch-open-history').includes('post:1013750'), false,
+      'test confirms original shared array has dropped the item');
+  } finally {
+    for (const [key, value] of before) {
+      if (value === undefined) delete globalThis[key];
+      else globalThis[key] = value;
+    }
+    restore();
+    dom.window.close();
+  }
+});
+
 test('JavClub 无尾斜杠分类首页：能跨页扫描，不能错误提示只检查 1 页', async () => {
   const root = 'https://javclub.me/category/av-censored';
   const page2 = 'https://javclub.me/category/av-censored/page/2/';
