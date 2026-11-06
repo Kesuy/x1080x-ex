@@ -379,6 +379,57 @@ function batchOpenHistoryId(value) {
   }
 }
 
+// Each JavClub article gets a separate marker as well as the original bounded
+// history array. Concurrent background tabs cannot overwrite each other's
+// marker even when their read/modify/write cycles race.
+const JAVCLUB_VISIT_LEDGER_PREFIX = 'x1080x-ex:hdblog-visited-id-v2:';
+const JAVCLUB_VISIT_LEDGER_REVISION = 'x1080x-ex:hdblog-visited-id-v2-revision';
+
+function javclubVisitMarkerKey(id) {
+  return /^post:\d+$/.test(id) ? JAVCLUB_VISIT_LEDGER_PREFIX + id : '';
+}
+
+function listJavclubVisitMarkers() {
+  if (typeof GM_listValues !== 'function') return [];
+  try {
+    return GM_listValues()
+      .filter((key) => key.startsWith(JAVCLUB_VISIT_LEDGER_PREFIX))
+      .map((key) => key.slice(JAVCLUB_VISIT_LEDGER_PREFIX.length))
+      .filter((id) => /^post:\d+$/.test(id));
+  } catch {
+    return [];
+  }
+}
+
+function rememberJavclubVisitMarker(id) {
+  const key = javclubVisitMarkerKey(id);
+  if (!key || typeof GM_setValue !== 'function') return;
+  // Writing this independent key first protects against later lost-array writes.
+  GM_setValue(key, Date.now());
+  GM_setValue(JAVCLUB_VISIT_LEDGER_REVISION, `${id}:${Date.now()}:${Math.random()}`);
+  if (typeof GM_listValues !== 'function' || typeof GM_deleteValue !== 'function') return;
+  // Respect the record limit without repeatedly scanning timestamps for normal
+  // small histories. Pruning only applies when the independent ledger is full.
+  const ids = listJavclubVisitMarkers();
+  const limit = batchOpenHistoryLimit();
+  if (ids.length <= limit) return;
+  const oldest = ids.map((entry) => {
+    const entryKey = javclubVisitMarkerKey(entry);
+    return { entryKey, timestamp: Number(GM_getValue(entryKey, 0)) || 0 };
+  }).sort((a, b) => a.timestamp - b.timestamp);
+  for (const entry of oldest.slice(0, ids.length - limit)) {
+    if (entry.entryKey !== key) GM_deleteValue(entry.entryKey);
+  }
+}
+
+function forgetJavclubVisitMarker(id) {
+  const key = javclubVisitMarkerKey(id);
+  if (key && typeof GM_deleteValue === 'function') {
+    GM_deleteValue(key);
+    GM_setValue(JAVCLUB_VISIT_LEDGER_REVISION, `removed:${id}:${Date.now()}`);
+  }
+}
+
 function batchThreadHistoryKeys(thread) {
   if (!thread) return [];
   const id = batchOpenHistoryId(thread.url);
@@ -387,7 +438,13 @@ function batchThreadHistoryKeys(thread) {
 }
 
 function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory())) {
-  return batchThreadHistoryKeys(thread).some((key) => history.has(key));
+  return batchThreadHistoryKeys(thread).some((key) => (
+    history.has(key)
+    || (batchOpenHistoryConfig()?.kind === 'hdblog'
+      && Boolean(javclubVisitMarkerKey(key))
+      && typeof GM_getValue === 'function'
+      && GM_getValue(javclubVisitMarkerKey(key), null) !== null)
+  ));
 }
 
 function readBatchOpenHistory() {
@@ -406,6 +463,7 @@ function readBatchOpenHistory() {
     : [];
   const values = [
     ...(Array.isArray(stored) ? stored : []),
+    ...(config.kind === 'hdblog' ? listJavclubVisitMarkers() : []),
     ...(Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : []),
     ...(Array.isArray(aliases) ? aliases : []),
     ...resolvedAliases,
@@ -683,6 +741,7 @@ function rememberBatchOpenedThread(url, titleText = '') {
   if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== 'function') return false;
   const id = batchOpenHistoryId(url);
   if (!id) return false;
+  if (config.kind === 'hdblog') rememberJavclubVisitMarker(id);
   const rawStored = GM_getValue(config.historyKey, []);
   const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
   const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
@@ -729,6 +788,37 @@ function applyBatchOpenHistory(document) {
     marked += 1;
   });
   return marked;
+}
+
+// React to visits recorded in other tabs without requiring the user to reload
+// the JavClub listing. Focus/pageshow also cover suspended background tabs.
+function installJavclubHistoryRefresh(document) {
+  if (document.documentElement?.dataset.x1080xJavclubHistoryRefresh) return;
+  if (batchOpenHistoryConfig()?.kind !== 'hdblog' || !isBatchOpenPage()) return;
+  document.documentElement.dataset.x1080xJavclubHistoryRefresh = '1';
+  let pending = null;
+  const refresh = () => {
+    if (pending !== null) return;
+    pending = window.setTimeout(() => {
+      pending = null;
+      if (!document.documentElement?.isConnected) return;
+      applyBatchOpenHistory(document);
+      if (!batchOpenState) {
+        const button = document.getElementById(BATCH_BUTTON_ID);
+        if (button) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+      }
+    }, 80);
+  };
+  window.addEventListener('focus', refresh);
+  window.addEventListener('pageshow', refresh);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh();
+  });
+  if (typeof GM_addValueChangeListener === 'function') {
+    for (const key of [HDBLOG_BATCH_OPEN_HISTORY_KEY, JAVCLUB_VISIT_LEDGER_REVISION]) {
+      GM_addValueChangeListener(key, refresh);
+    }
+  }
 }
 
 function isThreadPage() {
@@ -1173,6 +1263,7 @@ async function openCurrentPageThreads(button) {
     const historyId = batchOpenHistoryId(event.url);
     if (historyId && !state.previousHistory.has(historyId)) {
       const config = batchOpenHistoryConfig();
+      if (config?.kind === 'hdblog') forgetJavclubVisitMarker(historyId);
       if (config && typeof GM_getValue === 'function' && typeof GM_setValue === 'function') {
         const raw = GM_getValue(config.historyKey, []);
         if (Array.isArray(raw)) {
@@ -2454,6 +2545,7 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   if (isBatchOpenPage()) {
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
+    installJavclubHistoryRefresh(document);
   }
   startAutomaticLegacyHistoryMigration();
   observeModernBoard();
