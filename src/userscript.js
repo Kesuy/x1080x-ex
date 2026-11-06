@@ -959,6 +959,51 @@ function ensureBatchCompactStyles(document) {
   const style = document.createElement('style');
   style.id = BATCH_COMPACT_STYLE_ID;
   style.textContent = `
+    /* One palette and one hover target for both halves of the split button. */
+    #${BATCH_SPLIT_ID} {
+      --x1080x-batch-bg:#398bd4;
+      --x1080x-batch-hover:#287dc4;
+      --x1080x-batch-border:#2878c8;
+      border-radius:6px;
+      box-shadow:0 1px 3px rgba(0,0,0,.16);
+      transition:box-shadow .22s ease;
+    }
+    #${BATCH_SPLIT_ID}[data-x1080x-state="running"] {
+      --x1080x-batch-bg:#b84b4b;
+      --x1080x-batch-hover:#a43e3e;
+      --x1080x-batch-border:#9e4141;
+    }
+    #${BATCH_SPLIT_ID}[data-x1080x-state="warning"] {
+      --x1080x-batch-bg:#b36b22;
+      --x1080x-batch-hover:#9a581b;
+      --x1080x-batch-border:#94591c;
+    }
+    #${BATCH_SPLIT_ID}:hover { box-shadow:0 2px 8px rgba(0,0,0,.2); }
+    #${BATCH_SPLIT_ID} > #${BATCH_BUTTON_ID},
+    #${BATCH_SPLIT_ID} > #${BATCH_MODE_TRIGGER_ID} {
+      background:var(--x1080x-batch-bg) !important;
+      border-color:var(--x1080x-batch-border) !important;
+      color:#fff !important;
+      transition:background-color .22s ease,border-color .22s ease,box-shadow .22s ease;
+    }
+    #${BATCH_SPLIT_ID}:hover > #${BATCH_BUTTON_ID},
+    #${BATCH_SPLIT_ID}:hover > #${BATCH_MODE_TRIGGER_ID} {
+      background:var(--x1080x-batch-hover) !important;
+    }
+    #${BATCH_SPLIT_ID} > #${BATCH_MODE_TRIGGER_ID} {
+      border-left:1px solid rgba(255,255,255,.28) !important;
+    }
+    #${BATCH_SPLIT_ID} > #${BATCH_MODE_TRIGGER_ID}:disabled {
+      opacity:1;
+      cursor:default !important;
+    }
+    #${BATCH_SPLIT_ID} > button:focus-visible {
+      outline:2px solid rgba(255,255,255,.85);
+      outline-offset:-3px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #${BATCH_SPLIT_ID}, #${BATCH_SPLIT_ID} > button { transition:none; }
+    }
     #${BATCH_BUTTON_ID}[data-x1080x-compact],
     #${BATCH_PROGRESS_BUTTON_ID}[data-x1080x-compact] {
       display:inline-flex;align-items:center;justify-content:center;
@@ -1061,6 +1106,13 @@ function installBatchModeMenuDismiss(document) {
   });
 }
 
+function setBatchControlState(button, state) {
+  const split = button.ownerDocument.getElementById(BATCH_SPLIT_ID);
+  if (split && split.dataset.x1080xState !== state) {
+    split.dataset.x1080xState = state;
+  }
+}
+
 function setBatchButtonIdle(button, count) {
   const unopenedOnly = isBatchOpenUnopenedOnlyEnabled();
   const label = unopenedOnly
@@ -1070,12 +1122,9 @@ function setBatchButtonIdle(button, count) {
     ? `${label}\n当前模式：仅打开未浏览。按列表顺序后台打开，按脚本浏览记录跳过已访问主题。\n随机间隔、定期停顿；再次点击可停止。旁边的 ▾ 可切换为打开全部。`
     : `${label}\n当前模式：打开本页全部，包括已有浏览记录的主题。\n按列表顺序后台打开，随机间隔、定期停顿；再次点击可停止。旁边的 ▾ 可切换仅未浏览。`;
   renderCompactBatchControl(button, 'batch', label, count, tooltip);
-  button.style.background = '#398bd4';
-  const dropdown = document.getElementById(BATCH_MODE_TRIGGER_ID);
-  if (dropdown) {
-    dropdown.disabled = false;
-    dropdown.style.background = '#398bd4';
-  }
+  setBatchControlState(button, 'idle');
+  const dropdown = button.ownerDocument.getElementById(BATCH_MODE_TRIGGER_ID);
+  if (dropdown) dropdown.disabled = false;
   updateBatchModeMenu(document);
 }
 
@@ -1115,8 +1164,7 @@ async function openCurrentPageThreads(button) {
     enabled: true,
     label: '↗ 批量打开中',
   });
-  button.style.background = '#b84b4b';
-  if (dropdown) dropdown.style.background = '#b84b4b';
+  setBatchControlState(button, 'running');
 
   const onCloudflare = (event) => {
     if (!event || event.sessionId !== state.sessionId || state.cfChallenge) return;
@@ -1137,8 +1185,7 @@ async function openCurrentPageThreads(button) {
     renderCompactBatchControl(button, 'batch', '检测到 Cloudflare 验证，已停止',
       `${opened}/${threads.length}`,
       `检测到 Cloudflare 人机验证，已停止继续打开。\n已打开 ${opened}/${threads.length} 个主题，请先手动完成验证。`);
-    button.style.background = '#b36b22';
-    if (dropdown) dropdown.style.background = '#b36b22';
+    setBatchControlState(button, 'warning');
   };
   const checkCloudflare = () => {
     if (typeof GM_getValue === 'function') {
@@ -1219,7 +1266,7 @@ async function openCurrentPageThreads(button) {
     renderCompactBatchControl(button, 'batch', finalLabel,
       `${opened}/${threads.length}`,
       `${finalLabel}\n${state.cfChallenge ? '请手动完成 Cloudflare 验证。' : failures.length ? '请查看失败提示。' : '可以继续使用批量打开模式菜单。'}`);
-    button.style.background = (failures.length || state.cfChallenge) ? '#b36b22' : '#398bd4';
+    setBatchControlState(button, (failures.length || state.cfChallenge) ? 'warning' : 'idle');
     window.setTimeout(() => {
       if (!batchOpenState) {
         setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
@@ -2218,7 +2265,6 @@ function addBatchOpenButton() {
     border: '1px solid #2878c8',
     borderRadius: '5px 0 0 5px',
     color: '#fff',
-    background: '#398bd4',
     cursor: 'pointer',
     fontSize: '14px',
     lineHeight: '20px',
@@ -2236,10 +2282,9 @@ function addBatchOpenButton() {
   Object.assign(trigger.style, {
     padding: '7px 9px',
     border: '1px solid #2878c8',
-    borderLeft: '0',
+    borderLeft: '1px solid rgba(255,255,255,.28)',
     borderRadius: '0 5px 5px 0',
     color: '#fff',
-    background: '#398bd4',
     cursor: 'pointer',
     fontSize: '15px',
     lineHeight: '20px',
@@ -2296,12 +2341,6 @@ function addBatchOpenButton() {
     updateBatchModeMenu(document);
     menu.hidden = !menu.hidden;
     trigger.setAttribute('aria-expanded', String(!menu.hidden));
-  });
-  button.addEventListener('mouseenter', () => {
-    if (!batchOpenState) button.style.background = '#246eaf';
-  });
-  button.addEventListener('mouseleave', () => {
-    if (!batchOpenState) button.style.background = '#398bd4';
   });
   button.addEventListener('click', () => void openCurrentPageThreads(button));
 
