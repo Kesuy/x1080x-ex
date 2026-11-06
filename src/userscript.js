@@ -1,4 +1,5 @@
 import { renderDownloadIcon } from './download-icon.js';
+import { installJavclubTopPagination } from './javclub-top-pagination.js';
 import { registerSettingsTool } from './settings-actions.js';
 export { runSiteSettingsTool } from './settings-actions.js';
 import {
@@ -2408,6 +2409,9 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   if (isHdblogArticleUrl(location.href) && isBatchOpenHistoryEnabled()) {
     rememberBatchOpenedThread(location.href);
   }
+  // Independent of batch-open: keep the native bottom pagination and add an
+  // optional duplicate before the first JavClub listing article.
+  installJavclubTopPagination(document, location);
   if (isBatchOpenPage()) {
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
