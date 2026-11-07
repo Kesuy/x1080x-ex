@@ -1793,7 +1793,7 @@ function setDownloadStatus(button, text, label = text) {
     : label.startsWith('⚠') ? 'error'
       : label.startsWith('✓') ? 'done' : 'idle';
   if (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) {
-    const display = state === 'done' || state === 'error' ? label : text;
+    const display = (state === 'done' && !text.startsWith('已跳过失效 Preview')) || state === 'error' ? label : text;
     if (button.textContent !== display) button.textContent = display;
     button.dataset.downloadState = state;
     button.style.background = state === 'done' ? '#257b61'
@@ -1941,7 +1941,7 @@ async function downloadAll(button) {
       : hasSuccessfulSave ? `✓ 已处理 ${processed}/${totalTasks}`
         : skipped ? '已跳过失效 Preview'
           : nativeResult.total ? '已交给网站处理' : '⚠ 没有成功下载文件';
-    const statusText = !modern && skipped && !failures.length && !hasSuccessfulSave
+    const statusText = !modern && skipped && !failures.length
       ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
       : summary.join(' · ');
     setDownloadStatus(button, statusText, completedLabel);
