@@ -318,7 +318,9 @@ export async function scanBatchProgressPages({
       if (ratio >= 0.75) {
         return { ...orderedBoundary, inspected: checked, orderedBoundary: true };
       }
-      if (ratio < 0.5) orderedBoundary = null;
+      // A confirming page must be immediately adjacent; a match many pages
+      // later may describe a different pocket of sporadically opened threads.
+      orderedBoundary = null;
     }
     const firstOpenedIndex = openedFlags.indexOf(true);
     if (!orderedBoundary && firstOpenedIndex > 0 && ratio >= 2 / 3) {
@@ -337,7 +339,10 @@ export async function scanBatchProgressPages({
     }
     if (previous) {
       const delta = Math.abs(ratio - previous.ratio);
-      if (delta >= 0.5) {
+      // A strong jump toward opened older posts can still be an ordered
+      // mixed boundary. Confirm it against the next page rather than letting
+      // this old generic ratio shortcut choose the preceding mixed page.
+      if (delta >= 0.5 && orderedBoundary?.url !== normalized) {
         const preferred = previous.opened && previous.unopened
           ? previous
           : { url: normalized, checked, opened, unopened };
