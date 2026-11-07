@@ -1043,6 +1043,12 @@ test('modern x1080x resource downloads its authorized ZIP with a title-based fil
   dom.window.confirm = () => true;
   let nativeClicks = 0;
   const saves = [];
+  const autoResetTimers = [];
+  const schedule = dom.window.setTimeout.bind(dom.window);
+  dom.window.setTimeout = (callback, delay, ...args) => {
+    if (delay === 2500) { autoResetTimers.push(callback); return 0; }
+    return schedule(callback, delay, ...args);
+  };
   mockNativeAttachmentFetch(dom);
   dom.window.URL.createObjectURL = () => 'blob:renamed-zip';
   dom.window.URL.revokeObjectURL = () => {};
@@ -1065,6 +1071,22 @@ test('modern x1080x resource downloads its authorized ZIP with a title-based fil
     await waitFor(() => saves.length === 1 && !button.disabled, 'ZIP should be saved under the parsed thread title');
     assert.equal(nativeClicks, 0, 'the native button must not trigger a second quota claim');
     assert.match(saves[0], /^SUJI-322 .*\.zip$/);
+    assert.equal(button.dataset.downloadState, 'done', 'completed download must keep the checkmark');
+    assert.equal(button.style.background, 'rgb(37, 123, 97)');
+    assert.equal(autoResetTimers.length, 0, 'success must not schedule the old 2.5s reset');
+
+    // A modern Next.js route may replace the entire header after success.
+    dom.window.document.querySelector('.thread-header').outerHTML = `<header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button secondary dock-side small">收藏</button>
+      </div></span></div><h1>SUJI-322 (HD1080P)(姦乱者)(suji00322)影片</h1></header>`;
+    await waitFor(() => {
+      const replacement = dom.window.document.getElementById('x1080x-ex-download');
+      return replacement && replacement !== button && replacement.dataset.downloadState === 'done';
+    }, 'React-replaced download button must restore the successful state');
+    const restored = dom.window.document.getElementById('x1080x-ex-download');
+    assert.ok(restored.querySelector('svg[data-icon="done"]'));
+    assert.match(dom.window.document.getElementById('x1080x-ex-download-status').textContent, /已处理 1\/1/);
   } finally {
     restore();
     dom.window.close();
