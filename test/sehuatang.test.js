@@ -358,6 +358,14 @@ test('one visible file downloads through its row icon and original link handlers
   assert.equal(link.target, '_blank');
   assert.equal(link.hasAttribute('download'), false);
   assert.match(root.querySelector('.status').textContent, /已触发网站附件下载/);
+  const icon = root.querySelector('[data-action="download-attachment"]');
+  assert.equal(icon.dataset.downloadState, 'started', '98堂 only confirms native handoff, not completion');
+  assert.equal(icon.textContent, '↗');
+  assert.match(icon.title, /已发起下载/);
+  installSehuatangToolbar(document);
+  const rerendered = document.getElementById('x1080x-ex-sehuatang-toolbar').shadowRoot
+    .querySelector('[data-action="download-attachment"]');
+  assert.equal(rerendered.dataset.downloadState, 'started', 'reinstalled panel should keep the native handoff indicator');
   assert.equal(root.querySelectorAll('.attachment-row').length, 1);
   dom.window.close();
 }));
