@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.43
+// @version      1.10.44
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -246,6 +246,27 @@
       hasExternalSubtitle
     };
   }
+  var resolvedThreadActresses = /* @__PURE__ */ new WeakMap();
+  function setResolvedThreadActress(document2, code, actress) {
+    if (!document2 || !code || !String(actress || "").trim()) return;
+    resolvedThreadActresses.set(document2, {
+      code: String(code).trim().toUpperCase(),
+      actress: String(actress).replace(/\s+/g, " ").trim()
+    });
+  }
+  function getResolvedThreadActress(document2, code) {
+    if (!document2 || !code) return "";
+    const entry = resolvedThreadActresses.get(document2);
+    return entry?.code === String(code).trim().toUpperCase() ? entry.actress : "";
+  }
+  function parseCurrentThreadTitle(document2) {
+    const title = parseThreadTitle(getThreadHeadingText(document2));
+    const actress = getResolvedThreadActress(document2, title.code);
+    if (actress && !title.cleanTitle.includes(actress)) {
+      title.cleanTitle = `${title.cleanTitle} ${actress}`;
+    }
+    return title;
+  }
   var WINDOWS_REPLACEMENTS = /* @__PURE__ */ new Map([
     ["<", "\uFF1C"],
     [">", "\uFF1E"],
@@ -418,7 +439,7 @@
   }
   function extractThreadResources(document2) {
     const rawTitle = getThreadHeadingText(document2);
-    const title = parseThreadTitle(rawTitle);
+    const title = parseCurrentThreadTitle(document2);
     const firstPost = [...document2.querySelectorAll('#postlist [id^="post_"]')].find((element) => /^post_\d+$/i.test(element.id)) || document2.querySelector("#postlist > div, #postlist") || document2.querySelector("#first-post");
     const content = firstPost?.querySelector('[id^="postmessage_"], .t_f, .post-text') || firstPost;
     const attachmentLinks = firstPost ? [...firstPost.querySelectorAll('a[href*="mod=attachment"], a[href*="attachment.php"]')] : [];
@@ -1861,20 +1882,28 @@
     const previewUrl = collectJavfreeArticleImages(document2, code).previewUrl;
     if (!code || !previewUrl) return;
     button.disabled = true;
+    button.dataset.downloadState = "progress";
+    button.style.background = "#398bd4";
     button.textContent = "\u4E0B\u8F7D\u4E2D\u2026";
     try {
       const blob = await requestImageBlob(previewUrl, locationObject?.href || document2.baseURI, request);
       await saveBlob(document2, blob, code + "." + extensionFromBlob(blob, previewUrl));
       button.textContent = "\u2713";
+      button.title = "\u5DF2\u53D1\u8D77 Preview \u4E0B\u8F7D\uFF1B\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\uFF08\u5237\u65B0\u9875\u9762\u540E\u6062\u590D\u521D\u59CB\u72B6\u6001\uFF09";
+      button.dataset.downloadState = "done";
+      button.style.background = "#257b61";
     } catch (error) {
       button.textContent = "\u5931\u8D25";
+      button.dataset.downloadState = "error";
       button.title = error?.message || "Preview \u4E0B\u8F7D\u5931\u8D25";
-    } finally {
       document2.defaultView?.setTimeout(() => {
-        button.disabled = false;
         renderDownloadIcon(button);
+        button.dataset.downloadState = "idle";
         button.title = "\u4E0B\u8F7D JavFree Preview\uFF0C\u5E76\u6309\u756A\u53F7\u547D\u540D";
+        button.style.background = "#398bd4";
       }, 2500);
+    } finally {
+      button.disabled = false;
     }
   }
   function installJavfreePreviewDownloadButton(document2, locationObject, request) {
@@ -2841,6 +2870,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const resetButton = (delay = 3e3) => {
       view?.setTimeout(() => {
         renderDownloadIcon(button);
+        button.dataset.downloadState = "idle";
+        button.style.background = "#398bd4";
         button.title = "\u4E0B\u8F7D Pixhost Preview \u5927\u56FE\uFF0C\u5E76\u81EA\u52A8\u6309\u5F71\u7247\u756A\u53F7\u91CD\u547D\u540D";
       }, delay);
     };
@@ -2875,6 +2906,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       enabled: isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY)
     });
     button.disabled = true;
+    button.dataset.downloadState = "progress";
+    button.style.background = "#398bd4";
     const failures = [];
     let skipped = 0;
     let downloaded = 0;
@@ -2987,7 +3020,12 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         if (failures.length) button.title = failures.join("\uFF1B");
         else if (usedFourKFallback) button.title = "\u666E\u901A Preview \u4E0D\u53EF\u7528\uFF0C\u5DF2\u81EA\u52A8\u56DE\u9000\u4E0B\u8F7D 4K Preview\u3002";
         else if (skipped) button.title = "Pixhost Preview \u5DF2\u5931\u6548\uFF0C\u672A\u4E0B\u8F7D\u5360\u4F4D\u56FE\u3002";
-        resetButton();
+        if (downloaded > 0 && !failures.length) {
+          button.dataset.downloadState = "done";
+          button.style.background = "#257b61";
+        } else {
+          resetButton();
+        }
       }
       endDownloadGuard();
     }
@@ -3041,10 +3079,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       lineHeight: "20px"
     });
     button.addEventListener("mouseenter", () => {
-      if (!button.disabled) button.style.background = "#246eaf";
+      if (!button.disabled && button.dataset.downloadState !== "done") button.style.background = "#246eaf";
     });
     button.addEventListener("mouseleave", () => {
-      if (!button.disabled) button.style.background = "#398bd4";
+      if (!button.disabled && button.dataset.downloadState !== "done") button.style.background = "#398bd4";
     });
     button.addEventListener("click", () => void downloadHdblogArticleImages(
       button,
@@ -6061,7 +6099,7 @@ ${settings.password}`;
     if (!/^[a-z0-9]+$/i.test(file.slotId || "")) throw new Error("\u7AD9\u5185\u9644\u4EF6\u7F3A\u5C11\u6709\u6548\u7F16\u53F7\uFF0C\u8BF7\u5237\u65B0\u9875\u9762");
     const view = document2.defaultView;
     const origin = view.location.origin;
-    const name = buildAttachmentFilename(parseThreadTitle(getThreadHeadingText(document2)), file.name);
+    const name = buildAttachmentFilename(parseCurrentThreadTitle(document2), file.name);
     const request = async (url, options = {}) => {
       const controller = new view.AbortController();
       const timer = view.setTimeout(() => controller.abort(), 3e4);
@@ -8115,6 +8153,23 @@ ${failures.join("\n")}`);
     return { skipped: false, ...await saveDownloadBlob(result.blob, job.name) };
   }
   var activeDownloadState = null;
+  var successfulDownloadStatuses = /* @__PURE__ */ new Map();
+  var downloadPageKey = () => `${location.pathname}${location.search}`;
+  function restoreSuccessfulDownloadStatus(button) {
+    if (!button || activeDownloadState) return;
+    const key = downloadPageKey();
+    const stored = successfulDownloadStatuses.get(key);
+    if (stored) {
+      setDownloadStatus(button, stored.text, stored.label);
+    } else if (button.dataset.downloadPageKey && button.dataset.downloadPageKey !== key) {
+      if (/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) renderModernDownloadButton(button);
+      else renderDownloadIcon(button);
+      button.style.background = "#398bd4";
+      button.dataset.downloadState = "idle";
+      button.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
+    }
+    button.dataset.downloadPageKey = key;
+  }
   function setDownloadStatus(button, text, label = text) {
     if (activeDownloadState?.button === button) {
       Object.assign(activeDownloadState, { text, label });
@@ -8123,12 +8178,16 @@ ${failures.join("\n")}`);
     }
     button.title = text;
     button.setAttribute("aria-label", text);
+    const state = label.startsWith("\u4E0B\u8F7D\u4E2D") ? "progress" : label.startsWith("\u26A0") ? "error" : label.startsWith("\u2713") ? "done" : "idle";
     if (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) {
-      if (button.textContent !== text) button.textContent = text;
+      const display = state === "done" && !text.startsWith("\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview") || state === "error" ? label : text;
+      if (button.textContent !== display) button.textContent = display;
+      button.dataset.downloadState = state;
+      button.style.background = state === "done" ? "#257b61" : state === "error" ? "#a96b26" : "#398bd4";
       return;
     }
     const count = text.match(/(?:处理中|已处理) (\d+\/\d+)/)?.[1] || "";
-    renderModernDownloadButton(button, label.startsWith("\u4E0B\u8F7D\u4E2D") ? "progress" : label.startsWith("\u26A0") ? "error" : "done", count);
+    renderModernDownloadButton(button, state, count);
     button.setAttribute("aria-label", `${label}\uFF1A${text}`);
     const status = ensureModernDownloadStatus(document);
     if (status) {
@@ -8171,6 +8230,7 @@ ${failures.join("\n")}`);
       return;
     }
     window.clearTimeout(downloadResetTimers.get(button));
+    successfulDownloadStatuses.delete(downloadPageKey());
     activeDownloadState = { button, pathname: location.pathname, text: "", label: "" };
     const endDownloadGuard = beginDownloadGuard(document, {
       enabled: isDownloadGuardEnabled(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY)
@@ -8232,7 +8292,7 @@ ${failures.join("\n")}`);
       for (const { blob, name } of pendingImages) {
         const finalName = pendingImages.length === 1 ? name.replace(/ A(?=\.[^.]+$)/i, "") : name;
         try {
-          recordSave(await saveDownloadBlob(blob, finalName));
+          recordSave(await saveDownloadBlob(blob, finalName, document, { browserDownload: true }));
         } catch (error) {
           failures.push(`${finalName}\uFF1A${redactDiagnostic(error?.message || "\u4FDD\u5B58\u5931\u8D25")}`);
         }
@@ -8245,14 +8305,22 @@ ${failures.join("\n")}`);
       if (failures.length) summary.push(`\u5931\u8D25 ${failures.length}`);
       if (nativeResult.total) summary.push(`\u7AD9\u5185\u9644\u4EF6\u5DF2\u8BF7\u6C42 ${nativeResult.total}\uFF08\u7ED3\u679C\u8BF7\u67E5\u770B\u7F51\u7AD9\u63D0\u793A\uFF09`);
       const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
-      const completedLabel = failures.length ? `\u26A0 \u5931\u8D25 ${failures.length}` : started || nativeResult.total || skipped ? `\u2713 \u5DF2\u5904\u7406 ${processed}/${totalTasks}` : "\u2713 \u4E0B\u8F7D\u5B8C\u6210";
-      setDownloadStatus(button, !modern && skipped && !failures.length ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : summary.join(" \xB7 "), completedLabel);
+      const hasSuccessfulSave = saved + started > 0;
+      const completedLabel = failures.length ? `\u26A0 \u5931\u8D25 ${failures.length}` : hasSuccessfulSave ? `\u2713 \u5DF2\u5904\u7406 ${processed}/${totalTasks}` : skipped ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : nativeResult.total ? "\u5DF2\u4EA4\u7ED9\u7F51\u7AD9\u5904\u7406" : "\u26A0 \u6CA1\u6709\u6210\u529F\u4E0B\u8F7D\u6587\u4EF6";
+      const statusText = !modern && skipped && !failures.length ? skipped === 1 ? "\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview" : `\u5DF2\u8DF3\u8FC7\u5931\u6548 Preview \xD7${skipped}` : summary.join(" \xB7 ");
+      setDownloadStatus(button, statusText, completedLabel);
       const visibleButton = activeDownloadState.pathname === location.pathname ? document.getElementById(BUTTON_ID) || button : button;
-      downloadResetTimers.set(visibleButton, window.setTimeout(() => {
-        if (modern) renderModernDownloadButton(visibleButton);
-        else renderDownloadIcon(visibleButton);
-        visibleButton.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
-      }, 2500));
+      if (!failures.length && hasSuccessfulSave) {
+        successfulDownloadStatuses.set(downloadPageKey(), { text: statusText, label: completedLabel });
+      } else {
+        downloadResetTimers.set(visibleButton, window.setTimeout(() => {
+          if (modern) renderModernDownloadButton(visibleButton);
+          else renderDownloadIcon(visibleButton);
+          visibleButton.style.background = "#398bd4";
+          visibleButton.dataset.downloadState = "idle";
+          visibleButton.setAttribute("aria-label", "\u4E0B\u8F7D\u8D44\u6E90");
+        }, 2500));
+      }
       if (failures.length) {
         window.alert(`\u4EE5\u4E0B\u6587\u4EF6\u4E0B\u8F7D\u5931\u8D25\uFF1A
 
@@ -8285,9 +8353,9 @@ ${failures.join("\n")}
         setDownloadStatus(activeDownloadState.button, activeDownloadState.text, activeDownloadState.label);
       }
       if (modern) {
-        if (placeModernResourceActionButton(document, button)) return;
-        if (title.nextElementSibling !== button) title.after(button);
+        if (!placeModernResourceActionButton(document, button) && title.nextElementSibling !== button) title.after(button);
       }
+      restoreSuccessfulDownloadStatus(button);
       return;
     }
     button = document.createElement("button");
@@ -8317,15 +8385,15 @@ ${failures.join("\n")}
       ...modern ? { height: "36px", padding: "0", flexDirection: "column", gap: "0", borderRadius: "7px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } : {}
     });
     button.addEventListener("mouseenter", () => {
-      if (!modern || button.dataset.downloadState === "idle") button.style.background = "#246eaf";
+      if (!button.disabled && (!button.dataset.downloadState || button.dataset.downloadState === "idle")) button.style.background = "#246eaf";
     });
     button.addEventListener("mouseleave", () => {
-      if (!modern || button.dataset.downloadState === "idle") button.style.background = "#398bd4";
+      if (!button.disabled && (!button.dataset.downloadState || button.dataset.downloadState === "idle")) button.style.background = "#398bd4";
     });
     button.addEventListener("click", () => void downloadAll(button));
-    if (modern && placeModernResourceActionButton(document, button)) return;
-    if (modern) title.after(button);
-    else host.prepend(button);
+    if (modern && !placeModernResourceActionButton(document, button)) title.after(button);
+    else if (!modern) host.prepend(button);
+    restoreSuccessfulDownloadStatus(button);
   }
   function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
     if (!button || batchProgressScanState) return;
@@ -9125,23 +9193,26 @@ ${title}`;
   function extractThreadPerformerField(document2) {
     const content = firstPostContent2(document2);
     if (!content) return { found: false, value: "" };
-    const raw = String(content.innerText || content.textContent || "").replace(/\r/g, "");
-    const lines = raw.split("\n").map((line) => line.trim());
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index];
-      const match = line.match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
-      if (!match) continue;
-      const inlineValue = normalizeText7(match[1]);
-      if (inlineValue) return { found: true, value: inlineValue };
-      const nextLine = normalizeText7(lines[index + 1] || "");
-      if (nextLine && !/^[^:：]{1,12}\s*[:：]/u.test(nextLine)) {
-        return { found: true, value: nextLine };
+    for (const source of [content.textContent, content.innerText]) {
+      const raw = String(source || "").replace(/\r/g, "");
+      const lines = raw.split("\n").map((line) => line.trim());
+      for (let index = 0; index < lines.length; index += 1) {
+        const match = lines[index].match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
+        if (!match) continue;
+        const inlineValue = normalizeText7(match[1]);
+        if (inlineValue) return { found: true, value: inlineValue };
+        const nextLine = normalizeText7(lines[index + 1] || "");
+        if (nextLine && !/^[^:：]{1,14}\s*[:：]/u.test(nextLine)) {
+          return { found: true, value: nextLine };
+        }
+        return { found: true, value: "" };
       }
-      return { found: true, value: "" };
+      const flattened = normalizeText7(raw);
+      const inline = flattened.match(
+        /(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*(.*?)(?=\s*(?:監督|メーカー|レーベル|ジャンル|品番|配信開始日|商品発売日|収録時間|発売日|导演|導演|片商|系列)\s*[:：]|$)/iu
+      );
+      if (inline) return { found: true, value: normalizeText7(inline[1]) };
     }
-    const flattened = normalizeText7(raw);
-    const inline = flattened.match(/(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*([^:：]{1,80}?)(?=\s+[\p{L}\p{N}_-]{1,16}\s*[:：]|$)/iu);
-    if (inline) return { found: true, value: normalizeText7(inline[1]) };
     return { found: false, value: "" };
   }
   function nodeActressText(node) {
@@ -9251,20 +9322,29 @@ ${title}`;
   async function fetchRealActressFromAvWiki(code, gmRequest2 = globalThis.GM_xmlhttpRequest, document2 = globalThis.document) {
     const normalizedCode = String(code || "").trim().toUpperCase();
     if (!normalizedCode) return "";
-    const searchUrl = `${AV_WIKI_ORIGIN2}/?s=${encodeURIComponent(normalizedCode)}`;
-    const searchDocument = parseHtml4(await requestHtml(searchUrl, gmRequest2), document2);
-    if (!searchDocument) return "";
-    const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
-    if (fromSearch) return fromSearch;
-    const detailUrl = findAvWikiResultUrl2(searchDocument, normalizedCode) || `${AV_WIKI_ORIGIN2}/${normalizedCode.toLowerCase()}/`;
-    const detailDocument = parseHtml4(await requestHtml(detailUrl, gmRequest2), document2);
-    return parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
-  }
-  function appendActressToTitleText(titleText, actress) {
-    const cleanTitle = normalizeText7(titleText);
-    const cleanActress = normalizeText7(actress);
-    if (!cleanActress || cleanTitle.includes(cleanActress)) return cleanTitle;
-    return `${cleanTitle} ${cleanActress}`;
+    const detailUrl = `${AV_WIKI_ORIGIN2}/${normalizedCode.toLowerCase()}/`;
+    let directError = null;
+    try {
+      const detailDocument = parseHtml4(await requestHtml(detailUrl, gmRequest2), document2);
+      const actress = parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
+      if (actress) return actress;
+    } catch (error) {
+      directError = error;
+    }
+    try {
+      const searchUrl = `${AV_WIKI_ORIGIN2}/?s=${encodeURIComponent(normalizedCode)}`;
+      const searchDocument = parseHtml4(await requestHtml(searchUrl, gmRequest2), document2);
+      if (!searchDocument) return "";
+      const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
+      if (fromSearch) return fromSearch;
+      const matchingUrl = findAvWikiResultUrl2(searchDocument, normalizedCode);
+      if (!matchingUrl || matchingUrl === detailUrl) return "";
+      const matchingDocument = parseHtml4(await requestHtml(matchingUrl, gmRequest2), document2);
+      return parseAvWikiActressesFromDocument(matchingDocument, normalizedCode);
+    } catch (error) {
+      if (directError) throw directError;
+      throw error;
+    }
   }
   function threadTitleElement(document2) {
     return document2.querySelector("#thread_subject, .thread-header h1") || document2.querySelector("h1.ts, .vwthd h1, h1");
@@ -9388,10 +9468,15 @@ ${title}`;
     else host.prepend(button);
   }
   var modernActionObservers = /* @__PURE__ */ new WeakMap();
-  function refreshModernResourceActionButtons(document2) {
+  function refreshModernResourceActionButtons(document2, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!isModernResourceDetailPage(document2)) return;
     const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID2);
-    if (downloadButton) placeModernResourceActionButton(document2, downloadButton);
+    if (downloadButton) {
+      placeModernResourceActionButton(document2, downloadButton);
+      if (isAgaghhhDownloadEnabled() && isAgaghhhRealActressEnabled()) {
+        bindRealActressDownload(document2, gmRequest2);
+      }
+    }
     if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document2);
     else document2.getElementById(SEARCH_BUTTON_ID2)?.remove();
     if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton2(document2);
@@ -9402,7 +9487,7 @@ ${title}`;
     const Observer = document2.defaultView?.MutationObserver;
     if (typeof Observer !== "function") return;
     const observer = new Observer(() => {
-      refreshModernResourceActionButtons(document2);
+      refreshModernResourceActionButtons(document2, gmRequest2);
       if (isAgaghhhHdblogPreviewEnabled()) {
         void installAgaghhhHdblogPreview(document2, document2.location, gmRequest2);
       }
@@ -9422,10 +9507,10 @@ ${title}`;
       const performer = extractThreadPerformerField(document2);
       if (!performer.found || performer.value) return;
       const code = threadCode2(document2);
-      if (!code) return;
+      if (!code || getResolvedThreadActress(document2, code)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      const idleText = button.textContent;
+      const originalNodes = [...button.childNodes];
       button.disabled = true;
       button.textContent = "\u67E5\u6F14\u5458\u2026";
       let actress = "";
@@ -9437,17 +9522,15 @@ ${title}`;
           error: error?.message || String(error)
         });
       }
+      button.replaceChildren(...originalNodes);
       button.disabled = false;
-      button.textContent = idleText;
-      const title = threadTitleElement(document2);
-      const originalTitle = title?.textContent || "";
-      if (actress && title) {
-        title.textContent = appendActressToTitleText(originalTitle, actress);
+      if (actress) {
+        setResolvedThreadActress(document2, code, actress);
         console.info("[x1080x-ex] real actress resolved", { code, actress });
       }
-      button.setAttribute(REAL_ACTRESS_BYPASS_ATTR, "1");
-      button.click();
-      if (title && actress) title.textContent = originalTitle;
+      const currentButton = document2.getElementById(DOWNLOAD_BUTTON_ID2) || button;
+      currentButton.setAttribute(REAL_ACTRESS_BYPASS_ATTR, "1");
+      currentButton.click();
     }, true);
   }
   function closeX1080xSettingsPanel(document2) {
@@ -9844,7 +9927,7 @@ ${title}`;
     if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton2(document2);
     else document2.getElementById(COPY_BUTTON_ID2)?.remove();
     if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document2, gmRequest2);
-    refreshModernResourceActionButtons(document2);
+    refreshModernResourceActionButtons(document2, gmRequest2);
     observeModernResourceActionButtons(document2, gmRequest2);
   }
 
@@ -10115,10 +10198,13 @@ ${title}`;
     return overlay;
   }
   var installations = /* @__PURE__ */ new WeakMap();
+  var initiatedAttachmentsByDocument = /* @__PURE__ */ new WeakMap();
   function installSehuatangToolbar(document2) {
     installations.get(document2)?.();
     document2.getElementById(TOOLBAR_ID)?.remove();
     const view = document2.defaultView;
+    const initiatedAttachments = initiatedAttachmentsByDocument.get(document2) || /* @__PURE__ */ new Set();
+    initiatedAttachmentsByDocument.set(document2, initiatedAttachments);
     const settings = getSehuatangSettings();
     if (!isSehuatangHost(view.location) || !isThread(view.location) || !settings.attachments && !settings.download && !settings.reply && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2))) return null;
     const host = document2.createElement("div");
@@ -10142,6 +10228,7 @@ ${title}`;
     .attachment-name{min-width:0;overflow-wrap:anywhere;font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     .file-actions{display:flex;gap:4px}.file-actions button{width:28px;height:28px;padding:5px;display:grid;place-items:center;flex:none}
     .file-actions svg,.attachment-lock svg{width:16px;height:16px;display:block}
+    .file-actions button[data-download-state="started"]{background:#eef2ff;border-color:#a5b4fc;color:#4338ca}
     .hidden-notice{color:#475569;font-size:12px;line-height:18px}
     .hidden-notice:empty{display:none}.hidden-notice strong{display:block;font-weight:600}.hidden-notice small{display:block;font-size:11px;color:#64748b;line-height:16px;margin-top:2px}
     .attachment-lock{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#94a3b8}
@@ -10252,6 +10339,7 @@ ${title}`;
             icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
             icon.addEventListener("click", handler);
             icons.append(icon);
+            return icon;
           };
           if (settings.attachments) addIcon(
             "attachment",
@@ -10261,15 +10349,31 @@ ${title}`;
               if (getSehuatangSettings().attachments) focusAttachment(link);
             }
           );
-          if (settings.download) addIcon(
-            "download-attachment",
-            `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${name}`,
-            DOWNLOAD_ICON_PATH,
-            () => {
-              status.textContent = downloadSehuatangAttachment(document2, link);
-              place();
-            }
-          );
+          if (settings.download) {
+            const key = `${link.href}
+${name}`;
+            const showInitiated = (icon2) => {
+              icon2.dataset.downloadState = "started";
+              icon2.textContent = "\u2197";
+              icon2.title = `\u5DF2\u53D1\u8D77\u4E0B\u8F7D\uFF1A${name}\uFF08\u5B9E\u9645\u4FDD\u5B58\u7ED3\u679C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\uFF09`;
+              icon2.setAttribute("aria-label", icon2.title);
+            };
+            const icon = addIcon(
+              "download-attachment",
+              `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${name}`,
+              DOWNLOAD_ICON_PATH,
+              () => {
+                const result = downloadSehuatangAttachment(document2, link);
+                status.textContent = result;
+                if (result.startsWith("\u5DF2\u89E6\u53D1\u7F51\u7AD9\u9644\u4EF6\u4E0B\u8F7D")) {
+                  initiatedAttachments.add(key);
+                  showInitiated(icon);
+                }
+                place();
+              }
+            );
+            if (initiatedAttachments.has(key)) showInitiated(icon);
+          }
           row.append(filename, icons);
           choices.append(row);
         });
