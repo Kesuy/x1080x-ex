@@ -1308,7 +1308,7 @@ test('modern toolbar replacement preserves progress and reports image request fa
     assert.equal(saved.length, 0, 'image saves wait for the request batch');
     requests[1].onerror({ error: 'network_error' });
     await waitFor(() => !button.disabled, 'failed image request must release the button');
-    assert.deepEqual(saved, ['FNS-267 A.webp']);
+    assert.deepEqual(saved, ['FNS-267.webp'], 'a single successfully saved image removes its A suffix');
     assert.match(status.textContent, /已处理 2\/2 · 已保存 0 · 已发起 1 · 失败 1/);
     assert.equal(button.dataset.downloadState, 'error');
     assert.match(button.getAttribute('aria-label'), /失败 1/);
