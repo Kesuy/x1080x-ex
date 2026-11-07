@@ -399,6 +399,75 @@ test('JavClub 假分页反复返回相同文章时结束，避免无限扫描', 
   }
 });
 
+function modernBoardPage(resourceIds, nextDisabled = false) {
+  return `<!doctype html><html><head></head><body>
+    <section class="thread-list">
+      <article class="thread-row is-sticky">
+        <a class="resource-title" href="/resources/sticky">置顶主题（不计入进度）</a>
+      </article>
+      ${resourceIds.map((id) => `<article class="thread-row">
+        <a class="resource-title" href="/resources/${id}">主题 ${id}</a>
+      </article>`).join('')}
+    </section>
+    <div class="pg"><button aria-label="下一页" ${nextDisabled ? 'disabled' : ''}>下一页</button></div>
+  </body></html>`;
+}
+
+test('x1080x 新版 boards 从真实主题顺序定位，跳过旧页的零星未读和置顶主题', async () => {
+  const root = 'https://1080xin.com/boards/7RHPO2w4jFUYiDhDsxz0wE';
+  const pageUrl = (page) => page === 1 ? root : root + '?page=' + page;
+  const pages = new Map();
+  const historyIds = [];
+
+  // 7 页中有零星已读；第 8 页前两条未读，其余 18 条已读；
+  // 第 9 页全已读；旧的第 26 页末尾有两条未读。
+  // The old ratio-only shortcut would return page 7 on the 7->8 jump.
+  for (let page = 1; page <= 27; page += 1) {
+    const ids = Array.from({ length: 20 }, (_, index) =>
+      `p${page.toString(36)}x${index.toString(36)}`);
+    const visitedIndexes = page === 1
+      ? [0]
+      : page >= 2 && page <= 6
+        ? []
+        : page === 7
+          ? [0, 2, 4, 6, 8, 10, 12]
+          : page === 8
+            ? Array.from({ length: 18 }, (_, index) => index + 2)
+            : page === 26
+              ? Array.from({ length: 18 }, (_, index) => index)
+              : Array.from({ length: 20 }, (_, index) => index);
+    visitedIndexes.forEach((index) => historyIds.push(`resource:${ids[index]}`));
+    pages.set(pageUrl(page), modernBoardPage(ids, page === 27));
+  }
+
+  const dom = new JSDOM(pages.get(root), { url: root });
+  const fetched = [];
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: root,
+      currentUrl: root,
+      currentDocument: dom.window.document,
+      historyIds,
+      loadPage: async (url) => {
+        fetched.push(url);
+        return pages.get(url);
+      },
+      collectThreads: collectForumThreadLinks,
+      getId: (url) => `resource:${new URL(url).pathname.split('/').pop()}`,
+      getScope: (url) => new URL(url).origin + new URL(url).pathname,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, pageUrl(8));
+    assert.equal(result.opened, 18);
+    assert.equal(result.unopened, 2);
+    assert.equal(result.inspected, 9, '需要第 9 页验证第 8 页的交界');
+    assert.equal(result.orderedBoundary, true);
+    assert.equal(fetched.includes(pageUrl(26)), false, '不应该继续检索到第 26 页');
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('JavClub 优先定位第 8 页的新旧交界，不跳到第 26 页的零星未读', async () => {
   const root = 'https://javclub.me/category/av-censored/';
   const pageUrl = (page) => page === 1 ? root : root + 'page/' + page + '/';
