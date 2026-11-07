@@ -239,6 +239,7 @@ export async function scanBatchProgressPages({
   let checked = 0;
   let visitedFound = false;
   let candidate = null;
+  let orderedBoundary = null;
   let arrivedViaInferredLink = false;
   const seen = new Set();
   const seenThreadSets = new Set();
@@ -292,12 +293,13 @@ export async function scanBatchProgressPages({
         : { status: 'end', checked, visitedFound, repeatedPage: true };
     }
     seenThreadSets.add(signature);
-    const opened = threads.filter((thread) => {
+    const openedFlags = threads.map((thread) => {
       const ids = typeof getIds === 'function'
         ? getIds(thread)
         : [getId(thread.url)];
       return Array.isArray(ids) && ids.some((id) => id && history.has(id));
-    }).length;
+    });
+    const opened = openedFlags.filter(Boolean).length;
     const unopened = threads.length - opened;
     visitedFound ||= opened > 0;
     checked += 1;
@@ -306,6 +308,29 @@ export async function scanBatchProgressPages({
     // Do not stop at the first isolated visited thread. A true progress boundary
     // usually has a strong change in opened ratio between adjacent pages.
     const ratio = opened / threads.length;
+
+    // Archive lists run from newest to oldest. The real progress edge is
+    // usually "unopened at the top, opened at the bottom" (page 8), not
+    // "opened at the top, isolated unopened at the bottom" (page 26).
+    // Confirm this ordered edge against the following mostly-opened page
+    // before jumping, so an isolated mixed page cannot hijack the scan.
+    if (orderedBoundary) {
+      if (ratio >= 0.75) {
+        return { ...orderedBoundary, inspected: checked, orderedBoundary: true };
+      }
+      // A confirming page must be immediately adjacent; a match many pages
+      // later may describe a different pocket of sporadically opened threads.
+      orderedBoundary = null;
+    }
+    const firstOpenedIndex = openedFlags.indexOf(true);
+    if (!orderedBoundary && firstOpenedIndex > 0 && ratio >= 2 / 3) {
+      const olderThreads = openedFlags.slice(firstOpenedIndex);
+      const olderOpened = olderThreads.filter(Boolean).length;
+      if (olderOpened / olderThreads.length >= 0.8 && openedFlags.at(-1)) {
+        orderedBoundary = { status: 'found', url: normalized, checked, opened, unopened };
+      }
+    }
+
     if (opened && unopened) {
       const strength = Math.min(opened, unopened) / threads.length;
       if (!candidate || strength > candidate.strength) {
@@ -314,7 +339,10 @@ export async function scanBatchProgressPages({
     }
     if (previous) {
       const delta = Math.abs(ratio - previous.ratio);
-      if (delta >= 0.5) {
+      // A strong jump toward opened older posts can still be an ordered
+      // mixed boundary. Confirm it against the next page rather than letting
+      // this old generic ratio shortcut choose the preceding mixed page.
+      if (delta >= 0.5 && orderedBoundary?.url !== normalized) {
         const preferred = previous.opened && previous.unopened
           ? previous
           : { url: normalized, checked, opened, unopened };
