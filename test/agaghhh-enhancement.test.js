@@ -159,8 +159,10 @@ test('empty modern performer triggers lookup before download and retains the act
       responseText: '<!doctype html><article><h1>DVMM-458</h1><dl><dt>AV女優名</dt><dd><a>流川はる香</a><a>那賀崎ゆきね</a><a>鈴木真夕</a></dd></dl></article>',
     }));
   };
+  const oldGetValue = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => settings.has(key) ? settings.get(key) : fallback;
   try {
-    withGmValues(settings, () => installAgaghhhEnhancement(dom.window.document, dom.window.location, gmRequest));
+    installAgaghhhEnhancement(dom.window.document, dom.window.location, gmRequest);
     const button = dom.window.document.getElementById('x1080x-ex-download');
     assert.ok(button?.hasAttribute('data-x1080x-real-actress-bound'));
     button.addEventListener('click', () => downloaded.push(
@@ -181,6 +183,8 @@ test('empty modern performer triggers lookup before download and retains the act
     assert.equal(requests.length, 1, 'repeated download must reuse the resolved actress');
     assert.equal(downloaded.length, 2);
   } finally {
+    if (oldGetValue === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGetValue;
     dom.window.close();
   }
 });
