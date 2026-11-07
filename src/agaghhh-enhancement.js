@@ -658,14 +658,14 @@ function installCopyCodeButton(document) {
 
 const modernActionObservers = new WeakMap();
 
-function refreshModernResourceActionButtons(document) {
+function refreshModernResourceActionButtons(document, gmRequest = globalThis.GM_xmlhttpRequest) {
   if (!isModernResourceDetailPage(document)) return;
   const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
   if (downloadButton) {
     placeModernResourceActionButton(document, downloadButton);
     // Rebind if React replaced the button after the original listener attached.
     if (isAgaghhhDownloadEnabled() && isAgaghhhRealActressEnabled()) {
-      bindRealActressDownload(document, globalThis.GM_xmlhttpRequest);
+      bindRealActressDownload(document, gmRequest);
     }
   }
 
@@ -681,7 +681,7 @@ function observeModernResourceActionButtons(document, gmRequest = globalThis.GM_
   const Observer = document.defaultView?.MutationObserver;
   if (typeof Observer !== 'function') return;
   const observer = new Observer(() => {
-    refreshModernResourceActionButtons(document);
+    refreshModernResourceActionButtons(document, gmRequest);
     // Next.js can hydrate the resource title and first post after document-idle.
     // The Preview installer deduplicates in-flight lookups and completed pages.
     if (isAgaghhhHdblogPreviewEnabled()) {
@@ -1179,6 +1179,6 @@ export function installAgaghhhEnhancement(
   else document.getElementById(COPY_BUTTON_ID)?.remove();
 
   if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
-  refreshModernResourceActionButtons(document);
+  refreshModernResourceActionButtons(document, gmRequest);
   observeModernResourceActionButtons(document, gmRequest);
 }
