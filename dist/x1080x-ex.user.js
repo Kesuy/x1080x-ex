@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.42
+// @version      1.10.43
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -5340,6 +5340,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     let checked = 0;
     let visitedFound = false;
     let candidate = null;
+    let orderedBoundary = null;
     let arrivedViaInferredLink = false;
     const seen = /* @__PURE__ */ new Set();
     const seenThreadSets = /* @__PURE__ */ new Set();
@@ -5378,15 +5379,30 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         return candidate ? { ...candidate, inspected: checked, approximate: true } : { status: "end", checked, visitedFound, repeatedPage: true };
       }
       seenThreadSets.add(signature);
-      const opened = threads.filter((thread) => {
+      const openedFlags = threads.map((thread) => {
         const ids = typeof getIds === "function" ? getIds(thread) : [getId(thread.url)];
         return Array.isArray(ids) && ids.some((id) => id && history.has(id));
-      }).length;
+      });
+      const opened = openedFlags.filter(Boolean).length;
       const unopened = threads.length - opened;
       visitedFound ||= opened > 0;
       checked += 1;
       onProgress({ checked, opened, unopened, url: normalized });
       const ratio = opened / threads.length;
+      if (orderedBoundary) {
+        if (ratio >= 0.75) {
+          return { ...orderedBoundary, inspected: checked, orderedBoundary: true };
+        }
+        orderedBoundary = null;
+      }
+      const firstOpenedIndex = openedFlags.indexOf(true);
+      if (!orderedBoundary && firstOpenedIndex > 0 && ratio >= 2 / 3) {
+        const olderThreads = openedFlags.slice(firstOpenedIndex);
+        const olderOpened = olderThreads.filter(Boolean).length;
+        if (olderOpened / olderThreads.length >= 0.8 && openedFlags.at(-1)) {
+          orderedBoundary = { status: "found", url: normalized, checked, opened, unopened };
+        }
+      }
       if (opened && unopened) {
         const strength = Math.min(opened, unopened) / threads.length;
         if (!candidate || strength > candidate.strength) {
@@ -5395,7 +5411,7 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       }
       if (previous) {
         const delta = Math.abs(ratio - previous.ratio);
-        if (delta >= 0.5) {
+        if (delta >= 0.5 && orderedBoundary?.url !== normalized) {
           const preferred = previous.opened && previous.unopened ? previous : { url: normalized, checked, opened, unopened };
           return {
             status: "found",
