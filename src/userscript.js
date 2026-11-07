@@ -1891,7 +1891,10 @@ async function downloadAll(button) {
         ? name.replace(/ A(?=\.[^.]+$)/i, '')
         : name;
       try {
-        recordSave(await saveDownloadBlob(blob, finalName));
+        // Some Tampermonkey/Chrome versions save GM_download({ url: Blob }) with
+        // the Blob's generated UUID instead of the supplied name. A native
+        // Blob URL + <a download> preserves the title-based image filename.
+        recordSave(await saveDownloadBlob(blob, finalName, document, { browserDownload: true }));
       } catch (error) {
         failures.push(`${finalName}：${redactDiagnostic(error?.message || '保存失败')}`);
       }
