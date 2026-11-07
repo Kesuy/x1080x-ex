@@ -726,6 +726,8 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
   const resetButton = (delay = 3000) => {
     view?.setTimeout(() => {
       renderDownloadIcon(button);
+      button.dataset.downloadState = 'idle';
+      button.style.background = '#398bd4';
       button.title = '下载 Pixhost Preview 大图，并自动按影片番号重命名';
     }, delay);
   };
@@ -766,6 +768,8 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
     enabled: isDownloadGuardEnabled(HDBLOG_DOWNLOAD_GUARD_ENABLED_KEY),
   });
   button.disabled = true;
+  button.dataset.downloadState = 'progress';
+  button.style.background = '#398bd4';
   const failures = [];
   let skipped = 0;
   let downloaded = 0;
@@ -896,7 +900,13 @@ async function downloadHdblogArticleImages(button, document, locationObject, gmR
       if (failures.length) button.title = failures.join('；');
       else if (usedFourKFallback) button.title = '普通 Preview 不可用，已自动回退下载 4K Preview。';
       else if (skipped) button.title = 'Pixhost Preview 已失效，未下载占位图。';
-      resetButton();
+      if (downloaded > 0 && !failures.length) {
+        // Do not auto-reset successful downloads; refresh creates a new button.
+        button.dataset.downloadState = 'done';
+        button.style.background = '#257b61';
+      } else {
+        resetButton();
+      }
     }
     endDownloadGuard();
   }
@@ -954,8 +964,8 @@ function installDownloadButton(document, locationObject, gmRequest) {
     fontWeight: '600',
     lineHeight: '20px',
   });
-  button.addEventListener('mouseenter', () => { if (!button.disabled) button.style.background = '#246eaf'; });
-  button.addEventListener('mouseleave', () => { if (!button.disabled) button.style.background = '#398bd4'; });
+  button.addEventListener('mouseenter', () => { if (!button.disabled && button.dataset.downloadState !== 'done') button.style.background = '#246eaf'; });
+  button.addEventListener('mouseleave', () => { if (!button.disabled && button.dataset.downloadState !== 'done') button.style.background = '#398bd4'; });
   button.addEventListener('click', () => void downloadHdblogArticleImages(
     button,
     document,
