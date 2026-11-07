@@ -399,6 +399,57 @@ test('JavClub 假分页反复返回相同文章时结束，避免无限扫描', 
   }
 });
 
+test('JavClub 优先定位第 8 页的新旧交界，不跳到第 26 页的零星未读', async () => {
+  const root = 'https://javclub.me/category/av-censored/';
+  const pageUrl = (page) => page === 1 ? root : root + 'page/' + page + '/';
+  const pages = new Map();
+  const historyIds = [];
+
+  // The captured page 8 begins with two unread posts and ends with ten
+  // opened posts. Pages 9/10 are fully opened. In contrast, page 26 has
+  // ten opened posts at the top followed by two isolated unread posts.
+  for (let page = 1; page <= 27; page += 1) {
+    const ids = Array.from({ length: 12 }, (_, index) => 2000000 - page * 100 - index);
+    const openedIndexes = page === 1 || page === 27
+      ? []
+      : page >= 2 && page <= 7
+        ? Array.from({ length: page }, (_, index) => index)
+        : page === 8
+          ? Array.from({ length: 10 }, (_, index) => index + 2)
+          : page === 26
+            ? Array.from({ length: 10 }, (_, index) => index)
+            : Array.from({ length: 12 }, (_, index) => index);
+    for (const index of openedIndexes) historyIds.push(`post:${ids[index]}`);
+    pages.set(pageUrl(page), hdblogPage(ids, page < 27 ? pageUrl(page + 1) : ''));
+  }
+
+  const dom = new JSDOM(pages.get(root), { url: root });
+  const loaded = [];
+  try {
+    const result = await scanBatchProgressPages({
+      startUrl: root,
+      currentUrl: root,
+      currentDocument: dom.window.document,
+      historyIds,
+      loadPage: async (url) => {
+        loaded.push(url);
+        return pages.get(url);
+      },
+      collectThreads: collectForumThreadLinks,
+      getId: hdblogId,
+      getScope: hdblogScope,
+    });
+    assert.equal(result.status, 'found');
+    assert.equal(result.url, pageUrl(8));
+    assert.equal(result.checked, 8);
+    assert.equal(result.inspected, 9, '第 9 页全已读，确认第 8 页的交界');
+    assert.equal(result.orderedBoundary, true);
+    assert.equal(loaded.includes(pageUrl(26)), false, '不能继续扫描并误定位第 26 页');
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('JavClub 分页推算只允许真实文章归档、不能跨域或构造无关地址', () => {
   const root = 'https://javclub.me/category/av-censored/';
   const dom = new JSDOM(hdblogPage([1]), { url: root });
