@@ -1,5 +1,5 @@
 import { organizeSettingsPanel } from './settings-layout.js';
-import { getThreadHeadingText, parseThreadTitle } from './core.js';
+import { getResolvedThreadActress, getThreadHeadingText, parseThreadTitle, setResolvedThreadActress } from './core.js';
 import { isAgaghhhHost } from './site-domains.js';
 export { isAgaghhhHost };
 import { copyCodeWithButtonFeedback } from './clipboard.js';
@@ -341,25 +341,33 @@ export function extractThreadPerformerField(document) {
   const content = firstPostContent(document);
   if (!content) return { found: false, value: '' };
 
-  const raw = String(content.innerText || content.textContent || '').replace(/\r/g, '');
-  const lines = raw.split('\n').map((line) => line.trim());
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = line.match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
-    if (!match) continue;
-    const inlineValue = normalizeText(match[1]);
-    if (inlineValue) return { found: true, value: inlineValue };
+  // Modern Next.js posts keep line separators inside an inline <span>.
+  // Chrome's innerText collapses them to spaces, so use textContent first.
+  // For <br>-based older posts innerText remains a useful fallback.
+  for (const source of [content.textContent, content.innerText]) {
+    const raw = String(source || '').replace(/\r/g, '');
+    const lines = raw.split('\n').map(line => line.trim());
+    for (let index = 0; index < lines.length; index += 1) {
+      const match = lines[index].match(/^(?:出演者|演员|演員)\s*[:：]\s*(.*)$/i);
+      if (!match) continue;
+      const inlineValue = normalizeText(match[1]);
+      if (inlineValue) return { found: true, value: inlineValue };
 
-    const nextLine = normalizeText(lines[index + 1] || '');
-    if (nextLine && !/^[^:：]{1,12}\s*[:：]/u.test(nextLine)) {
-      return { found: true, value: nextLine };
+      const nextLine = normalizeText(lines[index + 1] || '');
+      if (nextLine && !/^[^:：]{1,14}\s*[:：]/u.test(nextLine)) {
+        return { found: true, value: nextLine };
+      }
+      return { found: true, value: '' };
     }
-    return { found: true, value: '' };
-  }
 
-  const flattened = normalizeText(raw);
-  const inline = flattened.match(/(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*([^:：]{1,80}?)(?=\s+[\p{L}\p{N}_-]{1,16}\s*[:：]|$)/iu);
-  if (inline) return { found: true, value: normalizeText(inline[1]) };
+    // Also accept flattened single-line metadata, including an empty field
+    // directly followed by 監督： or メーカー：.
+    const flattened = normalizeText(raw);
+    const inline = flattened.match(
+      /(?:^|\s)(?:出演者|演员|演員)\s*[:：]\s*(.*?)(?=\s*(?:監督|メーカー|レーベル|ジャンル|品番|配信開始日|商品発売日|収録時間|発売日|导演|導演|片商|系列)\s*[:：]|$)/iu
+    );
+    if (inline) return { found: true, value: normalizeText(inline[1]) };
+  }
   return { found: false, value: '' };
 }
 
@@ -492,17 +500,34 @@ export async function fetchRealActressFromAvWiki(code, gmRequest = globalThis.GM
   const normalizedCode = String(code || '').trim().toUpperCase();
   if (!normalizedCode) return '';
 
-  const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
-  const searchDocument = parseHtml(await requestHtml(searchUrl, gmRequest), document);
-  if (!searchDocument) return '';
+  // The canonical article is directly addressable and more reliable than
+  // av-wiki's WordPress search endpoint (which may be blocked or throttled).
+  const detailUrl = `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
+  let directError = null;
+  try {
+    const detailDocument = parseHtml(await requestHtml(detailUrl, gmRequest), document);
+    const actress = parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
+    if (actress) return actress;
+  } catch (error) {
+    directError = error;
+  }
 
-  const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
-  if (fromSearch) return fromSearch;
+  try {
+    const searchUrl = `${AV_WIKI_ORIGIN}/?s=${encodeURIComponent(normalizedCode)}`;
+    const searchDocument = parseHtml(await requestHtml(searchUrl, gmRequest), document);
+    if (!searchDocument) return '';
 
-  const detailUrl = findAvWikiResultUrl(searchDocument, normalizedCode)
-    || `${AV_WIKI_ORIGIN}/${normalizedCode.toLowerCase()}/`;
-  const detailDocument = parseHtml(await requestHtml(detailUrl, gmRequest), document);
-  return parseAvWikiActressesFromDocument(detailDocument, normalizedCode);
+    const fromSearch = parseAvWikiActressesFromDocument(searchDocument, normalizedCode);
+    if (fromSearch) return fromSearch;
+
+    const matchingUrl = findAvWikiResultUrl(searchDocument, normalizedCode);
+    if (!matchingUrl || matchingUrl === detailUrl) return '';
+    const matchingDocument = parseHtml(await requestHtml(matchingUrl, gmRequest), document);
+    return parseAvWikiActressesFromDocument(matchingDocument, normalizedCode);
+  } catch (error) {
+    if (directError) throw directError;
+    throw error;
+  }
 }
 
 export function appendActressToTitleText(titleText, actress) {
@@ -633,10 +658,16 @@ function installCopyCodeButton(document) {
 
 const modernActionObservers = new WeakMap();
 
-function refreshModernResourceActionButtons(document) {
+function refreshModernResourceActionButtons(document, gmRequest = globalThis.GM_xmlhttpRequest) {
   if (!isModernResourceDetailPage(document)) return;
   const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
-  if (downloadButton) placeModernResourceActionButton(document, downloadButton);
+  if (downloadButton) {
+    placeModernResourceActionButton(document, downloadButton);
+    // Rebind if React replaced the button after the original listener attached.
+    if (isAgaghhhDownloadEnabled() && isAgaghhhRealActressEnabled()) {
+      bindRealActressDownload(document, gmRequest);
+    }
+  }
 
   if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document);
   else document.getElementById(SEARCH_BUTTON_ID)?.remove();
@@ -650,7 +681,7 @@ function observeModernResourceActionButtons(document, gmRequest = globalThis.GM_
   const Observer = document.defaultView?.MutationObserver;
   if (typeof Observer !== 'function') return;
   const observer = new Observer(() => {
-    refreshModernResourceActionButtons(document);
+    refreshModernResourceActionButtons(document, gmRequest);
     // Next.js can hydrate the resource title and first post after document-idle.
     // The Preview installer deduplicates in-flight lookups and completed pages.
     if (isAgaghhhHdblogPreviewEnabled()) {
@@ -676,12 +707,12 @@ function bindRealActressDownload(document, gmRequest) {
     if (!performer.found || performer.value) return;
 
     const code = threadCode(document);
-    if (!code) return;
+    if (!code || getResolvedThreadActress(document, code)) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    const idleText = button.textContent;
+    const originalNodes = [...button.childNodes];
     button.disabled = true;
     button.textContent = '查演员…';
 
@@ -695,19 +726,20 @@ function bindRealActressDownload(document, gmRequest) {
       });
     }
 
+    // Preserve the script-drawn icon. Changing textContent back to an empty
+    // string previously removed the SVG after each actress lookup.
+    button.replaceChildren(...originalNodes);
     button.disabled = false;
-    button.textContent = idleText;
-    const title = threadTitleElement(document);
-    const originalTitle = title?.textContent || '';
-    if (actress && title) {
-      title.textContent = appendActressToTitleText(originalTitle, actress);
+    if (actress) {
+      setResolvedThreadActress(document, code, actress);
       console.info('[x1080x-ex] real actress resolved', { code, actress });
     }
 
-    button.setAttribute(REAL_ACTRESS_BYPASS_ATTR, '1');
-    button.click();
-
-    if (title && actress) title.textContent = originalTitle;
+    // React may replace the toolbar during the awaited request. Resume on the
+    // current button, then let the normal downloader handle its async work.
+    const currentButton = document.getElementById(DOWNLOAD_BUTTON_ID) || button;
+    currentButton.setAttribute(REAL_ACTRESS_BYPASS_ATTR, '1');
+    currentButton.click();
   }, true);
 }
 
@@ -1147,6 +1179,6 @@ export function installAgaghhhEnhancement(
   else document.getElementById(COPY_BUTTON_ID)?.remove();
 
   if (downloadEnabled && isAgaghhhRealActressEnabled()) bindRealActressDownload(document, gmRequest);
-  refreshModernResourceActionButtons(document);
+  refreshModernResourceActionButtons(document, gmRequest);
   observeModernResourceActionButtons(document, gmRequest);
 }

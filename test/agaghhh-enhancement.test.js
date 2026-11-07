@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
+import { buildDownloadJobs, getResolvedThreadActress, parseCurrentThreadTitle } from '../src/core.js';
 import {
   AGAGHHH_BATCH_OPEN_ENABLED_KEY,
   AGAGHHH_BLOCKED_KEYWORDS_KEY,
@@ -96,6 +97,98 @@ test('detects an empty 出演者 field and leaves a populated field alone', () =
   assert.deepEqual(populated, { found: true, value: '既知演员' });
 });
 
+test('DVMM-458 modern post detects empty performer even when Chromium innerText collapses lines', () => {
+  const dom = new JSDOM(`<!doctype html><head><title>DVMM-458</title></head><body>
+    <header class="thread-header"><h1>DVMM-458 (HD1080P)(DEEP’S)(dvmm00458)</h1></header>
+    <article id="first-post"><div class="post-text"><div class="protected-text discuz-body">
+      <span>配信開始日：2026-10-29
+商品発売日：2026-11-02
+収録時間：163分
+出演者：
+監督：上田キノコ
+メーカー：DEEP’S
+レーベル：ザ・マジックミラー
+品番：dvmm00458</span>
+    </div></div></article></body>`, { url: 'https://1080xin.com/resources/testDVMM458' });
+  try {
+    const post = dom.window.document.querySelector('.post-text');
+    Object.defineProperty(post, 'innerText', {
+      get: () => '配信開始日：2026-10-29 商品発売日：2026-11-02 収録時間：163分 出演者： 監督：上田キノコ メーカー：DEEP’S 品番：dvmm00458',
+    });
+    assert.deepEqual(extractThreadPerformerField(dom.window.document), { found: true, value: '' });
+    dom.window.document.querySelector('.protected-text span').textContent =
+      '収録時間：163分 出演者： 監督：上田キノコ メーカー：DEEP’S';
+    assert.deepEqual(extractThreadPerformerField(dom.window.document), { found: true, value: '' });
+    dom.window.document.querySelector('.protected-text span').textContent =
+      '収録時間：163分 出演者：流川はる香 監督：上田キノコ';
+    assert.deepEqual(extractThreadPerformerField(dom.window.document), { found: true, value: '流川はる香' });
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('empty modern performer triggers lookup before download and retains the actor suffix across async tasks', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body>
+    <header class="thread-header">
+      <div class="thread-header-nums"><span class="thread-header-actions"><div class="thread-actions">
+        <button class="button dock-side">收藏</button>
+      </div></span></div>
+      <h1>DVMM-458 (HD1080P)(DEEP’S)(dvmm00458) 作品</h1>
+    </header>
+    <button id="x1080x-ex-download" type="button"><svg data-icon="download"></svg></button>
+    <article id="first-post"><div class="post-text"><div class="protected-text discuz-body">
+      <span>配信開始日：2026-10-29
+出演者：
+監督：上田キノコ
+品番：dvmm00458</span>
+      <a href="forum.php?mod=attachment&amp;aid=abc">dvmm00458.rar</a>
+    </div></div></article>
+  </body></html>`, { url: 'https://1080xin.com/resources/testDVMM458' });
+  const settings = new Map([
+    [AGAGHHH_REAL_ACTRESS_ENABLED_KEY, true],
+    ['x1080x-ex:agaghhh-hdblog-preview-enabled', false],
+    ['x1080x-ex:agaghhh-cross-search-enabled', false],
+    ['x1080x-ex:agaghhh-copy-code-enabled', false],
+  ]);
+  const requests = [];
+  const downloaded = [];
+  const gmRequest = (options) => {
+    requests.push(options.url);
+    queueMicrotask(() => options.onload({
+      status: 200,
+      responseText: '<!doctype html><article><h1>DVMM-458</h1><dl><dt>AV女優名</dt><dd><a>流川はる香</a><a>那賀崎ゆきね</a><a>鈴木真夕</a></dd></dl></article>',
+    }));
+  };
+  const oldGetValue = globalThis.GM_getValue;
+  globalThis.GM_getValue = (key, fallback) => settings.has(key) ? settings.get(key) : fallback;
+  try {
+    installAgaghhhEnhancement(dom.window.document, dom.window.location, gmRequest);
+    const button = dom.window.document.getElementById('x1080x-ex-download');
+    assert.ok(button?.hasAttribute('data-x1080x-real-actress-bound'));
+    button.addEventListener('click', () => downloaded.push(
+      buildDownloadJobs(dom.window.document).find(job => job.kind === 'attachment')?.name
+    ));
+    button.click();
+    assert.deepEqual(downloaded, [], 'first click must wait for actress lookup');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(requests, ['https://av-wiki.net/dvmm-458/']);
+    assert.deepEqual(downloaded, ['DVMM-458 作品 流川はる香 那賀崎ゆきね 鈴木真夕.rar']);
+    assert.equal(getResolvedThreadActress(dom.window.document, 'DVMM-458'),
+      '流川はる香 那賀崎ゆきね 鈴木真夕');
+    assert.equal(dom.window.document.querySelector('.thread-header h1').textContent,
+      'DVMM-458 (HD1080P)(DEEP’S)(dvmm00458) 作品', 'React heading should remain untouched');
+    assert.ok(button.querySelector('svg[data-icon="download"]'), 'lookup must restore the original SVG button');
+    assert.match(parseCurrentThreadTitle(dom.window.document).cleanTitle, /鈴木真夕$/);
+    button.click();
+    assert.equal(requests.length, 1, 'repeated download must reuse the resolved actress');
+    assert.equal(downloaded.length, 2);
+  } finally {
+    if (oldGetValue === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = oldGetValue;
+    dom.window.close();
+  }
+});
+
 test('finds the exact av-wiki result URL for a code', () => {
   const dom = new JSDOM(`<!doctype html><body>
     <article><h2><a href="https://av-wiki.net/blor-305/">BLOR-305 other</a></h2></article>
@@ -116,30 +209,59 @@ test('parses AV女優名 from a structured av-wiki detail page', () => {
   assert.equal(parseAvWikiActressesFromDocument(dom.window.document, 'BLOR-306'), '桜野桃');
 });
 
-test('searches av-wiki then follows the matching detail page', async () => {
+test('DVMM-458 uses the canonical AV-Wiki article and reads multiple real actresses', async () => {
+  const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://1080xin.com/' });
+  const requested = [];
+  const gmRequest = (options) => {
+    requested.push(options.url);
+    options.onload({
+      status: 200,
+      responseText: `<!doctype html><article><h1>DVMM-458</h1><dl>
+        <dt>AV女優名</dt><dd><a>流川はる香</a><a>那賀崎ゆきね</a><a>鈴木真夕</a></dd>
+        <dt>メーカー品番</dt><dd>DVMM-458</dd>
+      </dl></article>`,
+    });
+  };
+  try {
+    assert.equal(
+      await fetchRealActressFromAvWiki('DVMM-458', gmRequest, browser.window.document),
+      '流川はる香 那賀崎ゆきね 鈴木真夕'
+    );
+    assert.deepEqual(requested, ['https://av-wiki.net/dvmm-458/']);
+  } finally {
+    browser.window.close();
+  }
+});
+
+test('falls back to av-wiki search when the canonical detail URL fails', async () => {
   const browser = new JSDOM('<!doctype html><body></body>', { url: 'https://agaghhh.cc/' });
   const requested = [];
   const gmRequest = (options) => {
     requested.push(options.url);
-    if (options.url.includes('?s=BLOR-306')) {
+    if (options.url === 'https://av-wiki.net/blor-306/') {
+      options.onload({ status: 404, responseText: '' });
+    } else if (options.url.includes('?s=BLOR-306')) {
       options.onload({
         status: 200,
-        responseText: '<!doctype html><body><article><h2><a href="https://av-wiki.net/blor-306/">BLOR-306 sample</a></h2></article></body>',
+        responseText: '<!doctype html><body><article><h2><a href="https://av-wiki.net/articles/blor-306/">BLOR-306 sample</a></h2></article></body>',
       });
-      return;
+    } else {
+      options.onload({
+        status: 200,
+        responseText: '<!doctype html><body><article><h1>BLOR-306</h1><table><tr><th>AV女優名</th><td><a>桜野桃</a></td></tr></table></article></body>',
+      });
     }
-    options.onload({
-      status: 200,
-      responseText: '<!doctype html><body><article><h1>BLOR-306</h1><table><tr><th>AV女優名</th><td><a href="/actor/momo/">桜野桃</a></td></tr></table></article></body>',
-    });
   };
-
-  const actress = await fetchRealActressFromAvWiki('BLOR-306', gmRequest, browser.window.document);
-  assert.equal(actress, '桜野桃');
-  assert.deepEqual(requested, [
-    'https://av-wiki.net/?s=BLOR-306',
-    'https://av-wiki.net/blor-306/',
-  ]);
+  try {
+    assert.equal(await fetchRealActressFromAvWiki('BLOR-306', gmRequest, browser.window.document), '桜野桃');
+    assert.deepEqual(requested, [
+      'https://av-wiki.net/blor-306/',
+      'https://av-wiki.net/?s=BLOR-306',
+      'https://av-wiki.net/articles/blor-306/',
+    ]);
+  } finally {
+    browser.window.close();
+  }
 });
 
 test('appends the actress once without disturbing the existing title', () => {

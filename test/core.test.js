@@ -493,3 +493,40 @@ test('AVSA-428 种子名移除 BT 发布参数并只保留番号与正文标题'
   }
 });
 
+test('SVSHA-036 modern resource retains code and numbered image filenames with JavClub Preview', () => {
+  // Reduced reproduction of the uploaded 1080xin.com page (including its preview DOM).
+  const dom = new JSDOM(`<!doctype html><html><head>
+    <title>SVSHA-036 (HD1080P)(SOD)(1svsha00036)羞恥！新任女教師 - x1080x</title>
+    </head><body>
+    <header class="thread-header"><h1>
+      <span class="topic-tags"><a class="topic-category">SOD</a></span>
+      SVSHA-036 (HD1080P)(SOD)(1svsha00036)羞恥！新任女教師
+    </h1></header>
+    <article class="post" id="first-post"><div class="post-content">
+      <div class="post-text"><div class="protected-text discuz-body">
+        <span class="body-image-frame"><img class="body-image"
+          src="https://awsimgsrc.dmm.co.jp/pics_dig/digital/video/1svsha00036/1svsha00036pl.jpg"></span>
+        <span class="body-image-frame"><img class="body-image"
+          src="https://www.hxmmdd.com/images-v2/pics/my/2026/202610/20261028/1svsha00036pl.webp"></span>
+      </div></div>
+      <section id="x1080x-ex-agaghhh-hdblog-preview">
+        <img src="blob:https://1080xin.com/7553bfd0-3805-47d0-b8b2-3c3d3faf4d0e"
+          data-x1080x-hdblog-preview-url="https://img3.pixhost.to/images/6991/800324154_svsha-036_6m-mp4.jpg">
+      </section>
+    </div></article>
+  </body></html>`, { url: 'https://1080xin.com/resources/5rq4c4CeUTYsxni0tN5zbn?page=1&order=asc' });
+  try {
+    const resources = extractThreadResources(dom.window.document);
+    assert.equal(resources.title.code, 'SVSHA-036');
+    assert.equal(resources.images.length, 2);
+    assert.equal(resources.hdblogPreviews.length, 1);
+    const imageJobs = buildDownloadJobs(dom.window.document).filter(job => job.kind === 'image');
+    assert.deepEqual(imageJobs.map(job => job.name), [
+      'SVSHA-036 A.jpg',
+      'SVSHA-036 B.jpg',
+    ]);
+    assert.equal(imageJobs[1].url, 'https://img3.pixhost.to/images/6991/800324154_svsha-036_6m-mp4.jpg');
+  } finally {
+    dom.window.close();
+  }
+});

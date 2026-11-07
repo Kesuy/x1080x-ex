@@ -1,4 +1,4 @@
-import { buildAttachmentFilename, getThreadHeadingText, parseThreadTitle } from './core.js';
+import { buildAttachmentFilename, parseCurrentThreadTitle } from './core.js';
 
 // Mirror the site's preview -> CSRF -> claim -> receipt delivery flow. Paid
 // quotes stay on the original controls so their confirmation is preserved.
@@ -22,7 +22,7 @@ export async function prepareModernAttachmentDownload(document, file, fetchImpl 
   if (!/^[a-z0-9]+$/i.test(file.slotId || '')) throw new Error('站内附件缺少有效编号，请刷新页面');
   const view = document.defaultView;
   const origin = view.location.origin;
-  const name = buildAttachmentFilename(parseThreadTitle(getThreadHeadingText(document)), file.name);
+  const name = buildAttachmentFilename(parseCurrentThreadTitle(document), file.name);
   const request = async (url, options = {}) => {
     const controller = new view.AbortController();
     const timer = view.setTimeout(() => controller.abort(), 30000);

@@ -518,20 +518,28 @@ async function downloadJavfreePreview(button, document, locationObject, request)
   if (!code || !previewUrl) return;
 
   button.disabled = true;
+  button.dataset.downloadState = 'progress';
+  button.style.background = '#398bd4';
   button.textContent = '下载中…';
   try {
     const blob = await requestImageBlob(previewUrl, locationObject?.href || document.baseURI, request);
     await saveBlob(document, blob, code + '.' + extensionFromBlob(blob, previewUrl));
     button.textContent = '✓';
+    button.title = '已发起 Preview 下载；请查看浏览器下载列表（刷新页面后恢复初始状态）';
+    button.dataset.downloadState = 'done';
+    button.style.background = '#257b61';
   } catch (error) {
     button.textContent = '失败';
+    button.dataset.downloadState = 'error';
     button.title = error?.message || 'Preview 下载失败';
-  } finally {
     document.defaultView?.setTimeout(() => {
-      button.disabled = false;
       renderDownloadIcon(button);
+      button.dataset.downloadState = 'idle';
       button.title = '下载 JavFree Preview，并按番号命名';
+      button.style.background = '#398bd4';
     }, 2500);
+  } finally {
+    button.disabled = false;
   }
 }
 

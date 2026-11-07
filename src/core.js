@@ -199,6 +199,34 @@ export function parseThreadTitle(rawTitle) {
   };
 }
 
+// The real-actress lookup is asynchronous. Keep the resolved name for this
+// document/code, rather than temporarily mutating React's heading while an
+// attachment/Preview request may still be pending.
+const resolvedThreadActresses = new WeakMap();
+
+export function setResolvedThreadActress(document, code, actress) {
+  if (!document || !code || !String(actress || '').trim()) return;
+  resolvedThreadActresses.set(document, {
+    code: String(code).trim().toUpperCase(),
+    actress: String(actress).replace(/\s+/g, ' ').trim(),
+  });
+}
+
+export function getResolvedThreadActress(document, code) {
+  if (!document || !code) return '';
+  const entry = resolvedThreadActresses.get(document);
+  return entry?.code === String(code).trim().toUpperCase() ? entry.actress : '';
+}
+
+export function parseCurrentThreadTitle(document) {
+  const title = parseThreadTitle(getThreadHeadingText(document));
+  const actress = getResolvedThreadActress(document, title.code);
+  if (actress && !title.cleanTitle.includes(actress)) {
+    title.cleanTitle = `${title.cleanTitle} ${actress}`;
+  }
+  return title;
+}
+
 const WINDOWS_REPLACEMENTS = new Map([
   ['<', '＜'], ['>', '＞'], [':', '：'], ['"', '＂'],
   ['/', '／'], ['\\', '＼'], ['|', '｜'], ['?', '？'], ['*', '＊'],
@@ -409,7 +437,7 @@ function sequencedImageFilename(code, index, total) {
 
 export function extractThreadResources(document) {
   const rawTitle = getThreadHeadingText(document);
-  const title = parseThreadTitle(rawTitle);
+  const title = parseCurrentThreadTitle(document);
   const firstPost = [...document.querySelectorAll('#postlist [id^="post_"]')]
     .find((element) => /^post_\d+$/i.test(element.id))
     || document.querySelector('#postlist > div, #postlist')
