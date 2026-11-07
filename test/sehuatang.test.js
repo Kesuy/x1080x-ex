@@ -5,7 +5,7 @@ import {
   DEFAULT_SHT_REPLY_PHRASE, SHT_ATTACHMENTS_ENABLED_KEY, SHT_DOWNLOAD_ENABLED_KEY, SHT_REPLY_ENABLED_KEY,
   SHT_REPLY_PHRASE_KEY, SHT_POSITION_KEY, collectSehuatangAttachments,
   SHT_HIDDEN_NOTICE_ENABLED_KEY, hasSehuatangReplyHiddenContent,
-  downloadSehuatangAttachment, getSehuatangSettings, installSehuatangEnhancement, isSehuatangHost,
+  downloadSehuatangAttachment, getSehuatangSettings, installSehuatangEnhancement, installSehuatangToolbar, isSehuatangHost,
   openSehuatangSettings, sehuatangFirstPageUrl, submitSehuatangQuickReply,
 } from '../src/sehuatang.js';
 
