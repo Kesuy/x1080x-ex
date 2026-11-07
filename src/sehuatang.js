@@ -259,11 +259,14 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
 }
 
 const installations = new WeakMap();
+const initiatedAttachmentsByDocument = new WeakMap();
 
 export function installSehuatangToolbar(document) {
   installations.get(document)?.();
   document.getElementById(TOOLBAR_ID)?.remove();
   const view = document.defaultView;
+  const initiatedAttachments = initiatedAttachmentsByDocument.get(document) || new Set();
+  initiatedAttachmentsByDocument.set(document, initiatedAttachments);
   const settings = getSehuatangSettings();
   if (!isSehuatangHost(view.location) || !isThread(view.location)
     || (!settings.attachments && !settings.download && !settings.reply
@@ -289,6 +292,7 @@ export function installSehuatangToolbar(document) {
     .attachment-name{min-width:0;overflow-wrap:anywhere;font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     .file-actions{display:flex;gap:4px}.file-actions button{width:28px;height:28px;padding:5px;display:grid;place-items:center;flex:none}
     .file-actions svg,.attachment-lock svg{width:16px;height:16px;display:block}
+    .file-actions button[data-download-state="started"]{background:#eef2ff;border-color:#a5b4fc;color:#4338ca}
     .hidden-notice{color:#475569;font-size:12px;line-height:18px}
     .hidden-notice:empty{display:none}.hidden-notice strong{display:block;font-weight:600}.hidden-notice small{display:block;font-size:11px;color:#64748b;line-height:16px;margin-top:2px}
     .attachment-lock{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#94a3b8}
@@ -401,16 +405,32 @@ export function installSehuatangToolbar(document) {
           icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
           icon.addEventListener('click', handler);
           icons.append(icon);
+          return icon;
         };
         if (settings.attachments) addIcon('attachment', `定位附件：${name}`,
           'M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0ZM15 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0', () => {
             if (getSehuatangSettings().attachments) focusAttachment(link);
           });
-        if (settings.download) addIcon('download-attachment', `下载附件：${name}`,
-          DOWNLOAD_ICON_PATH, () => {
-            status.textContent = downloadSehuatangAttachment(document, link);
-            place();
-          });
+        if (settings.download) {
+          const key = `${link.href}\n${name}`;
+          const showInitiated = (icon) => {
+            icon.dataset.downloadState = 'started';
+            icon.textContent = '↗';
+            icon.title = `已发起下载：${name}（实际保存结果请检查浏览器）`;
+            icon.setAttribute('aria-label', icon.title);
+          };
+          const icon = addIcon('download-attachment', `下载附件：${name}`,
+            DOWNLOAD_ICON_PATH, () => {
+              const result = downloadSehuatangAttachment(document, link);
+              status.textContent = result;
+              if (result.startsWith('已触发网站附件下载')) {
+                initiatedAttachments.add(key);
+                showInitiated(icon);
+              }
+              place();
+            });
+          if (initiatedAttachments.has(key)) showInitiated(icon);
+        }
         row.append(filename, icons);
         choices.append(row);
       });
