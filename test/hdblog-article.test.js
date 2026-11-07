@@ -188,7 +188,7 @@ test('JavClub successful Preview download stays green with a checkmark until pag
     url: 'https://javclub.me/1013422.html',
     title: 'MOND-308 sample',
     content: `<p>Preview:</p><p><a href="https://img1.pixhost.to/images/123/456_mond-308.jpg">
-      <img src="https://img1.pixhost.to/images/123/456_mond-308.jpg"></a></p><p>Rapidgator:</p>`,
+      <img data-x1080x-preview-large="1" src="https://img1.pixhost.to/images/123/456_mond-308.jpg"></a></p><p>Rapidgator:</p>`,
   });
   const saves = [];
   const autoResets = [];
