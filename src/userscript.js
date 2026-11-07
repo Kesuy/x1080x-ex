@@ -1760,6 +1760,26 @@ async function download(job, { deferImageSave = false } = {}) {
 }
 
 let activeDownloadState = null;
+// Memory only: refresh/new tab starts idle, while SPA header replacements keep
+// the successful state for each resource URL in the current document.
+const successfulDownloadStatuses = new Map();
+const downloadPageKey = () => `${location.pathname}${location.search}`;
+
+function restoreSuccessfulDownloadStatus(button) {
+  if (!button || activeDownloadState) return;
+  const key = downloadPageKey();
+  const stored = successfulDownloadStatuses.get(key);
+  if (stored) {
+    setDownloadStatus(button, stored.text, stored.label);
+  } else if (button.dataset.downloadPageKey && button.dataset.downloadPageKey !== key) {
+    if (/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) renderModernDownloadButton(button);
+    else renderDownloadIcon(button);
+    button.style.background = '#398bd4';
+    button.dataset.downloadState = 'idle';
+    button.setAttribute('aria-label', '下载资源');
+  }
+  button.dataset.downloadPageKey = key;
+}
 
 function setDownloadStatus(button, text, label = text) {
   if (activeDownloadState?.button === button) {
@@ -1769,12 +1789,19 @@ function setDownloadStatus(button, text, label = text) {
   }
   button.title = text;
   button.setAttribute('aria-label', text);
+  const state = label.startsWith('下载中') ? 'progress'
+    : label.startsWith('⚠') ? 'error'
+      : label.startsWith('✓') ? 'done' : 'idle';
   if (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)) {
-    if (button.textContent !== text) button.textContent = text;
+    const display = state === 'done' || state === 'error' ? label : text;
+    if (button.textContent !== display) button.textContent = display;
+    button.dataset.downloadState = state;
+    button.style.background = state === 'done' ? '#257b61'
+      : state === 'error' ? '#a96b26' : '#398bd4';
     return;
   }
   const count = text.match(/(?:处理中|已处理) (\d+\/\d+)/)?.[1] || '';
-  renderModernDownloadButton(button, label.startsWith('下载中') ? 'progress' : label.startsWith('⚠') ? 'error' : 'done', count);
+  renderModernDownloadButton(button, state, count);
   button.setAttribute('aria-label', `${label}：${text}`);
   const status = ensureModernDownloadStatus(document);
   if (status) {
@@ -1826,6 +1853,7 @@ async function downloadAll(button) {
     return;
   }
   window.clearTimeout(downloadResetTimers.get(button));
+  successfulDownloadStatuses.delete(downloadPageKey());
   activeDownloadState = { button, pathname: location.pathname, text: '', label: '' };
 
   const endDownloadGuard = beginDownloadGuard(document, {
@@ -1908,18 +1936,30 @@ async function downloadAll(button) {
     if (failures.length) summary.push(`失败 ${failures.length}`);
     if (nativeResult.total) summary.push(`站内附件已请求 ${nativeResult.total}（结果请查看网站提示）`);
     const modern = /^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname);
+    const hasSuccessfulSave = saved + started > 0;
     const completedLabel = failures.length ? `⚠ 失败 ${failures.length}`
-      : started || nativeResult.total || skipped ? `✓ 已处理 ${processed}/${totalTasks}` : '✓ 下载完成';
-    setDownloadStatus(button, !modern && skipped && !failures.length
+      : hasSuccessfulSave ? `✓ 已处理 ${processed}/${totalTasks}`
+        : skipped ? '已跳过失效 Preview'
+          : nativeResult.total ? '已交给网站处理' : '⚠ 没有成功下载文件';
+    const statusText = !modern && skipped && !failures.length && !hasSuccessfulSave
       ? (skipped === 1 ? '已跳过失效 Preview' : `已跳过失效 Preview ×${skipped}`)
-      : summary.join(' · '), completedLabel);
+      : summary.join(' · ');
+    setDownloadStatus(button, statusText, completedLabel);
     const visibleButton = activeDownloadState.pathname === location.pathname
       ? document.getElementById(BUTTON_ID) || button : button;
-    downloadResetTimers.set(visibleButton, window.setTimeout(() => {
-      if (modern) renderModernDownloadButton(visibleButton);
-      else renderDownloadIcon(visibleButton);
-      visibleButton.setAttribute('aria-label', '下载资源');
-    }, 2500));
+    if (!failures.length && hasSuccessfulSave) {
+      // Keep the checkmark and details across Next.js toolbar rerenders.
+      // Never write to GM storage: a browser refresh starts from idle.
+      successfulDownloadStatuses.set(downloadPageKey(), { text: statusText, label: completedLabel });
+    } else {
+      downloadResetTimers.set(visibleButton, window.setTimeout(() => {
+        if (modern) renderModernDownloadButton(visibleButton);
+        else renderDownloadIcon(visibleButton);
+        visibleButton.style.background = '#398bd4';
+        visibleButton.dataset.downloadState = 'idle';
+        visibleButton.setAttribute('aria-label', '下载资源');
+      }, 2500));
+    }
 
     if (failures.length) {
       window.alert(`以下文件下载失败：\n\n${failures.join('\n')}\n\n可检查登录状态或浏览器下载权限后重试。`);
@@ -1954,9 +1994,10 @@ function addDownloadButton() {
       setDownloadStatus(activeDownloadState.button, activeDownloadState.text, activeDownloadState.label);
     }
     if (modern) {
-      if (placeModernResourceActionButton(document, button)) return;
-      if (title.nextElementSibling !== button) title.after(button);
+      if (!placeModernResourceActionButton(document, button)
+        && title.nextElementSibling !== button) title.after(button);
     }
+    restoreSuccessfulDownloadStatus(button);
     return;
   }
 
@@ -1988,12 +2029,12 @@ function addDownloadButton() {
     lineHeight: '20px',
     ...(modern ? { height: '36px', padding: '0', flexDirection: 'column', gap: '0', borderRadius: '7px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' } : {}),
   });
-  button.addEventListener('mouseenter', () => { if (!modern || button.dataset.downloadState === 'idle') button.style.background = '#246eaf'; });
-  button.addEventListener('mouseleave', () => { if (!modern || button.dataset.downloadState === 'idle') button.style.background = '#398bd4'; });
+  button.addEventListener('mouseenter', () => { if (!button.disabled && (!button.dataset.downloadState || button.dataset.downloadState === 'idle')) button.style.background = '#246eaf'; });
+  button.addEventListener('mouseleave', () => { if (!button.disabled && (!button.dataset.downloadState || button.dataset.downloadState === 'idle')) button.style.background = '#398bd4'; });
   button.addEventListener('click', () => void downloadAll(button));
-  if (modern && placeModernResourceActionButton(document, button)) return;
-  if (modern) title.after(button);
-  else host.prepend(button);
+  if (modern && !placeModernResourceActionButton(document, button)) title.after(button);
+  else if (!modern) host.prepend(button);
+  restoreSuccessfulDownloadStatus(button);
 }
 
 function refreshBatchProgressLocatorButton(button = document.getElementById(BATCH_PROGRESS_BUTTON_ID)) {
