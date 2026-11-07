@@ -182,6 +182,46 @@ test('multiple image names use 番号-1 / 番号-2 and preserve the real image e
   assert.equal(hdblogImageFilename('FC2-PPV-1234567', 1, 3, 'png'), 'FC2-PPV-1234567-2.png');
 });
 
+test('JavClub successful Preview download stays green with a checkmark until page refresh', async (t) => {
+  t.after(disableJavfreePreviewFallback());
+  const dom = articleDom({
+    url: 'https://javclub.me/1013422.html',
+    title: 'MOND-308 sample',
+    content: `<p>Preview:</p><p><a href="https://img1.pixhost.to/images/123/456_mond-308.jpg">
+      <img src="https://img1.pixhost.to/images/123/456_mond-308.jpg"></a></p><p>Rapidgator:</p>`,
+  });
+  const saves = [];
+  const autoResets = [];
+  const schedule = dom.window.setTimeout.bind(dom.window);
+  dom.window.setTimeout = (callback, delay, ...args) => {
+    if (delay === 3000) { autoResets.push(callback); return 0; }
+    return schedule(callback, delay, ...args);
+  };
+  dom.window.URL.createObjectURL = () => 'blob:javclub-done';
+  dom.window.URL.revokeObjectURL = () => {};
+  dom.window.HTMLAnchorElement.prototype.click = function () { saves.push(this.download); };
+  const gmRequest = details => queueMicrotask(() => details.onload({
+    status: 200,
+    response: new dom.window.Blob(['image'], { type: 'image/jpeg' }),
+  }));
+  try {
+    installHdblogArticleEnhancement(dom.window.document, dom.window.location, gmRequest);
+    const button = dom.window.document.getElementById('x1080x-ex-hdblog-image-download');
+    assert.ok(button);
+    button.click();
+    for (let i = 0; i < 15 && !saves.length; i += 1) await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepEqual(saves, ['MOND-308.jpg']);
+    assert.equal(button.dataset.downloadState, 'done');
+    assert.equal(button.style.background, 'rgb(37, 123, 97)');
+    assert.match(button.textContent, /✓/);
+    assert.deepEqual(autoResets, [], 'successful download must not schedule a reset');
+    button.dispatchEvent(new dom.window.Event('mouseleave'));
+    assert.equal(button.style.background, 'rgb(37, 123, 97)', 'hover must not clear success');
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('removed Pixhost Preview is resolved only once and never downloaded as an image blob', async (t) => {
   t.after(disableJavfreePreviewFallback());
   const dom = articleDom({
