@@ -484,11 +484,16 @@ test('JavFree Preview download saves the second image as code.jpg', async () => 
   const saved = [];
   const revoked = [];
   const pendingReleases = [];
+  const autoResets = [];
   const nativeSetTimeout = dom.window.setTimeout.bind(dom.window);
   dom.window.setTimeout = (callback, delay, ...args) => {
     if (delay === 10000) {
       pendingReleases.push(callback);
       return 1;
+    }
+    if (delay === 2500) {
+      autoResets.push(callback);
+      return 2;
     }
     return nativeSetTimeout(callback, delay, ...args);
   };
@@ -518,6 +523,10 @@ test('JavFree Preview download saves the second image as code.jpg', async () => 
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.deepEqual(revoked, [], 'object URL must not be revoked before the browser takes ownership');
     assert.equal(pendingReleases.length, 1, 'browser save should retain the Blob for 10 seconds');
+    assert.equal(result.button.dataset.downloadState, 'done');
+    assert.equal(result.button.textContent, '✓');
+    assert.equal(result.button.style.background, 'rgb(37, 123, 97)');
+    assert.deepEqual(autoResets, [], 'success must not trigger the old 2.5-second reset');
     pendingReleases[0]();
     assert.deepEqual(revoked, ['blob:javfree-preview']);
   } finally {
