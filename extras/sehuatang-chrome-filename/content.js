@@ -4,6 +4,7 @@
   'use strict';
   const isSite = (hostname) => /^(?:www\.)?sehuatang\.org$/i.test(hostname);
   if (!isSite(location.hostname)) return;
+  const origin = location.origin;
   const directoryPattern = /(?:目录(?:树)?|目錄(?:樹)?|清单|清單|文件列表|readme|file[\s_-]*list)/iu;
   const reported = new Map();
 
@@ -45,7 +46,7 @@
       if (link.querySelector('img') || link.closest('[id$="_menu"], .tip, .pattimg')) continue;
       let url;
       try { url = new URL(link.getAttribute('href'), document.baseURI); } catch { continue; }
-      if (!isSite(url.hostname) || url.origin !== location.origin) continue;
+      if (!isSite(url.hostname) || url.origin !== origin) continue;
       if (!(url.pathname.endsWith('/attachment.php') ||
         (url.pathname.endsWith('/forum.php') && url.searchParams.get('mod') === 'attachment'))) continue;
       if (!url.searchParams.has('aid')) continue;
@@ -68,4 +69,5 @@
     queueMicrotask(() => { queued = false; sync(); });
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-x1080x-ex-sht-rename'] });
+  window.addEventListener('pagehide', () => observer.disconnect(), { once: true });
 })();
