@@ -144,7 +144,7 @@ async function saveRenamedSehuatangTxt(document, url, filename) {
   const response = await fetchFile(url, { credentials: 'include', redirect: 'follow', cache: 'no-store' });
   if (!response?.ok) throw new Error('网站未返回可下载附件（HTTP ' + (response?.status || '未知') + '）');
   const contentType = response.headers?.get('content-type') || '';
-  if (/\\b(?:text\\/html|application\\/(?:xhtml\\+xml|json|xml))\\b/i.test(contentType)) {
+  if (/\b(?:text\/html|application\/(?:xhtml\+xml|json|xml))\b/i.test(contentType)) {
     throw new Error('网站返回了验证、登录或权限页面，而不是 TXT 附件');
   }
   const limit = 2 * 1024 * 1024; // TXT resources are small; do not buffer large/unknown attachments.
@@ -153,8 +153,8 @@ async function saveRenamedSehuatangTxt(document, url, filename) {
   const blob = await response.blob();
   if (!blob.size || blob.size > limit) throw new Error('TXT 附件为空或超过 2MB，请使用网站原始下载');
   const preview = await blob.slice(0, 1024).text();
-  if (/^\\s*(?:<!doctype\\s+html|<html\\b|<script\\b|<\\?xml\\b)/i.test(preview)
-      || preview.includes('\\u0000')) {
+  if (/^\s*(?:<!doctype\s+html|<html\b|<script\b|<\?xml\b)/i.test(preview)
+      || preview.includes('\u0000')) {
     throw new Error('下载响应不是有效的 TXT 内容，可能需要登录、验证或购买权限');
   }
   const result = await saveDownloadBlob(blob, filename, document);
@@ -172,7 +172,7 @@ export function downloadSehuatangAttachment(document, link) {
     return '附件链接已变化，请重新选择楼主附件。';
   }
   const requestedName = sehuatangAttachmentDownloadName(document, file.name);
-  if (requestedName !== file.name && /\\.txt$/i.test(file.name) && !link.hasAttribute('onclick')) {
+  if (requestedName !== file.name && /\.txt$/i.test(file.name) && !link.hasAttribute('onclick')) {
     return saveRenamedSehuatangTxt(document, link.href, requestedName);
   }
   // Other attachments, disabled renaming, and site-specific onclick handlers:
