@@ -134,56 +134,101 @@ export function sehuatangAttachmentDownloadName(document, filename, enabled = ge
   return safeTitle ? safeTitle + '.txt' : original;
 }
 
-// Discuz responds with Content-Disposition: attachment; filename="original.txt".
-// That server filename overrides <a download="requested.txt"> in Chrome/Firefox.
-// For the small, visible resource TXT only, reuse the authenticated same-origin GET
-// and save the returned bytes from a Blob, whose filename we actually control.
-async function saveRenamedSehuatangTxt(document, url, filename) {
-  const fetchFile = document.defaultView?.fetch?.bind(document.defaultView) || globalThis.fetch;
-  if (typeof fetchFile !== 'function') throw new Error('浏览器不支持读取附件，请点击网页中的原始附件链接');
-  const response = await fetchFile(url, { credentials: 'include', redirect: 'follow', cache: 'no-store' });
-  if (!response?.ok) throw new Error('网站未返回可下载附件（HTTP ' + (response?.status || '未知') + '）');
-  const contentType = response.headers?.get('content-type') || '';
-  if (/\b(?:text\/html|application\/(?:xhtml\+xml|json|xml))\b/i.test(contentType)) {
-    throw new Error('网站返回了验证、登录或权限页面，而不是 TXT 附件');
+// Discuz attachment responses often set Content-Disposition filename, which
+// overrides <a download> in Chrome. Page fetch() also fails when 98堂 redirects
+// an attachment across origins without CORS headers. Tampermonkey's privileged
+// GM_xmlhttpRequest follows those redirects without page CORS restrictions.
+// Save the resulting Blob via the browser's native blob: anchor to reliably
+// apply the requested filename (even when GM_download filename is ignored).
+function requestSehuatangTxt(url) {
+  return new Promise((resolve, reject) => {
+    const fail = (message, transport = false) => {
+      const error = new Error(message);
+      error.downloadTransportFailure = transport;
+      reject(error);
+    };
+    try {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        responseType: 'blob',
+        withCredentials: true,
+        timeout: 30000,
+        onload: (response) => {
+          if (!response || !Number.isFinite(response.status) || response.status === 0) {
+            fail('网站附件连接失败', true);
+            return;
+          }
+          if (response.status < 200 || response.status >= 300) {
+            fail('网站未返回可下载附件（HTTP ' + response.status + '）');
+            return;
+          }
+          const contentType = (response.responseHeaders || '').match(/^content-type:\s*([^\r\n]+)/im)?.[1] || '';
+          if (/(?:text\/html|application\/(?:xhtml\+xml|json|xml))/i.test(contentType)) {
+            fail('网站返回了验证、登录或权限页面，而不是 TXT 附件');
+            return;
+          }
+          const blob = response.response;
+          if (!blob || typeof blob.size !== 'number' || typeof blob.slice !== 'function') {
+            fail('下载接口无法读取 TXT 附件内容', true);
+            return;
+          }
+          resolve(blob);
+        },
+        onerror: () => fail('浏览器扩展无法连接附件下载地址', true),
+        ontimeout: () => fail('读取附件超时，请点击网页中的原始附件链接'),
+        onabort: () => fail('附件下载请求被取消'),
+      });
+    } catch (error) {
+      fail('下载接口不可用：' + error.message, true);
+    }
+  });
+}
+
+async function saveRenamedSehuatangTxt(document, link, filename) {
+  let blob;
+  try {
+    blob = await requestSehuatangTxt(link.href);
+  } catch (error) {
+    // Only a transport failure falls back automatically. A 403, an HTML
+    // purchase/verification page or a timeout is NOT silently retried.
+    if (!error.downloadTransportFailure) throw error;
+    link.click();
+    return '已触发网站附件下载（命名通道不可用，已回退原生下载；文件名可能保留原名）。如未下载，请点击网页中的原附件链接。';
   }
-  const limit = 2 * 1024 * 1024; // TXT resources are small; do not buffer large/unknown attachments.
-  const length = Number(response.headers?.get('content-length') || 0);
-  if (length > limit) throw new Error('TXT 附件超过 2MB，为安全起见请使用网站原始下载');
-  const blob = await response.blob();
-  if (!blob.size || blob.size > limit) throw new Error('TXT 附件为空或超过 2MB，请使用网站原始下载');
-  const preview = await blob.slice(0, 1024).text();
+  const limit = 2 * 1024 * 1024;
+  if (!blob.size || blob.size > limit) {
+    throw new Error('TXT 附件为空或超过 2MB，请使用网站原始附件链接下载');
+  }
+  const preview = await blob.slice(0, 2048).text();
   if (/^\s*(?:<!doctype\s+html|<html\b|<script\b|<\?xml\b)/i.test(preview)
       || preview.includes('\u0000')) {
-    throw new Error('下载响应不是有效的 TXT 内容，可能需要登录、验证或购买权限');
+    throw new Error('响应不是 TXT 文件，可能需要登录、购买权限或完成验证');
   }
-  const result = await saveDownloadBlob(blob, filename, document);
-  return result.confirmed
-    ? '已保存附件：' + filename
-    : '已发起附件保存：' + filename + '；请查看浏览器下载列表。';
+  await saveDownloadBlob(blob, filename, document, { browserDownload: true });
+  return '已发起附件保存：' + filename + '；请以浏览器下载列表为准。';
 }
 
 export function downloadSehuatangAttachment(document, link) {
   if (!getSehuatangSettings().download) {
     return '附件下载已关闭，请在「⚙️ 98堂设置」中开启。';
   }
-  const file = collectSehuatangAttachments(document).find((file) => file.link === link);
+  const file = collectSehuatangAttachments(document).find((entry) => entry.link === link);
   if (!file) {
     return '附件链接已变化，请重新选择楼主附件。';
   }
   const requestedName = sehuatangAttachmentDownloadName(document, file.name);
-  if (requestedName !== file.name && /\.txt$/i.test(file.name) && !link.hasAttribute('onclick')) {
-    return saveRenamedSehuatangTxt(document, link.href, requestedName);
+  if (requestedName !== file.name && /\.txt$/i.test(file.name) && !link.hasAttribute('onclick') && !link.onclick) {
+    if (typeof GM_xmlhttpRequest === 'function') {
+      return saveRenamedSehuatangTxt(document, link, requestedName);
+    }
+    // No privileged network API: restore the known-working native download.
+    link.click();
+    return '已触发网站附件下载（当前脚本管理器不支持重命名通道，文件名可能为原名）。';
   }
-  // Other attachments, disabled renaming, and site-specific onclick handlers:
-  // preserve the native permission/purchase/download flow.
-  const originalDownload = link.getAttribute('download');
-  link.setAttribute('download', requestedName);
-  try { link.click(); }
-  finally {
-    if (originalDownload === null) link.removeAttribute('download');
-    else link.setAttribute('download', originalDownload);
-  }
+  // For directory TXT, other formats and disabled renaming, keep the site's
+  // original click, security, confirmation and permission-handling flow.
+  link.click();
   return '已触发网站附件下载，请查看浏览器下载列表或网站提示。';
 }
 
@@ -240,7 +285,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
-        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。主要资源 TXT 使用去掉 ED2K 等分类标签的帖子标题；目录、清单 TXT 保留原名。文件名中的 / 会替换成 Windows 可用的 ／。</small></span>
+        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。仅主要资源 TXT 按帖子标题保存，目录、清单保留原名；如果下载接口不可用会恢复网站原生下载，文件名可能保留原名。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
