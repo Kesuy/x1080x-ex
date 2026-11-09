@@ -29,6 +29,13 @@
   }
 
   function sync() {
+    if (document.documentElement.dataset.x1080xExShtRename !== 'on') {
+      for (const url of reported.keys()) {
+        chrome.runtime.sendMessage({ type: 'sht-remove', url }, () => void chrome.runtime.lastError);
+      }
+      reported.clear();
+      return;
+    }
     const post = originalPost();
     const title = document.querySelector('#thread_subject')?.textContent?.trim();
     if (!post || !title) return;
@@ -58,5 +65,5 @@
     queued = true;
     queueMicrotask(() => { queued = false; sync(); });
   });
-  observer.observe(document.getElementById('postlist') || document.body, { childList: true, subtree: true, characterData: true });
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-x1080x-ex-sht-rename'] });
 })();
