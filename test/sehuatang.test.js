@@ -676,10 +676,10 @@ test('98堂 TXT 命名独立开关默认开启、关闭恢复原名，原有附�
     const clicked = [];
     resource.addEventListener('click', event => {
       event.preventDefault();
-      clicked.push(resource.getAttribute('download'));
+      clicked.push({ text: resource.textContent, download: resource.getAttribute('download') });
     });
     downloadSehuatangAttachment(doc, resource);
-    assert.deepEqual(clicked, ['资源链接.txt']);
+    assert.deepEqual(clicked, [{ text: '资源链接.txt', download: null }], '关闭重命名应保持原生附件链接与名称');
     const restored = openSehuatangSettings(doc);
     restored.querySelector('[data-setting="rename-text"]').checked = true;
     restored.querySelector('form').dispatchEvent(new dom.window.Event('submit', {cancelable:true}));
