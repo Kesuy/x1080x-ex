@@ -133,11 +133,11 @@ export function sehuatangAttachmentDownloadName(document, filename, enabled = ge
   return safeTitle ? safeTitle + '.txt' : original;
 }
 
-// Discuz signed attachment links may reject XHR/extension GET with HTTP 403
-// even when the browser's original link works. Never make a second request
-// merely to rename a download. A server Content-Disposition filename can
-// override <a download>; use an optional Chrome downloads companion extension
-// for guaranteed filename suggestions without altering the network request.
+// Restore the v1.10.46 native, user-gesture download behavior.
+// The same-origin download attribute is important: without it, Discuz
+// attachments with target="_blank" may open a new tab instead of downloading.
+// Do not fetch attachment bytes: extra requests have returned HTTP 403.
+// The suggested name is best effort only; Content-Disposition filename wins.
 export function downloadSehuatangAttachment(document, link) {
   if (!getSehuatangSettings().download) {
     return '附件下载已关闭，请在「⚙️ 98堂设置」中开启。';
@@ -146,10 +146,18 @@ export function downloadSehuatangAttachment(document, link) {
   if (!file) {
     return '附件链接已变化，请重新选择楼主附件。';
   }
-  // Leave href, target, onclick and download attributes exactly as authored.
-  // Run synchronously in the user's original click handler.
-  link.click();
-  return '已触发网站原生附件下载，请查看浏览器下载列表。';
+  const suggested = sehuatangAttachmentDownloadName(document, file.name);
+  const originalDownload = link.getAttribute('download');
+  link.setAttribute('download', suggested);
+  try {
+    // Keep the signed URL, target and native handlers unchanged.
+    // The click must run synchronously inside the user's click gesture.
+    link.click();
+  } finally {
+    if (originalDownload === null) link.removeAttribute('download');
+    else link.setAttribute('download', originalDownload);
+  }
+  return '已触发网站后台附件下载，请查看浏览器下载列表（服务器可能使用原文件名）。';
 }
 
 // Use the site's own button, form validation and result UI. No direct POST or automatic retry.
@@ -205,7 +213,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
-        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启，生成主要资源 TXT 的建议文件名；下载始终走网站原始链接，不再因重命名触发 403。若要自动覆盖服务器指定的文件名，可另装 Chrome 配套重命名扩展；否则可使用下载后的「复制建议文件名」手动重命名。目录、清单保留原名。</small></span>
+        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。沿用此前后台下载方式，同时把去掉 ED2K 标签的帖子标题作为 TXT 建议文件名。网站强制的文件名可能覆盖建议名称；此时可复制建议文件名手动修改。目录、清单保持原名。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
@@ -291,11 +299,6 @@ export function installSehuatangToolbar(document) {
   installations.get(document)?.();
   document.getElementById(TOOLBAR_ID)?.remove();
   const view = document.defaultView;
-  // Share only the local on/off flag with the optional Chrome filename
-  // extension. Never pass attachment contents, login data or user settings.
-  if (isSehuatangHost(view.location)) {
-    document.documentElement.dataset.x1080xExShtRename = getSehuatangSettings().renameText ? 'on' : 'off';
-  }
   const initiatedAttachments = initiatedAttachmentsByDocument.get(document) || new Map();
   initiatedAttachmentsByDocument.set(document, initiatedAttachments);
   const settings = getSehuatangSettings();
@@ -449,10 +452,10 @@ export function installSehuatangToolbar(document) {
           const showInitiated = (icon) => {
             icon.dataset.downloadState = 'started';
             icon.textContent = '↗';
-            icon.title = '已发起原生附件下载（保存情况以浏览器下载列表为准）';
+            icon.title = '已发起网站后台下载（保存情况以浏览器下载列表为准）';
             icon.setAttribute('aria-label', icon.title);
           };
-          const icon = addIcon('download-attachment', `原生下载附件：${name}`,
+          const icon = addIcon('download-attachment', `下载附件：${downloadName}`,
             DOWNLOAD_ICON_PATH, () => {
               let result;
               try { result = downloadSehuatangAttachment(document, link); }
@@ -462,7 +465,7 @@ export function installSehuatangToolbar(document) {
                 return;
               }
               status.textContent = result;
-              if (result.startsWith('已触发网站原生附件下载')) {
+              if (result.startsWith('已触发网站后台附件下载')) {
                 initiatedAttachments.set(key, 'started');
                 showInitiated(icon);
                 if (downloadName !== name) {
