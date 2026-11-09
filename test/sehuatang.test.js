@@ -369,7 +369,7 @@ test('one visible file downloads through its row icon and original link handlers
   const icon = root.querySelector('[data-action="download-attachment"]');
   assert.equal(icon.dataset.downloadState, 'started', '98堂 only confirms native handoff, not completion');
   assert.equal(icon.textContent, '↗');
-  assert.match(icon.title, /已发起下载/);
+  assert.match(icon.title, /已发起原生附件下载/);
   installSehuatangToolbar(document);
   const rerendered = document.getElementById('x1080x-ex-sehuatang-toolbar').shadowRoot
     .querySelector('[data-action="download-attachment"]');
