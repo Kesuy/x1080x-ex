@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.48
+// @version      1.10.49
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -10160,47 +10160,87 @@ ${title}`;
     const safeTitle = title.replace(/[\\/:*?"<>|]/g, (char) => replacements[char]).replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").replace(/[.\s]+$/g, "").slice(0, 180).replace(/[.\s]+$/g, "");
     return safeTitle ? safeTitle + ".txt" : original;
   }
-  async function saveRenamedSehuatangTxt(document2, url, filename) {
-    const fetchFile = document2.defaultView?.fetch?.bind(document2.defaultView) || globalThis.fetch;
-    if (typeof fetchFile !== "function") throw new Error("\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u8BFB\u53D6\u9644\u4EF6\uFF0C\u8BF7\u70B9\u51FB\u7F51\u9875\u4E2D\u7684\u539F\u59CB\u9644\u4EF6\u94FE\u63A5");
-    const response = await fetchFile(url, { credentials: "include", redirect: "follow", cache: "no-store" });
-    if (!response?.ok) throw new Error("\u7F51\u7AD9\u672A\u8FD4\u56DE\u53EF\u4E0B\u8F7D\u9644\u4EF6\uFF08HTTP " + (response?.status || "\u672A\u77E5") + "\uFF09");
-    const contentType = response.headers?.get("content-type") || "";
-    if (/\b(?:text\/html|application\/(?:xhtml\+xml|json|xml))\b/i.test(contentType)) {
-      throw new Error("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u9A8C\u8BC1\u3001\u767B\u5F55\u6216\u6743\u9650\u9875\u9762\uFF0C\u800C\u4E0D\u662F TXT \u9644\u4EF6");
+  function requestSehuatangTxt(url) {
+    return new Promise((resolve, reject) => {
+      const fail = (message, transport = false) => {
+        const error = new Error(message);
+        error.downloadTransportFailure = transport;
+        reject(error);
+      };
+      try {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url,
+          responseType: "blob",
+          withCredentials: true,
+          timeout: 3e4,
+          onload: (response) => {
+            if (!response || !Number.isFinite(response.status) || response.status === 0) {
+              fail("\u7F51\u7AD9\u9644\u4EF6\u8FDE\u63A5\u5931\u8D25", true);
+              return;
+            }
+            if (response.status < 200 || response.status >= 300) {
+              fail("\u7F51\u7AD9\u672A\u8FD4\u56DE\u53EF\u4E0B\u8F7D\u9644\u4EF6\uFF08HTTP " + response.status + "\uFF09");
+              return;
+            }
+            const contentType = (response.responseHeaders || "").match(/^content-type:\s*([^\r\n]+)/im)?.[1] || "";
+            if (/(?:text\/html|application\/(?:xhtml\+xml|json|xml))/i.test(contentType)) {
+              fail("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u9A8C\u8BC1\u3001\u767B\u5F55\u6216\u6743\u9650\u9875\u9762\uFF0C\u800C\u4E0D\u662F TXT \u9644\u4EF6");
+              return;
+            }
+            const blob = response.response;
+            if (!blob || typeof blob.size !== "number" || typeof blob.slice !== "function") {
+              fail("\u4E0B\u8F7D\u63A5\u53E3\u65E0\u6CD5\u8BFB\u53D6 TXT \u9644\u4EF6\u5185\u5BB9", true);
+              return;
+            }
+            resolve(blob);
+          },
+          onerror: () => fail("\u6D4F\u89C8\u5668\u6269\u5C55\u65E0\u6CD5\u8FDE\u63A5\u9644\u4EF6\u4E0B\u8F7D\u5730\u5740", true),
+          ontimeout: () => fail("\u8BFB\u53D6\u9644\u4EF6\u8D85\u65F6\uFF0C\u8BF7\u70B9\u51FB\u7F51\u9875\u4E2D\u7684\u539F\u59CB\u9644\u4EF6\u94FE\u63A5"),
+          onabort: () => fail("\u9644\u4EF6\u4E0B\u8F7D\u8BF7\u6C42\u88AB\u53D6\u6D88")
+        });
+      } catch (error) {
+        fail("\u4E0B\u8F7D\u63A5\u53E3\u4E0D\u53EF\u7528\uFF1A" + error.message, true);
+      }
+    });
+  }
+  async function saveRenamedSehuatangTxt(document2, link, filename) {
+    let blob;
+    try {
+      blob = await requestSehuatangTxt(link.href);
+    } catch (error) {
+      if (!error.downloadTransportFailure) throw error;
+      link.click();
+      return "\u5DF2\u89E6\u53D1\u7F51\u7AD9\u9644\u4EF6\u4E0B\u8F7D\uFF08\u547D\u540D\u901A\u9053\u4E0D\u53EF\u7528\uFF0C\u5DF2\u56DE\u9000\u539F\u751F\u4E0B\u8F7D\uFF1B\u6587\u4EF6\u540D\u53EF\u80FD\u4FDD\u7559\u539F\u540D\uFF09\u3002\u5982\u672A\u4E0B\u8F7D\uFF0C\u8BF7\u70B9\u51FB\u7F51\u9875\u4E2D\u7684\u539F\u9644\u4EF6\u94FE\u63A5\u3002";
     }
     const limit = 2 * 1024 * 1024;
-    const length = Number(response.headers?.get("content-length") || 0);
-    if (length > limit) throw new Error("TXT \u9644\u4EF6\u8D85\u8FC7 2MB\uFF0C\u4E3A\u5B89\u5168\u8D77\u89C1\u8BF7\u4F7F\u7528\u7F51\u7AD9\u539F\u59CB\u4E0B\u8F7D");
-    const blob = await response.blob();
-    if (!blob.size || blob.size > limit) throw new Error("TXT \u9644\u4EF6\u4E3A\u7A7A\u6216\u8D85\u8FC7 2MB\uFF0C\u8BF7\u4F7F\u7528\u7F51\u7AD9\u539F\u59CB\u4E0B\u8F7D");
-    const preview = await blob.slice(0, 1024).text();
-    if (/^\s*(?:<!doctype\s+html|<html\b|<script\b|<\?xml\b)/i.test(preview) || preview.includes("\0")) {
-      throw new Error("\u4E0B\u8F7D\u54CD\u5E94\u4E0D\u662F\u6709\u6548\u7684 TXT \u5185\u5BB9\uFF0C\u53EF\u80FD\u9700\u8981\u767B\u5F55\u3001\u9A8C\u8BC1\u6216\u8D2D\u4E70\u6743\u9650");
+    if (!blob.size || blob.size > limit) {
+      throw new Error("TXT \u9644\u4EF6\u4E3A\u7A7A\u6216\u8D85\u8FC7 2MB\uFF0C\u8BF7\u4F7F\u7528\u7F51\u7AD9\u539F\u59CB\u9644\u4EF6\u94FE\u63A5\u4E0B\u8F7D");
     }
-    const result = await saveDownloadBlob(blob, filename, document2);
-    return result.confirmed ? "\u5DF2\u4FDD\u5B58\u9644\u4EF6\uFF1A" + filename : "\u5DF2\u53D1\u8D77\u9644\u4EF6\u4FDD\u5B58\uFF1A" + filename + "\uFF1B\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u3002";
+    const preview = await blob.slice(0, 2048).text();
+    if (/^\s*(?:<!doctype\s+html|<html\b|<script\b|<\?xml\b)/i.test(preview) || preview.includes("\0")) {
+      throw new Error("\u54CD\u5E94\u4E0D\u662F TXT \u6587\u4EF6\uFF0C\u53EF\u80FD\u9700\u8981\u767B\u5F55\u3001\u8D2D\u4E70\u6743\u9650\u6216\u5B8C\u6210\u9A8C\u8BC1");
+    }
+    await saveDownloadBlob(blob, filename, document2, { browserDownload: true });
+    return "\u5DF2\u53D1\u8D77\u9644\u4EF6\u4FDD\u5B58\uFF1A" + filename + "\uFF1B\u8BF7\u4EE5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u4E3A\u51C6\u3002";
   }
   function downloadSehuatangAttachment(document2, link) {
     if (!getSehuatangSettings().download) {
       return "\u9644\u4EF6\u4E0B\u8F7D\u5DF2\u5173\u95ED\uFF0C\u8BF7\u5728\u300C\u2699\uFE0F 98\u5802\u8BBE\u7F6E\u300D\u4E2D\u5F00\u542F\u3002";
     }
-    const file = collectSehuatangAttachments(document2).find((file2) => file2.link === link);
+    const file = collectSehuatangAttachments(document2).find((entry) => entry.link === link);
     if (!file) {
       return "\u9644\u4EF6\u94FE\u63A5\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u697C\u4E3B\u9644\u4EF6\u3002";
     }
     const requestedName = sehuatangAttachmentDownloadName(document2, file.name);
-    if (requestedName !== file.name && /\.txt$/i.test(file.name) && !link.hasAttribute("onclick")) {
-      return saveRenamedSehuatangTxt(document2, link.href, requestedName);
-    }
-    const originalDownload = link.getAttribute("download");
-    link.setAttribute("download", requestedName);
-    try {
+    if (requestedName !== file.name && /\.txt$/i.test(file.name) && !link.hasAttribute("onclick") && !link.onclick) {
+      if (typeof GM_xmlhttpRequest === "function") {
+        return saveRenamedSehuatangTxt(document2, link, requestedName);
+      }
       link.click();
-    } finally {
-      if (originalDownload === null) link.removeAttribute("download");
-      else link.setAttribute("download", originalDownload);
+      return "\u5DF2\u89E6\u53D1\u7F51\u7AD9\u9644\u4EF6\u4E0B\u8F7D\uFF08\u5F53\u524D\u811A\u672C\u7BA1\u7406\u5668\u4E0D\u652F\u6301\u91CD\u547D\u540D\u901A\u9053\uFF0C\u6587\u4EF6\u540D\u53EF\u80FD\u4E3A\u539F\u540D\uFF09\u3002";
     }
+    link.click();
     return "\u5DF2\u89E6\u53D1\u7F51\u7AD9\u9644\u4EF6\u4E0B\u8F7D\uFF0C\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u6216\u7F51\u7AD9\u63D0\u793A\u3002";
   }
   function submitSehuatangQuickReply(document2, phrase) {
@@ -10267,7 +10307,7 @@ ${title}`;
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
-        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u4E3B\u8981\u8D44\u6E90 TXT \u4F7F\u7528\u53BB\u6389 ED2K \u7B49\u5206\u7C7B\u6807\u7B7E\u7684\u5E16\u5B50\u6807\u9898\uFF1B\u76EE\u5F55\u3001\u6E05\u5355 TXT \u4FDD\u7559\u539F\u540D\u3002\u6587\u4EF6\u540D\u4E2D\u7684 / \u4F1A\u66FF\u6362\u6210 Windows \u53EF\u7528\u7684 \uFF0F\u3002</small></span>
+        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u4EC5\u4E3B\u8981\u8D44\u6E90 TXT \u6309\u5E16\u5B50\u6807\u9898\u4FDD\u5B58\uFF0C\u76EE\u5F55\u3001\u6E05\u5355\u4FDD\u7559\u539F\u540D\uFF1B\u5982\u679C\u4E0B\u8F7D\u63A5\u53E3\u4E0D\u53EF\u7528\u4F1A\u6062\u590D\u7F51\u7AD9\u539F\u751F\u4E0B\u8F7D\uFF0C\u6587\u4EF6\u540D\u53EF\u80FD\u4FDD\u7559\u539F\u540D\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
