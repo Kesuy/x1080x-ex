@@ -4,7 +4,8 @@ import { JSDOM } from 'jsdom';
 import {
   DEFAULT_SHT_REPLY_PHRASE, SHT_ATTACHMENTS_ENABLED_KEY, SHT_DOWNLOAD_ENABLED_KEY, SHT_REPLY_ENABLED_KEY,
   SHT_REPLY_PHRASE_KEY, SHT_POSITION_KEY, collectSehuatangAttachments,
-  SHT_HIDDEN_NOTICE_ENABLED_KEY, hasSehuatangReplyHiddenContent,
+  SHT_HIDDEN_NOTICE_ENABLED_KEY, SHT_RENAME_TXT_ENABLED_KEY,
+  sehuatangAttachmentDownloadName, hasSehuatangReplyHiddenContent,
   downloadSehuatangAttachment, getSehuatangSettings, installSehuatangEnhancement, installSehuatangToolbar, isSehuatangHost,
   openSehuatangSettings, sehuatangFirstPageUrl, submitSehuatangQuickReply,
 } from '../src/sehuatang.js';
@@ -52,7 +53,7 @@ test('98堂 domains are exact and settings preserve defaults on old installation
   for (const hostname of ['sehuatang.org', 'www.sehuatang.org']) assert.equal(isSehuatangHost({ hostname }), true);
   for (const hostname of ['fake-sehuatang.org', 'sehuatang.org.evil.example', 'hdblog.me']) assert.equal(isSehuatangHost({ hostname }), false);
   withSettings(new Map(), () => assert.deepEqual(getSehuatangSettings(), {
-    attachments: true, download: true, reply: true, hiddenNotice: true, phrase: DEFAULT_SHT_REPLY_PHRASE,
+    attachments: true, download: true, renameText: true, reply: true, hiddenNotice: true, phrase: DEFAULT_SHT_REPLY_PHRASE,
   }));
 });
 
@@ -526,3 +527,100 @@ test('fixed toolbar remembers drag and clamps stale coordinates after resize', (
     dom.window.close();
   });
 });
+
+
+test('98堂两份 ED2K 实例：主要资源 TXT 按标题命名；目录附件保持原名，不会相互覆盖', () => {
+  const samples = [
+    ['3719259', '【ED2K丨原档合集丨整理】新川空 DMM原档合集【305GB/38V/38配额】',
+      '新川空目录树.txt', '新川空.txt',
+      '新川空 DMM原档合集【305GB／38V／38配额】.txt'],
+    ['3726403', '【ED2K丨整理】長浜みつり（长滨蜜璃）DMM原档合集【1.07TB/116V/116配额】',
+      'www.98T.la@長浜みつり_目录.txt', 'www.98T.la@長浜みつり_eD2k.txt',
+      '長浜みつり（长滨蜜璃）DMM原档合集【1.07TB／116V／116配额】.txt'],
+  ];
+  withSettings(new Map(), () => {
+    for (const [tid, title, directory, resource, expected] of samples) {
+      const dom = new JSDOM('<!doctype html><body><span id="thread_subject"></span>'
+        + '<div id="postlist"><div id="post_100"><a id="postnum100">楼主</a>'
+        + '<div id="postmessage_100"><span id="attach_101"><a href="forum.php?mod=attachment&aid=directory"></a></span>'
+        + '<span id="attach_102"><a href="forum.php?mod=attachment&aid=resource"></a></span>'
+        + '</div></div></div></body>', {
+        url: 'https://www.sehuatang.org/forum.php?mod=viewthread&tid=' + tid,
+      });
+      const doc = dom.window.document;
+      doc.getElementById('thread_subject').textContent = title;
+      const links = [...doc.querySelectorAll('#postmessage_100 a')];
+      links[0].textContent = directory;
+      links[1].textContent = resource;
+      assert.deepEqual(collectSehuatangAttachments(doc).map(file => file.name), [directory, resource]);
+      assert.equal(sehuatangAttachmentDownloadName(doc, directory), directory);
+      assert.equal(sehuatangAttachmentDownloadName(doc, resource), expected);
+      assert.doesNotMatch(expected, /[\\/:*?"<>|]/);
+      const clicked = [];
+      links.forEach(link => link.addEventListener('click', event => {
+        event.preventDefault();
+        clicked.push(link.getAttribute('download'));
+      }));
+      downloadSehuatangAttachment(doc, links[0]);
+      downloadSehuatangAttachment(doc, links[1]);
+      assert.deepEqual(clicked, [directory, expected]);
+      assert.equal(links[0].hasAttribute('download'), false);
+      assert.equal(links[1].hasAttribute('download'), false);
+      dom.window.close();
+    }
+  });
+});
+
+test('98堂 TXT 命名独立开关默认开启、关闭恢复原名，原有附件按钮仍工作', () => {
+  const values = new Map();
+  withSettings(values, () => {
+    const dom = fixture();
+    const doc = dom.window.document;
+    const heading = doc.createElement('span');
+    heading.id = 'thread_subject';
+    heading.textContent = '【ED2K丨整理】示例 DMM原档合集【305GB/38V/38配额】';
+    doc.body.prepend(heading);
+    const resource = doc.querySelector('#attach_2 a');
+    assert.equal(getSehuatangSettings().renameText, true);
+    assert.equal(sehuatangAttachmentDownloadName(doc, resource.textContent),
+      '示例 DMM原档合集【305GB／38V／38配额】.txt');
+    const panel = openSehuatangSettings(doc);
+    assert.equal(panel.querySelector('[data-setting="rename-text"]').checked, true);
+    panel.querySelector('[data-setting="rename-text"]').checked = false;
+    panel.querySelector('form').dispatchEvent(new dom.window.Event('submit', {cancelable:true}));
+    assert.equal(values.get(SHT_RENAME_TXT_ENABLED_KEY), false);
+    assert.equal(getSehuatangSettings().renameText, false);
+    assert.equal(sehuatangAttachmentDownloadName(doc, resource.textContent), '资源链接.txt');
+    const clicked = [];
+    resource.addEventListener('click', event => {
+      event.preventDefault();
+      clicked.push(resource.getAttribute('download'));
+    });
+    downloadSehuatangAttachment(doc, resource);
+    assert.deepEqual(clicked, ['资源链接.txt']);
+    const restored = openSehuatangSettings(doc);
+    restored.querySelector('[data-setting="rename-text"]').checked = true;
+    restored.querySelector('form').dispatchEvent(new dom.window.Event('submit', {cancelable:true}));
+    assert.equal(getSehuatangSettings().renameText, true);
+    assert.equal(getSehuatangSettings().download, true);
+    assert.equal(getSehuatangSettings().attachments, true);
+    dom.window.close();
+  });
+});
+
+test('98堂 仅重命名有效标题下的主要 TXT，不影响 ZIP、图片和目录 TXT', () => withSettings(new Map(), () => {
+  const dom = fixture();
+  const doc = dom.window.document;
+  assert.equal(sehuatangAttachmentDownloadName(doc, '资源链接.txt'), '资源链接.txt');
+  const heading = doc.createElement('span');
+  heading.id = 'thread_subject';
+  heading.textContent = '【ED2K丨整理】成品合集【30GB/5V/5配额】';
+  doc.body.prepend(heading);
+  for (const excluded of ['目录树.txt', 'www.98T.la@演员_目录.txt',
+    '压缩包.zip', '照片.jpg', '影片.rar']) {
+    assert.equal(sehuatangAttachmentDownloadName(doc, excluded), excluded);
+  }
+  assert.equal(sehuatangAttachmentDownloadName(doc, '资源链接.txt'), '成品合集【30GB／5V／5配额】.txt');
+  assert.equal(sehuatangAttachmentDownloadName(doc, '资源链接.txt', false), '资源链接.txt');
+  dom.window.close();
+}));
