@@ -353,7 +353,7 @@ test('one visible file downloads through its row icon and original link handlers
   let scrolled = 0;
   link.addEventListener('click', event => {
     event.preventDefault();
-    assert.equal(link.hasAttribute('download'), false, 'native ZIP download must not change the original link');
+    assert.equal(link.getAttribute('download'), '压缩包.zip', 'v1.10.46 temporarily sets download for background saving');
     clicks++;
   });
   link.scrollIntoView = () => scrolled++;
@@ -365,11 +365,11 @@ test('one visible file downloads through its row icon and original link handlers
   assert.equal(link.getAttribute('href'), href);
   assert.equal(link.target, '_blank');
   assert.equal(link.hasAttribute('download'), false);
-  assert.match(root.querySelector('.status').textContent, /已触发网站原生附件下载/);
+  assert.match(root.querySelector('.status').textContent, /已触发网站后台附件下载/);
   const icon = root.querySelector('[data-action="download-attachment"]');
   assert.equal(icon.dataset.downloadState, 'started', '98堂 only confirms native handoff, not completion');
   assert.equal(icon.textContent, '↗');
-  assert.match(icon.title, /已发起原生附件下载/);
+  assert.match(icon.title, /已发起网站后台下载/);
   installSehuatangToolbar(document);
   const rerendered = document.getElementById('x1080x-ex-sehuatang-toolbar').shadowRoot
     .querySelector('[data-action="download-attachment"]');
@@ -572,17 +572,20 @@ test('98堂 真实 ED2K 页面：任何 TXT 均仅点击原始附件，不请求
             href: link.href,
             target: link.target,
             download: link.hasAttribute('download'),
+            downloadName: link.getAttribute('download'),
             name: link.textContent,
           });
         }));
         assert.equal(sehuatangAttachmentDownloadName(doc, resource), suggested);
         assert.equal(sehuatangAttachmentDownloadName(doc, directory), directory);
-        assert.match(downloadSehuatangAttachment(doc, links[0]), /已触发网站原生附件下载/);
-        assert.match(downloadSehuatangAttachment(doc, links[1]), /已触发网站原生附件下载/);
+        assert.match(downloadSehuatangAttachment(doc, links[0]), /已触发网站后台附件下载/);
+        assert.match(downloadSehuatangAttachment(doc, links[1]), /已触发网站后台附件下载/);
         assert.deepEqual(clicked.map(x => x.name), [directory, resource]);
-        assert.equal(clicked.every(x => x.target === '_blank' && !x.download), true,
-          'original native target and download attributes must be untouched');
+        assert.equal(clicked.every(x => x.target === '_blank' && x.download), true,
+          'v1.10.46 background download must set attribute while preserving native target');
         assert.equal(clicked.length, 2, 'no extra requests or duplicate links');
+        assert.deepEqual(clicked.map(x => x.downloadName), [directory, suggested]);
+        assert.equal(links.every(link => !link.hasAttribute('download')), true, 'download attribute restored after click');
         dom.window.close();
       }
     });
@@ -611,7 +614,7 @@ test('98堂 默认开启重命名时仍可原生下载，建议文件名通过�
       const root = toolbar(dom);
       root.querySelectorAll('[data-action="download-attachment"]')[1].click();
       assert.equal(nativeClicks, 1);
-      assert.match(root.querySelector('.status').textContent, /原生附件下载/);
+      assert.match(root.querySelector('.status').textContent, /后台附件下载/);
       const copyButton = root.querySelector('.status button');
       assert.equal(copyButton?.textContent, '复制建议文件名');
       copyButton.click();
@@ -650,7 +653,8 @@ test('98堂 TXT 命名独立开关默认开启、关闭恢复原名，原有附�
       clicked.push({ text: resource.textContent, download: resource.getAttribute('download') });
     });
     downloadSehuatangAttachment(doc, resource);
-    assert.deepEqual(clicked, [{ text: '资源链接.txt', download: null }], '关闭重命名应保持原生附件链接与名称');
+    assert.deepEqual(clicked, [{ text: '资源链接.txt', download: '资源链接.txt' }], '关闭重命名保留 v1.10.46 后台下载并建议原文件名');
+    assert.equal(resource.hasAttribute('download'), false, 'restore attribute after click');
     const restored = openSehuatangSettings(doc);
     restored.querySelector('[data-setting="rename-text"]').checked = true;
     restored.querySelector('form').dispatchEvent(new dom.window.Event('submit', {cancelable:true}));
