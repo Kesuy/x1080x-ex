@@ -17,14 +17,20 @@ function attachment(url) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  const source = attachment(sender.url || '');
+  // Only messages sent by our content script running on sehuatang.org.
+  if (!/^https:\/\/(?:www\.)?sehuatang\.org\//i.test(sender.url || '')) return;
   const candidate = attachment(message?.url || '');
-  const filename = message?.filename;
-  if (message?.type !== 'sht-suggest' || !candidate ||
-      !source && !/^(?:https:\/\/)(?:www\.)?sehuatang\.org\//i.test(sender.url || '') ||
-      typeof filename !== 'string' || filename.length > 210 ||
-      /[\\/:*?"<>|\x00-\x1f]/.test(filename) || !filename.toLowerCase().endsWith('.txt')) return;
+  if (!candidate) return;
   const key = PREFIX + candidate.aid;
+  if (message.type === 'sht-remove') {
+    chrome.storage.session.remove(key).then(() => respond({ ok: true }),
+      () => respond({ ok: false }));
+    return true;
+  }
+  const filename = message.filename;
+  if (message.type !== 'sht-suggest' || typeof filename !== 'string' ||
+      filename.length > 210 || /[\\/:*?"<>|\x00-\x1f]/.test(filename) ||
+      !filename.toLowerCase().endsWith('.txt')) return;
   chrome.storage.session.set({ [key]: { url: candidate.url, filename, at: Date.now() } })
     .then(() => respond({ ok: true }), () => respond({ ok: false }));
   return true;
