@@ -65,8 +65,10 @@ test('agaghhh inserts copy-code button between search and download and copies th
     assert.ok(download);
     assert.ok(copy);
     assert.ok(search);
-    assert.equal(download.nextElementSibling, copy);
-    assert.equal(copy.nextElementSibling, search);
+    const preview = dom.window.document.getElementById('x1080x-ex-agaghhh-preview-toggle');
+    assert.equal(download.nextElementSibling, search);
+    assert.equal(search.nextElementSibling, preview);
+    assert.equal(preview.nextElementSibling, copy);
     assert.equal(copy.textContent, '📋');
     assert.equal(search.style.margin, '0px 0px 6px 6px');
     assert.equal(copy.style.margin, '0px 0px 6px 6px');
