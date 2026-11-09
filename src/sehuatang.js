@@ -1,4 +1,5 @@
 import { DOWNLOAD_ICON_PATH } from './download-icon.js';
+import { saveDownloadBlob } from './blob-download.js';
 import { organizeSettingsPanel } from './settings-layout.js';
 const PREFIX = 'x1080x-ex:sehuatang-';
 export const SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + 'attachments-enabled';
@@ -133,6 +134,35 @@ export function sehuatangAttachmentDownloadName(document, filename, enabled = ge
   return safeTitle ? safeTitle + '.txt' : original;
 }
 
+// Discuz responds with Content-Disposition: attachment; filename="original.txt".
+// That server filename overrides <a download="requested.txt"> in Chrome/Firefox.
+// For the small, visible resource TXT only, reuse the authenticated same-origin GET
+// and save the returned bytes from a Blob, whose filename we actually control.
+async function saveRenamedSehuatangTxt(document, url, filename) {
+  const fetchFile = document.defaultView?.fetch?.bind(document.defaultView) || globalThis.fetch;
+  if (typeof fetchFile !== 'function') throw new Error('浏览器不支持读取附件，请点击网页中的原始附件链接');
+  const response = await fetchFile(url, { credentials: 'include', redirect: 'follow', cache: 'no-store' });
+  if (!response?.ok) throw new Error('网站未返回可下载附件（HTTP ' + (response?.status || '未知') + '）');
+  const contentType = response.headers?.get('content-type') || '';
+  if (/\\b(?:text\\/html|application\\/(?:xhtml\\+xml|json|xml))\\b/i.test(contentType)) {
+    throw new Error('网站返回了验证、登录或权限页面，而不是 TXT 附件');
+  }
+  const limit = 2 * 1024 * 1024; // TXT resources are small; do not buffer large/unknown attachments.
+  const length = Number(response.headers?.get('content-length') || 0);
+  if (length > limit) throw new Error('TXT 附件超过 2MB，为安全起见请使用网站原始下载');
+  const blob = await response.blob();
+  if (!blob.size || blob.size > limit) throw new Error('TXT 附件为空或超过 2MB，请使用网站原始下载');
+  const preview = await blob.slice(0, 1024).text();
+  if (/^\\s*(?:<!doctype\\s+html|<html\\b|<script\\b|<\\?xml\\b)/i.test(preview)
+      || preview.includes('\\u0000')) {
+    throw new Error('下载响应不是有效的 TXT 内容，可能需要登录、验证或购买权限');
+  }
+  const result = await saveDownloadBlob(blob, filename, document);
+  return result.confirmed
+    ? '已保存附件：' + filename
+    : '已发起附件保存：' + filename + '；请查看浏览器下载列表。';
+}
+
 export function downloadSehuatangAttachment(document, link) {
   if (!getSehuatangSettings().download) {
     return '附件下载已关闭，请在「⚙️ 98堂设置」中开启。';
@@ -141,10 +171,14 @@ export function downloadSehuatangAttachment(document, link) {
   if (!file) {
     return '附件链接已变化，请重新选择楼主附件。';
   }
-  // Prefer native saving even for inline TXT responses, while keeping the signed URL,
-  // original target and onclick (including native purchase/permission dialogs).
+  const requestedName = sehuatangAttachmentDownloadName(document, file.name);
+  if (requestedName !== file.name && /\\.txt$/i.test(file.name) && !link.hasAttribute('onclick')) {
+    return saveRenamedSehuatangTxt(document, link.href, requestedName);
+  }
+  // Other attachments, disabled renaming, and site-specific onclick handlers:
+  // preserve the native permission/purchase/download flow.
   const originalDownload = link.getAttribute('download');
-  link.setAttribute('download', sehuatangAttachmentDownloadName(document, file.name));
+  link.setAttribute('download', requestedName);
   try { link.click(); }
   finally {
     if (originalDownload === null) link.removeAttribute('download');
@@ -292,7 +326,7 @@ export function installSehuatangToolbar(document) {
   installations.get(document)?.();
   document.getElementById(TOOLBAR_ID)?.remove();
   const view = document.defaultView;
-  const initiatedAttachments = initiatedAttachmentsByDocument.get(document) || new Set();
+  const initiatedAttachments = initiatedAttachmentsByDocument.get(document) || new Map();
   initiatedAttachmentsByDocument.set(document, initiatedAttachments);
   const settings = getSehuatangSettings();
   if (!isSehuatangHost(view.location) || !isThread(view.location)
@@ -320,6 +354,7 @@ export function installSehuatangToolbar(document) {
     .file-actions{display:flex;gap:4px}.file-actions button{width:28px;height:28px;padding:5px;display:grid;place-items:center;flex:none}
     .file-actions svg,.attachment-lock svg{width:16px;height:16px;display:block}
     .file-actions button[data-download-state="started"]{background:#eef2ff;border-color:#a5b4fc;color:#4338ca}
+    .file-actions button[data-download-state="saved"]{background:#dcfce7;border-color:#86efac;color:#166534}
     .hidden-notice{color:#475569;font-size:12px;line-height:18px}
     .hidden-notice:empty{display:none}.hidden-notice strong{display:block;font-weight:600}.hidden-notice small{display:block;font-size:11px;color:#64748b;line-height:16px;margin-top:2px}
     .attachment-lock{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#94a3b8}
@@ -441,23 +476,39 @@ export function installSehuatangToolbar(document) {
         if (settings.download) {
           const downloadName = sehuatangAttachmentDownloadName(document, name, settings.renameText);
           const key = `${link.href}\n${name}`;
-          const showInitiated = (icon) => {
-            icon.dataset.downloadState = 'started';
-            icon.textContent = '↗';
-            icon.title = `已发起下载：${downloadName}（实际保存结果请检查浏览器）`;
+          const showInitiated = (icon, confirmed = false) => {
+            icon.dataset.downloadState = confirmed ? 'saved' : 'started';
+            icon.textContent = confirmed ? '✓' : '↗';
+            icon.title = confirmed
+              ? `已保存附件：${downloadName}`
+              : `已发起下载：${downloadName}（实际保存结果请检查浏览器）`;
             icon.setAttribute('aria-label', icon.title);
           };
           const icon = addIcon('download-attachment', `下载附件：${downloadName}`,
             DOWNLOAD_ICON_PATH, () => {
-              const result = downloadSehuatangAttachment(document, link);
-              status.textContent = result;
-              if (result.startsWith('已触发网站附件下载')) {
-                initiatedAttachments.add(key);
-                showInitiated(icon);
-              }
-              place();
+              if (icon.disabled) return;
+              const report = (result) => {
+                status.textContent = result;
+                if (/^(?:已触发网站附件下载|已发起附件保存|已保存附件)/.test(result)) {
+                  const confirmed = result.startsWith('已保存附件');
+                  initiatedAttachments.set(key, confirmed ? 'saved' : 'started');
+                  showInitiated(icon, confirmed);
+                }
+                place();
+              };
+              let result;
+              try { result = downloadSehuatangAttachment(document, link); }
+              catch (error) { status.textContent = '附件下载失败：' + error.message; place(); return; }
+              if (result && typeof result.then === 'function') {
+                icon.disabled = true;
+                status.textContent = '正在读取并保存 TXT 附件…';
+                result.then(report, (error) => {
+                  status.textContent = 'TXT 下载失败：' + error.message
+                    + '。未自动重复下载；请点击网页中的原始附件链接处理权限或下载。';
+                }).finally(() => { icon.disabled = false; place(); });
+              } else report(result);
             });
-          if (initiatedAttachments.has(key)) showInitiated(icon);
+          if (initiatedAttachments.has(key)) showInitiated(icon, initiatedAttachments.get(key) === 'saved');
         }
         row.append(filename, icons);
         choices.append(row);
