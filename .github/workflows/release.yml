@@ -61,6 +61,13 @@ jobs:
           git commit -m "release: update built userscript for v$VERSION"
           git push
 
+      - name: Package optional Chrome native-filename extension
+        shell: bash
+        run: |
+          cd extras
+          zip -q -r ../sehuatang-filename-chrome.zip sehuatang-chrome-filename
+          test -s ../sehuatang-filename-chrome.zip
+
       - name: Create or update GitHub Release with Chinese notes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -70,9 +77,9 @@ jobs:
           NOTES_FILE=".github/release-notes/${TAG}.md"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file "$NOTES_FILE"
-            gh release upload "$TAG" dist/x1080x-ex.user.js --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" dist/x1080x-ex.user.js sehuatang-filename-chrome.zip --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" dist/x1080x-ex.user.js \
+            gh release create "$TAG" dist/x1080x-ex.user.js sehuatang-filename-chrome.zip \
               --repo "$GITHUB_REPOSITORY" \
               --target "$(git rev-parse HEAD)" \
               --title "$TAG" \

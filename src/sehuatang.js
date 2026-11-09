@@ -1,5 +1,4 @@
 import { DOWNLOAD_ICON_PATH } from './download-icon.js';
-import { saveDownloadBlob } from './blob-download.js';
 import { organizeSettingsPanel } from './settings-layout.js';
 const PREFIX = 'x1080x-ex:sehuatang-';
 export const SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + 'attachments-enabled';
@@ -134,81 +133,11 @@ export function sehuatangAttachmentDownloadName(document, filename, enabled = ge
   return safeTitle ? safeTitle + '.txt' : original;
 }
 
-// Discuz attachment responses often set Content-Disposition filename, which
-// overrides <a download> in Chrome. Page fetch() also fails when 98堂 redirects
-// an attachment across origins without CORS headers. Tampermonkey's privileged
-// GM_xmlhttpRequest follows those redirects without page CORS restrictions.
-// Save the resulting Blob via the browser's native blob: anchor to reliably
-// apply the requested filename (even when GM_download filename is ignored).
-function requestSehuatangTxt(url) {
-  return new Promise((resolve, reject) => {
-    const fail = (message, transport = false) => {
-      const error = new Error(message);
-      error.downloadTransportFailure = transport;
-      reject(error);
-    };
-    try {
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url,
-        responseType: 'blob',
-        withCredentials: true,
-        timeout: 30000,
-        onload: (response) => {
-          if (!response || !Number.isFinite(response.status) || response.status === 0) {
-            fail('网站附件连接失败', true);
-            return;
-          }
-          if (response.status < 200 || response.status >= 300) {
-            fail('网站未返回可下载附件（HTTP ' + response.status + '）');
-            return;
-          }
-          const contentType = (response.responseHeaders || '').match(/^content-type:\s*([^\r\n]+)/im)?.[1] || '';
-          if (/(?:text\/html|application\/(?:xhtml\+xml|json|xml))/i.test(contentType)) {
-            fail('网站返回了验证、登录或权限页面，而不是 TXT 附件');
-            return;
-          }
-          const blob = response.response;
-          if (!blob || typeof blob.size !== 'number' || typeof blob.slice !== 'function') {
-            fail('下载接口无法读取 TXT 附件内容', true);
-            return;
-          }
-          resolve(blob);
-        },
-        onerror: () => fail('浏览器扩展无法连接附件下载地址', true),
-        ontimeout: () => fail('读取附件超时，请点击网页中的原始附件链接'),
-        onabort: () => fail('附件下载请求被取消'),
-      });
-    } catch (error) {
-      fail('下载接口不可用：' + error.message, true);
-    }
-  });
-}
-
-async function saveRenamedSehuatangTxt(document, link, filename) {
-  let blob;
-  try {
-    blob = await requestSehuatangTxt(link.href);
-  } catch (error) {
-    // Only a transport failure falls back automatically. A 403, an HTML
-    // purchase/verification page or a timeout is NOT silently retried.
-    if (!error.downloadTransportFailure) throw error;
-    link.click();
-    return '已触发网站附件下载（命名通道不可用，已回退原生下载；文件名可能保留原名）。如未下载，请点击网页中的原附件链接。';
-  }
-  const limit = 2 * 1024 * 1024;
-  if (!blob.size || blob.size > limit) {
-    throw new Error('TXT 附件为空或超过 2MB，请使用网站原始附件链接下载');
-  }
-  const preview = await blob.slice(0, 2048).text();
-  if (/^\s*(?:<!doctype\s+html|<html\b|<script\b|<\?xml\b)/i.test(preview)
-      || preview.includes('\u0000')) {
-    throw new Error('响应不是 TXT 文件，可能需要登录、购买权限或完成验证');
-  }
-  await saveDownloadBlob(blob, filename, document, { browserDownload: true });
-  return '已发起附件保存：' + filename + '；请以浏览器下载列表为准。';
-}
-
+// Discuz signed attachment links may reject XHR/extension GET with HTTP 403
+// even when the browser's original link works. Never make a second request
+// merely to rename a download. A server Content-Disposition filename can
+// override <a download>; use an optional Chrome downloads companion extension
+// for guaranteed filename suggestions without altering the network request.
 export function downloadSehuatangAttachment(document, link) {
   if (!getSehuatangSettings().download) {
     return '附件下载已关闭，请在「⚙️ 98堂设置」中开启。';
@@ -217,19 +146,10 @@ export function downloadSehuatangAttachment(document, link) {
   if (!file) {
     return '附件链接已变化，请重新选择楼主附件。';
   }
-  const requestedName = sehuatangAttachmentDownloadName(document, file.name);
-  if (requestedName !== file.name && /\.txt$/i.test(file.name) && !link.hasAttribute('onclick') && !link.onclick) {
-    if (typeof GM_xmlhttpRequest === 'function') {
-      return saveRenamedSehuatangTxt(document, link, requestedName);
-    }
-    // No privileged network API: restore the known-working native download.
-    link.click();
-    return '已触发网站附件下载（当前脚本管理器不支持重命名通道，文件名可能为原名）。';
-  }
-  // For directory TXT, other formats and disabled renaming, keep the site's
-  // original click, security, confirmation and permission-handling flow.
+  // Leave href, target, onclick and download attributes exactly as authored.
+  // Run synchronously in the user's original click handler.
   link.click();
-  return '已触发网站附件下载，请查看浏览器下载列表或网站提示。';
+  return '已触发网站原生附件下载，请查看浏览器下载列表。';
 }
 
 // Use the site's own button, form validation and result UI. No direct POST or automatic retry.
@@ -285,7 +205,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
-        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。仅主要资源 TXT 按帖子标题保存，目录、清单保留原名；如果下载接口不可用会恢复网站原生下载，文件名可能保留原名。</small></span>
+        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启，生成主要资源 TXT 的建议文件名；下载始终走网站原始链接，不再因重命名触发 403。若要自动覆盖服务器指定的文件名，可另装 Chrome 配套重命名扩展；否则可使用下载后的「复制建议文件名」手动重命名。目录、清单保留原名。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
@@ -371,6 +291,11 @@ export function installSehuatangToolbar(document) {
   installations.get(document)?.();
   document.getElementById(TOOLBAR_ID)?.remove();
   const view = document.defaultView;
+  // Share only the local on/off flag with the optional Chrome filename
+  // extension. Never pass attachment contents, login data or user settings.
+  if (isSehuatangHost(view.location)) {
+    document.documentElement.dataset.x1080xExShtRename = getSehuatangSettings().renameText ? 'on' : 'off';
+  }
   const initiatedAttachments = initiatedAttachmentsByDocument.get(document) || new Map();
   initiatedAttachmentsByDocument.set(document, initiatedAttachments);
   const settings = getSehuatangSettings();
@@ -521,39 +446,52 @@ export function installSehuatangToolbar(document) {
         if (settings.download) {
           const downloadName = sehuatangAttachmentDownloadName(document, name, settings.renameText);
           const key = `${link.href}\n${name}`;
-          const showInitiated = (icon, confirmed = false) => {
-            icon.dataset.downloadState = confirmed ? 'saved' : 'started';
-            icon.textContent = confirmed ? '✓' : '↗';
-            icon.title = confirmed
-              ? `已保存附件：${downloadName}`
-              : `已发起下载：${downloadName}（实际保存结果请检查浏览器）`;
+          const showInitiated = (icon) => {
+            icon.dataset.downloadState = 'started';
+            icon.textContent = '↗';
+            icon.title = '已发起原生附件下载（保存情况以浏览器下载列表为准）';
             icon.setAttribute('aria-label', icon.title);
           };
-          const icon = addIcon('download-attachment', `下载附件：${downloadName}`,
+          const icon = addIcon('download-attachment', `原生下载附件：${name}`,
             DOWNLOAD_ICON_PATH, () => {
-              if (icon.disabled) return;
-              const report = (result) => {
-                status.textContent = result;
-                if (/^(?:已触发网站附件下载|已发起附件保存|已保存附件)/.test(result)) {
-                  const confirmed = result.startsWith('已保存附件');
-                  initiatedAttachments.set(key, confirmed ? 'saved' : 'started');
-                  showInitiated(icon, confirmed);
-                }
-                place();
-              };
               let result;
               try { result = downloadSehuatangAttachment(document, link); }
-              catch (error) { status.textContent = '附件下载失败：' + error.message; place(); return; }
-              if (result && typeof result.then === 'function') {
-                icon.disabled = true;
-                status.textContent = '正在读取并保存 TXT 附件…';
-                result.then(report, (error) => {
-                  status.textContent = 'TXT 下载失败：' + error.message
-                    + '。未自动重复下载；请点击网页中的原始附件链接处理权限或下载。';
-                }).finally(() => { icon.disabled = false; place(); });
-              } else report(result);
+              catch (error) {
+                status.textContent = '无法打开原始附件：' + error.message;
+                place();
+                return;
+              }
+              status.textContent = result;
+              if (result.startsWith('已触发网站原生附件下载')) {
+                initiatedAttachments.set(key, 'started');
+                showInitiated(icon);
+                if (downloadName !== name) {
+                  const note = document.createElement('span');
+                  note.textContent = ' 网站可能按原名保存。';
+                  status.append(note);
+                  const copyButton = document.createElement('button');
+                  copyButton.type = 'button';
+                  copyButton.textContent = '复制建议文件名';
+                  copyButton.style.cssText = 'margin-top:6px;padding:4px 8px;width:auto;display:block;font-size:12px';
+                  copyButton.title = downloadName;
+                  copyButton.addEventListener('click', () => {
+                    if (typeof GM_setClipboard === 'function') {
+                      GM_setClipboard(downloadName, 'text');
+                      copyButton.textContent = '已复制 ✓';
+                    } else if (view.navigator.clipboard?.writeText) {
+                      Promise.resolve(view.navigator.clipboard.writeText(downloadName))
+                        .then(() => { copyButton.textContent = '已复制 ✓'; })
+                        .catch(() => { copyButton.textContent = '复制失败，请手动重命名'; });
+                    } else {
+                      copyButton.textContent = '复制不可用，请手动重命名';
+                    }
+                  });
+                  status.append(copyButton);
+                }
+              }
+              place();
             });
-          if (initiatedAttachments.has(key)) showInitiated(icon, initiatedAttachments.get(key) === 'saved');
+          if (initiatedAttachments.has(key)) showInitiated(icon);
         }
         row.append(filename, icons);
         choices.append(row);
