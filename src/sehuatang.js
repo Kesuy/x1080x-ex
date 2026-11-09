@@ -220,7 +220,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="local-rename" style="margin-top:3px">
-        <span><strong>原生下载后自动重命名 TXT（授权一次文件夹）</strong><small style="display:block;color:#64748b;margin-top:3px">不改变原来的后台下载，也不再请求附件。需要允许浏览器对实际下载目录进行读写，以便把已下载的主要 TXT 改成帖子标题；只处理本次新下载的 TXT，不处理目录树或 ZIP。默认关闭。</small></span>
+        <span><strong>原生下载后自动重命名 TXT（当前标签授权文件夹）</strong><small style="display:block;color:#64748b;margin-top:3px">不改变原来的后台下载，也不再请求附件。需要明确授权实际下载目录的读写权限；只处理本次下载的主要 TXT，不处理目录树或 ZIP。为防止网站脚本访问你的本地目录，授权仅在当前页面有效，打开新帖子需重新授权。默认关闭。</small></span>
       </label>
       <div style="margin:-3px 0 12px 24px">
         <button type="button" data-action="select-download-folder" style="width:auto;padding:6px 10px;border-radius:7px">选择 Chrome 实际下载文件夹</button>
@@ -277,8 +277,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
   let hasFolder = false;
   getSehuatangRenameFolder(view).then(folder => {
     hasFolder = Boolean(folder);
-    if (folder) folderStatus.textContent = '当前保存的文件夹：' + folder.name
-      + '。如果浏览器重启后提示授权失效，请再次选择。';
+    if (folder) folderStatus.textContent = '当前标签已授权：' + folder.name + '。打开新帖子需重新授权。';
   }).catch(() => {});
   folderButton.addEventListener('click', () => {
     folderButton.disabled = true;
@@ -289,7 +288,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
       field('local-rename').checked = true;
       folderStatus.textContent = '已选：' + name + (persisted
         ? '（可在此浏览器配置中恢复，权限可能需重新授予）'
-        : '（本标签有效；浏览器未保存持久授权）') + '。点击下方「保存」启用。';
+        : '（仅当前标签有效；不将文件夹句柄保存到网站存储）') + '。点击下方「保存」启用。';
     }, error => {
       folderStatus.textContent = '无法授权：' + (error?.message || String(error))
         + '。原有网站下载按钮不受影响。';
