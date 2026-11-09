@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.47
+// @version      1.10.48
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -10160,6 +10160,27 @@ ${title}`;
     const safeTitle = title.replace(/[\\/:*?"<>|]/g, (char) => replacements[char]).replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").replace(/[.\s]+$/g, "").slice(0, 180).replace(/[.\s]+$/g, "");
     return safeTitle ? safeTitle + ".txt" : original;
   }
+  async function saveRenamedSehuatangTxt(document2, url, filename) {
+    const fetchFile = document2.defaultView?.fetch?.bind(document2.defaultView) || globalThis.fetch;
+    if (typeof fetchFile !== "function") throw new Error("\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u8BFB\u53D6\u9644\u4EF6\uFF0C\u8BF7\u70B9\u51FB\u7F51\u9875\u4E2D\u7684\u539F\u59CB\u9644\u4EF6\u94FE\u63A5");
+    const response = await fetchFile(url, { credentials: "include", redirect: "follow", cache: "no-store" });
+    if (!response?.ok) throw new Error("\u7F51\u7AD9\u672A\u8FD4\u56DE\u53EF\u4E0B\u8F7D\u9644\u4EF6\uFF08HTTP " + (response?.status || "\u672A\u77E5") + "\uFF09");
+    const contentType = response.headers?.get("content-type") || "";
+    if (/\b(?:text\/html|application\/(?:xhtml\+xml|json|xml))\b/i.test(contentType)) {
+      throw new Error("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u9A8C\u8BC1\u3001\u767B\u5F55\u6216\u6743\u9650\u9875\u9762\uFF0C\u800C\u4E0D\u662F TXT \u9644\u4EF6");
+    }
+    const limit = 2 * 1024 * 1024;
+    const length = Number(response.headers?.get("content-length") || 0);
+    if (length > limit) throw new Error("TXT \u9644\u4EF6\u8D85\u8FC7 2MB\uFF0C\u4E3A\u5B89\u5168\u8D77\u89C1\u8BF7\u4F7F\u7528\u7F51\u7AD9\u539F\u59CB\u4E0B\u8F7D");
+    const blob = await response.blob();
+    if (!blob.size || blob.size > limit) throw new Error("TXT \u9644\u4EF6\u4E3A\u7A7A\u6216\u8D85\u8FC7 2MB\uFF0C\u8BF7\u4F7F\u7528\u7F51\u7AD9\u539F\u59CB\u4E0B\u8F7D");
+    const preview = await blob.slice(0, 1024).text();
+    if (/^\s*(?:<!doctype\s+html|<html\b|<script\b|<\?xml\b)/i.test(preview) || preview.includes("\0")) {
+      throw new Error("\u4E0B\u8F7D\u54CD\u5E94\u4E0D\u662F\u6709\u6548\u7684 TXT \u5185\u5BB9\uFF0C\u53EF\u80FD\u9700\u8981\u767B\u5F55\u3001\u9A8C\u8BC1\u6216\u8D2D\u4E70\u6743\u9650");
+    }
+    const result = await saveDownloadBlob(blob, filename, document2);
+    return result.confirmed ? "\u5DF2\u4FDD\u5B58\u9644\u4EF6\uFF1A" + filename : "\u5DF2\u53D1\u8D77\u9644\u4EF6\u4FDD\u5B58\uFF1A" + filename + "\uFF1B\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u3002";
+  }
   function downloadSehuatangAttachment(document2, link) {
     if (!getSehuatangSettings().download) {
       return "\u9644\u4EF6\u4E0B\u8F7D\u5DF2\u5173\u95ED\uFF0C\u8BF7\u5728\u300C\u2699\uFE0F 98\u5802\u8BBE\u7F6E\u300D\u4E2D\u5F00\u542F\u3002";
@@ -10168,8 +10189,12 @@ ${title}`;
     if (!file) {
       return "\u9644\u4EF6\u94FE\u63A5\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u697C\u4E3B\u9644\u4EF6\u3002";
     }
+    const requestedName = sehuatangAttachmentDownloadName(document2, file.name);
+    if (requestedName !== file.name && /\.txt$/i.test(file.name) && !link.hasAttribute("onclick")) {
+      return saveRenamedSehuatangTxt(document2, link.href, requestedName);
+    }
     const originalDownload = link.getAttribute("download");
-    link.setAttribute("download", sehuatangAttachmentDownloadName(document2, file.name));
+    link.setAttribute("download", requestedName);
     try {
       link.click();
     } finally {
@@ -10341,7 +10366,7 @@ ${title}`;
     installations.get(document2)?.();
     document2.getElementById(TOOLBAR_ID)?.remove();
     const view = document2.defaultView;
-    const initiatedAttachments = initiatedAttachmentsByDocument.get(document2) || /* @__PURE__ */ new Set();
+    const initiatedAttachments = initiatedAttachmentsByDocument.get(document2) || /* @__PURE__ */ new Map();
     initiatedAttachmentsByDocument.set(document2, initiatedAttachments);
     const settings = getSehuatangSettings();
     if (!isSehuatangHost(view.location) || !isThread(view.location) || !settings.attachments && !settings.download && !settings.reply && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2))) return null;
@@ -10367,6 +10392,7 @@ ${title}`;
     .file-actions{display:flex;gap:4px}.file-actions button{width:28px;height:28px;padding:5px;display:grid;place-items:center;flex:none}
     .file-actions svg,.attachment-lock svg{width:16px;height:16px;display:block}
     .file-actions button[data-download-state="started"]{background:#eef2ff;border-color:#a5b4fc;color:#4338ca}
+    .file-actions button[data-download-state="saved"]{background:#dcfce7;border-color:#86efac;color:#166534}
     .hidden-notice{color:#475569;font-size:12px;line-height:18px}
     .hidden-notice:empty{display:none}.hidden-notice strong{display:block;font-weight:600}.hidden-notice small{display:block;font-size:11px;color:#64748b;line-height:16px;margin-top:2px}
     .attachment-lock{width:28px;height:28px;display:grid;place-items:center;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#94a3b8}
@@ -10491,10 +10517,10 @@ ${title}`;
             const downloadName = sehuatangAttachmentDownloadName(document2, name, settings.renameText);
             const key = `${link.href}
 ${name}`;
-            const showInitiated = (icon2) => {
-              icon2.dataset.downloadState = "started";
-              icon2.textContent = "\u2197";
-              icon2.title = `\u5DF2\u53D1\u8D77\u4E0B\u8F7D\uFF1A${downloadName}\uFF08\u5B9E\u9645\u4FDD\u5B58\u7ED3\u679C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\uFF09`;
+            const showInitiated = (icon2, confirmed = false) => {
+              icon2.dataset.downloadState = confirmed ? "saved" : "started";
+              icon2.textContent = confirmed ? "\u2713" : "\u2197";
+              icon2.title = confirmed ? `\u5DF2\u4FDD\u5B58\u9644\u4EF6\uFF1A${downloadName}` : `\u5DF2\u53D1\u8D77\u4E0B\u8F7D\uFF1A${downloadName}\uFF08\u5B9E\u9645\u4FDD\u5B58\u7ED3\u679C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\uFF09`;
               icon2.setAttribute("aria-label", icon2.title);
             };
             const icon = addIcon(
@@ -10502,16 +10528,37 @@ ${name}`;
               `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${downloadName}`,
               DOWNLOAD_ICON_PATH,
               () => {
-                const result = downloadSehuatangAttachment(document2, link);
-                status.textContent = result;
-                if (result.startsWith("\u5DF2\u89E6\u53D1\u7F51\u7AD9\u9644\u4EF6\u4E0B\u8F7D")) {
-                  initiatedAttachments.add(key);
-                  showInitiated(icon);
+                if (icon.disabled) return;
+                const report = (result2) => {
+                  status.textContent = result2;
+                  if (/^(?:已触发网站附件下载|已发起附件保存|已保存附件)/.test(result2)) {
+                    const confirmed = result2.startsWith("\u5DF2\u4FDD\u5B58\u9644\u4EF6");
+                    initiatedAttachments.set(key, confirmed ? "saved" : "started");
+                    showInitiated(icon, confirmed);
+                  }
+                  place();
+                };
+                let result;
+                try {
+                  result = downloadSehuatangAttachment(document2, link);
+                } catch (error) {
+                  status.textContent = "\u9644\u4EF6\u4E0B\u8F7D\u5931\u8D25\uFF1A" + error.message;
+                  place();
+                  return;
                 }
-                place();
+                if (result && typeof result.then === "function") {
+                  icon.disabled = true;
+                  status.textContent = "\u6B63\u5728\u8BFB\u53D6\u5E76\u4FDD\u5B58 TXT \u9644\u4EF6\u2026";
+                  result.then(report, (error) => {
+                    status.textContent = "TXT \u4E0B\u8F7D\u5931\u8D25\uFF1A" + error.message + "\u3002\u672A\u81EA\u52A8\u91CD\u590D\u4E0B\u8F7D\uFF1B\u8BF7\u70B9\u51FB\u7F51\u9875\u4E2D\u7684\u539F\u59CB\u9644\u4EF6\u94FE\u63A5\u5904\u7406\u6743\u9650\u6216\u4E0B\u8F7D\u3002";
+                  }).finally(() => {
+                    icon.disabled = false;
+                    place();
+                  });
+                } else report(result);
               }
             );
-            if (initiatedAttachments.has(key)) showInitiated(icon);
+            if (initiatedAttachments.has(key)) showInitiated(icon, initiatedAttachments.get(key) === "saved");
           }
           row.append(filename, icons);
           choices.append(row);
