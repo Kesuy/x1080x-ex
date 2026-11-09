@@ -4,9 +4,9 @@ import { JSDOM } from 'jsdom';
 import {
   DEFAULT_SHT_REPLY_PHRASE, SHT_ATTACHMENTS_ENABLED_KEY, SHT_DOWNLOAD_ENABLED_KEY, SHT_REPLY_ENABLED_KEY,
   SHT_REPLY_PHRASE_KEY, SHT_POSITION_KEY, collectSehuatangAttachments,
-  SHT_HIDDEN_NOTICE_ENABLED_KEY, SHT_RENAME_TXT_ENABLED_KEY,
+  SHT_HIDDEN_NOTICE_ENABLED_KEY, SHT_RENAME_TXT_ENABLED_KEY, SHT_GM_DOWNLOAD_EXPERIMENT_KEY,
   sehuatangAttachmentDownloadName, hasSehuatangReplyHiddenContent,
-  downloadSehuatangAttachment, getSehuatangSettings, installSehuatangEnhancement, installSehuatangToolbar, isSehuatangHost,
+  downloadSehuatangAttachment, experimentSehuatangNamedDownload, getSehuatangSettings, installSehuatangEnhancement, installSehuatangToolbar, isSehuatangHost,
   openSehuatangSettings, sehuatangFirstPageUrl, submitSehuatangQuickReply,
 } from '../src/sehuatang.js';
 
@@ -60,7 +60,7 @@ test('98堂 domains are exact and settings preserve defaults on old installation
   for (const hostname of ['sehuatang.org', 'www.sehuatang.org']) assert.equal(isSehuatangHost({ hostname }), true);
   for (const hostname of ['fake-sehuatang.org', 'sehuatang.org.evil.example', 'hdblog.me']) assert.equal(isSehuatangHost({ hostname }), false);
   withSettings(new Map(), () => assert.deepEqual(getSehuatangSettings(), {
-    attachments: true, download: true, renameText: true, reply: true, hiddenNotice: true, phrase: DEFAULT_SHT_REPLY_PHRASE,
+    attachments: true, download: true, renameText: true, gmDownloadExperiment: false, reply: true, hiddenNotice: true, phrase: DEFAULT_SHT_REPLY_PHRASE,
   }));
 });
 
@@ -681,3 +681,93 @@ test('98堂 仅重命名有效标题下的主要 TXT，不影响 ZIP、图片和
   assert.equal(sehuatangAttachmentDownloadName(doc, '资源链接.txt', false), '资源链接.txt');
   dom.window.close();
 }));
+
+test('98堂 GM_download 命名试验默认关闭，原有后台下载不变', () => withSettings(new Map(), () => {
+  const dom = fixture();
+  const doc = dom.window.document;
+  const heading = doc.createElement('span');
+  heading.id = 'thread_subject';
+  heading.textContent = '【ED2K丨整理】示例合集【30GB/5V/5配额】';
+  doc.body.prepend(heading);
+  const link = doc.querySelector('#attach_2 a');
+  let originalClicks = 0;
+  link.addEventListener('click', event => { event.preventDefault(); originalClicks++; });
+  const root = toolbar(dom);
+  assert.equal(root.querySelectorAll('[data-action="gm-download-experiment"]').length, 0);
+  assert.throws(() => experimentSehuatangNamedDownload(doc, link), /先启用/);
+  const normal = root.querySelectorAll('[data-action="download-attachment"]')[1];
+  normal.click();
+  assert.equal(originalClicks, 1);
+  assert.equal(link.hasAttribute('download'), false, 'normal download attr restored');
+  dom.window.close();
+}));
+
+test('98堂 GM_download Browser API 单次下载标题名称，不额外 XHR、不自动重试', async () => {
+  const originals = ['GM_download', 'GM_info', 'fetch', 'GM_xmlhttpRequest'].map(k => [k, globalThis[k]]);
+  const values = new Map([[SHT_GM_DOWNLOAD_EXPERIMENT_KEY, true]]);
+  let options, calls = 0, clicks = 0;
+  globalThis.GM_info = { downloadMode: 'browser', scriptHandler: 'Tampermonkey' };
+  globalThis.fetch = () => { throw new Error('page fetch forbidden'); };
+  globalThis.GM_xmlhttpRequest = () => { throw new Error('GM XHR forbidden'); };
+  globalThis.GM_download = (request) => { calls++; options = request; return { abort() {} }; };
+  try {
+    await withSettings(values, async () => {
+      const dom = fixture();
+      const doc = dom.window.document;
+      doc.body.insertAdjacentHTML('afterbegin',
+        '<span id="thread_subject">【ED2K丨整理】测试合集【30GB/5V/5配额】</span>');
+      const link = doc.querySelector('#attach_2 a');
+      link.addEventListener('click', event => { event.preventDefault(); clicks++; });
+      const root = toolbar(dom);
+      assert.equal(root.querySelectorAll('[data-action="gm-download-experiment"]').length, 1);
+      const promise = experimentSehuatangNamedDownload(doc, link);
+      assert.equal(calls, 1);
+      assert.equal(options.url, link.href);
+      assert.equal(options.name, '测试合集【30GB／5V／5配额】.txt');
+      assert.equal(options.saveAs, false);
+      assert.equal(options.headers, undefined);
+      assert.equal(clicks, 0, 'GM API path must not also trigger native link');
+      options.onload();
+      assert.match(await promise, /请在 Chrome 下载列表确认/);
+      assert.equal(calls, 1);
+      assert.equal(link.hasAttribute('download'), false);
+      dom.window.close();
+    });
+  } finally {
+    for (const [key, value] of originals) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
+});
+
+test('98堂 GM 下载模式错误或下载失败，不隐式重新请求原始附件', async () => {
+  const oldGM = globalThis.GM_download, oldInfo = globalThis.GM_info;
+  const values = new Map([[SHT_GM_DOWNLOAD_EXPERIMENT_KEY, true]]);
+  let options, calls = 0;
+  try {
+    await withSettings(values, async () => {
+      const dom = fixture();
+      const doc = dom.window.document;
+      doc.body.insertAdjacentHTML('afterbegin',
+        '<span id="thread_subject">【ED2K丨整理】测试合集</span>');
+      const resource = doc.querySelector('#attach_2 a');
+      let clicks = 0;
+      resource.addEventListener('click', event => { event.preventDefault(); clicks++; });
+      globalThis.GM_info = { downloadMode: 'native' };
+      globalThis.GM_download = () => { calls++; };
+      assert.throws(() => experimentSehuatangNamedDownload(doc, resource), /Browser API/);
+      assert.equal(calls, 0);
+      globalThis.GM_info = { downloadMode: 'browser' };
+      globalThis.GM_download = (request) => { calls++; options = request; };
+      const promise = experimentSehuatangNamedDownload(doc, resource);
+      options.onerror({ error: 'not_succeeded' });
+      await assert.rejects(promise, /不自动重试/);
+      assert.equal(calls, 1);
+      assert.equal(clicks, 0, 'no automatic fallback click after failed signed request');
+      dom.window.close();
+    });
+  } finally {
+    if (oldGM === undefined) delete globalThis.GM_download; else globalThis.GM_download = oldGM;
+    if (oldInfo === undefined) delete globalThis.GM_info; else globalThis.GM_info = oldInfo;
+  }
+});
