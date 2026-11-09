@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.45
+// @version      1.10.46
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -4729,6 +4729,13 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (exactSlug.length === 1) return { blocked, remaining, selected: exactSlug[0] };
     const exactTitle = remaining.filter((candidate) => codeTokenMatches3(candidate.title, code));
     if (exactTitle.length === 1) return { blocked, remaining, selected: exactTitle[0] };
+    if (exactTitle.length > 1) {
+      const isWatermarked = (candidate) => /\bwith\s+watermark\b|(?:带|含|有)水印|ウォーターマーク/iu.test(
+        candidate.article?.querySelector(".entry-content, .entry-summary")?.textContent || candidate.article?.textContent || candidate.title || ""
+      );
+      const ranked = [...exactTitle].sort((a, b) => Number(isWatermarked(a)) - Number(isWatermarked(b)));
+      return { blocked, remaining, selected: ranked[0], alternates: ranked.slice(1) };
+    }
     return { blocked, remaining, selected: null };
   }
   function responseHeader(value, name) {
@@ -5011,38 +5018,43 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     if (!selection.selected) {
       return { code: normalizedCode, articleUrl: "", imageUrls: [], ...selection };
     }
-    const articleUrl = selection.selected.url;
+    const articles = [selection.selected, ...selection.alternates || []].slice(0, 4);
+    let articleUrl = articles[0].url;
     let imageUrls = [];
-    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
-      let shouldRetry = false;
-      try {
-        const articleResponse = await requestText3(articleUrl, gmRequest2, searchUrl, timeoutMs);
-        const articleDocument = parseHtml3(
-          articleResponse.html,
-          articleResponse.finalUrl || articleUrl,
-          hostDocument
-        );
-        if (!articleDocument || !previewRange4(articleDocument)) break;
-        imageUrls = await collectHdblogPreviewImageUrls(
-          articleDocument,
-          articleUrl,
-          gmRequest2,
-          verifyImages ? hostDocument : null,
-          timeoutMs
-        );
-        if (imageUrls.length) break;
-        shouldRetry = true;
-      } catch (error) {
-        shouldRetry = true;
-        console.warn("[x1080x-ex] matched JavClub article Preview loading failed", {
-          code: normalizedCode,
-          attempt: attempt + 1,
-          error: error?.message || String(error)
-        });
+    for (const candidate of articles) {
+      articleUrl = candidate.url;
+      for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+        let shouldRetry = false;
+        try {
+          const articleResponse = await requestText3(articleUrl, gmRequest2, searchUrl, timeoutMs);
+          const articleDocument = parseHtml3(
+            articleResponse.html,
+            articleResponse.finalUrl || articleUrl,
+            hostDocument
+          );
+          if (!articleDocument || !previewRange4(articleDocument)) break;
+          imageUrls = await collectHdblogPreviewImageUrls(
+            articleDocument,
+            articleUrl,
+            gmRequest2,
+            verifyImages ? hostDocument : null,
+            timeoutMs
+          );
+          if (imageUrls.length) break;
+          shouldRetry = true;
+        } catch (error) {
+          shouldRetry = true;
+          console.warn("[x1080x-ex] matched JavClub article Preview loading failed", {
+            code: normalizedCode,
+            articleUrl,
+            attempt: attempt + 1,
+            error: error?.message || String(error)
+          });
+        }
+        if (!shouldRetry || attempt >= retryCount) break;
+        await wait(Math.min(500 * (attempt + 1), 2e3));
       }
-      if (!shouldRetry || attempt >= retryCount) break;
-      const delay = Math.min(500 * (attempt + 1), 2e3);
-      await wait(delay);
+      if (imageUrls.length) break;
     }
     return { code: normalizedCode, articleUrl, imageUrls, ...selection };
   }
@@ -5145,7 +5157,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const cached = previewLookups.get(document2);
     if (cached?.key === key) {
       if (cached.promise) return cached.promise;
-      return renderAgaghhhHdblogPreview(document2, cached.result);
+      const restored = renderAgaghhhHdblogPreview(document2, cached.result);
+      if (restored) restored.dataset.x1080xPreviewKey = key;
+      return restored;
     }
     const task = (async () => {
       let result = null;
@@ -9554,6 +9568,12 @@ ${title}`;
     else host.prepend(button);
   }
   var modernActionObservers = /* @__PURE__ */ new WeakMap();
+  function isInternalPreviewMutation(mutation) {
+    const selectors = "#x1080x-ex-resource-actions, #x1080x-ex-agaghhh-hdblog-preview";
+    if (mutation.target?.nodeType === 1 && mutation.target.closest?.(selectors)) return true;
+    const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+    return nodes.length > 0 && nodes.every((node) => node.nodeType === 1 && (node.matches?.(selectors) || node.closest?.(selectors)));
+  }
   function refreshModernResourceActionButtons(document2, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!isModernResourceDetailPage(document2)) return;
     const downloadButton = document2.getElementById(DOWNLOAD_BUTTON_ID2);
@@ -9573,7 +9593,8 @@ ${title}`;
     if (!document2?.body || modernActionObservers.has(document2)) return;
     const Observer = document2.defaultView?.MutationObserver;
     if (typeof Observer !== "function") return;
-    const observer = new Observer(() => {
+    const observer = new Observer((mutations) => {
+      if (mutations.every(isInternalPreviewMutation)) return;
       refreshModernResourceActionButtons(document2, gmRequest2);
       if (isAgaghhhHdblogPreviewEnabled()) {
         void installAgaghhhHdblogPreview(document2, document2.location, gmRequest2);
