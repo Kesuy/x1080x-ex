@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.46
+// @version      1.10.47
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -10044,6 +10044,7 @@ ${title}`;
   var PREFIX = "x1080x-ex:sehuatang-";
   var SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + "attachments-enabled";
   var SHT_DOWNLOAD_ENABLED_KEY = PREFIX + "attachment-download-enabled";
+  var SHT_RENAME_TXT_ENABLED_KEY = PREFIX + "rename-txt-by-title-enabled";
   var SHT_REPLY_ENABLED_KEY = PREFIX + "quick-reply-enabled";
   var SHT_HIDDEN_NOTICE_ENABLED_KEY = PREFIX + "reply-hidden-notice-enabled";
   var SHT_REPLY_PHRASE_KEY = PREFIX + "reply-phrase";
@@ -10067,6 +10068,7 @@ ${title}`;
     return {
       attachments: read(SHT_ATTACHMENTS_ENABLED_KEY, true) !== false,
       download: read(SHT_DOWNLOAD_ENABLED_KEY, true) !== false,
+      renameText: read(SHT_RENAME_TXT_ENABLED_KEY, true) !== false,
       reply: read(SHT_REPLY_ENABLED_KEY, true) !== false,
       hiddenNotice: read(SHT_HIDDEN_NOTICE_ENABLED_KEY, true) !== false,
       phrase: typeof phrase === "string" ? phrase : DEFAULT_SHT_REPLY_PHRASE
@@ -10137,6 +10139,27 @@ ${title}`;
       { outline: "0 solid transparent", backgroundColor: "transparent" }
     ], { duration: 2500 });
   }
+  function sehuatangAttachmentDownloadName(document2, filename, enabled = getSehuatangSettings().renameText) {
+    const original = String(filename || "").trim();
+    if (!enabled || !/\.txt$/i.test(original) || /(?:目录(?:树)?|目錄(?:樹)?|清单|清單|文件列表|readme|file[\s_-]*list)/iu.test(original)) return original;
+    const heading = String(document2?.querySelector("#thread_subject")?.textContent || "").trim();
+    if (!heading) return original;
+    const title = heading.replace(/^(?:【[^】]*(?:ED2K|整理)[^】]*】\s*)+/iu, "").trim();
+    if (!title) return original;
+    const replacements = {
+      "\\": "\uFF3C",
+      "/": "\uFF0F",
+      ":": "\uFF1A",
+      "*": "\uFF0A",
+      "?": "\uFF1F",
+      '"': "\uFF02",
+      "<": "\u3008",
+      ">": "\u3009",
+      "|": "\uFF5C"
+    };
+    const safeTitle = title.replace(/[\\/:*?"<>|]/g, (char) => replacements[char]).replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").replace(/[.\s]+$/g, "").slice(0, 180).replace(/[.\s]+$/g, "");
+    return safeTitle ? safeTitle + ".txt" : original;
+  }
   function downloadSehuatangAttachment(document2, link) {
     if (!getSehuatangSettings().download) {
       return "\u9644\u4EF6\u4E0B\u8F7D\u5DF2\u5173\u95ED\uFF0C\u8BF7\u5728\u300C\u2699\uFE0F 98\u5802\u8BBE\u7F6E\u300D\u4E2D\u5F00\u542F\u3002";
@@ -10146,7 +10169,7 @@ ${title}`;
       return "\u9644\u4EF6\u94FE\u63A5\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u697C\u4E3B\u9644\u4EF6\u3002";
     }
     const originalDownload = link.getAttribute("download");
-    link.setAttribute("download", file.name);
+    link.setAttribute("download", sehuatangAttachmentDownloadName(document2, file.name));
     try {
       link.click();
     } finally {
@@ -10218,6 +10241,10 @@ ${title}`;
         <span><strong>\u9644\u4EF6\u4E0B\u8F7D\u56FE\u6807</strong><small style="display:block;color:#64748b;margin-top:3px">\u6CBF\u7528\u7F51\u7AD9\u539F\u751F\u4E0B\u8F7D\u94FE\u63A5\uFF0C\u4ECD\u9700\u9075\u5B88\u539F\u6709\u6743\u9650\u548C\u4ED8\u8D39\u89C4\u5219\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
+        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u4E3B\u8981\u8D44\u6E90 TXT \u4F7F\u7528\u53BB\u6389 ED2K \u7B49\u5206\u7C7B\u6807\u7B7E\u7684\u5E16\u5B50\u6807\u9898\uFF1B\u76EE\u5F55\u3001\u6E05\u5355 TXT \u4FDD\u7559\u539F\u540D\u3002\u6587\u4EF6\u540D\u4E2D\u7684 / \u4F1A\u66FF\u6362\u6210 Windows \u53EF\u7528\u7684 \uFF0F\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
         <span><strong>\u56DE\u590D\u540E\u53EF\u89C1\u5185\u5BB9\u63D0\u793A</strong><small style="display:block;color:#64748b;margin-top:3px">\u63D0\u793A\u697C\u4E3B\u56DE\u590D\u540E\u53EF\u89C1\u7684\u5185\u5BB9\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u7ED5\u8FC7\u9650\u5236\u3002</small></span>
       </label>
@@ -10250,7 +10277,7 @@ ${title}`;
         key: "attachments",
         title: "\u9644\u4EF6\u529F\u80FD",
         description: "\u9644\u4EF6\u5B9A\u4F4D\u3001\u4E0B\u8F7D\u548C\u5185\u5BB9\u63D0\u793A",
-        settings: ["attachments", "download", "hidden-notice"]
+        settings: ["attachments", "download", "rename-text", "hidden-notice"]
       },
       {
         key: "reply",
@@ -10268,6 +10295,7 @@ ${title}`;
     const field = (name) => form.querySelector(`[data-setting="${name}"]`);
     field("attachments").checked = settings.attachments;
     field("download").checked = settings.download;
+    field("rename-text").checked = settings.renameText;
     field("reply").checked = settings.reply;
     field("hidden-notice").checked = settings.hiddenNotice;
     field("phrase").value = settings.phrase;
@@ -10292,6 +10320,7 @@ ${title}`;
       }
       save(SHT_ATTACHMENTS_ENABLED_KEY, field("attachments").checked);
       save(SHT_DOWNLOAD_ENABLED_KEY, field("download").checked);
+      save(SHT_RENAME_TXT_ENABLED_KEY, field("rename-text").checked);
       save(SHT_REPLY_ENABLED_KEY, field("reply").checked);
       save(SHT_HIDDEN_NOTICE_ENABLED_KEY, field("hidden-notice").checked);
       save(SHT_REPLY_PHRASE_KEY, field("phrase").value.trim());
@@ -10459,17 +10488,18 @@ ${title}`;
             }
           );
           if (settings.download) {
+            const downloadName = sehuatangAttachmentDownloadName(document2, name, settings.renameText);
             const key = `${link.href}
 ${name}`;
             const showInitiated = (icon2) => {
               icon2.dataset.downloadState = "started";
               icon2.textContent = "\u2197";
-              icon2.title = `\u5DF2\u53D1\u8D77\u4E0B\u8F7D\uFF1A${name}\uFF08\u5B9E\u9645\u4FDD\u5B58\u7ED3\u679C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\uFF09`;
+              icon2.title = `\u5DF2\u53D1\u8D77\u4E0B\u8F7D\uFF1A${downloadName}\uFF08\u5B9E\u9645\u4FDD\u5B58\u7ED3\u679C\u8BF7\u68C0\u67E5\u6D4F\u89C8\u5668\uFF09`;
               icon2.setAttribute("aria-label", icon2.title);
             };
             const icon = addIcon(
               "download-attachment",
-              `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${name}`,
+              `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${downloadName}`,
               DOWNLOAD_ICON_PATH,
               () => {
                 const result = downloadSehuatangAttachment(document2, link);
