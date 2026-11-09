@@ -6,6 +6,7 @@ import {
   chooseHdblogSearchResult,
   collectHdblogPreviewImageUrls,
   fetchHdblogPreviewForCode,
+  installAgaghhhHdblogPreview,
   renderAgaghhhHdblogPreview,
 } from '../src/agaghhh-hdblog-preview.js';
 import {
@@ -615,6 +616,104 @@ test('x1080x JavClub Preview remains empty if only headingless related-work card
     );
     assert.deepEqual(result, []);
   } finally {
+    dom.window.close();
+  }
+});
+
+test('FC2-4990430 and FC2-4981932 duplicate search results prefer plain posts over watermarked posts', async () => {
+  const cases = [
+    ['4990430', '1002050', '1002016'],
+    ['4981932', '996590', '996571'],
+  ];
+  for (const [code, normal, watermark] of cases) {
+    const dom = new JSDOM('<!doctype html><body></body>', {url:'https://1080xin.com/'});
+    const requests = [];
+    const title = 'FC2-PPV ' + code + ' 示例';
+    const search = '<main id="genesis-content">'
+      + '<article class="entry"><h2 class="entry-title"><a href="https://javclub.me/' + watermark + '.html">' + title + '</a></h2><div class="entry-content">商品ID : FC2 PPV ' + code + ' (with watermark)</div></article>'
+      + '<article class="entry"><h2 class="entry-title"><a href="https://javclub.me/' + normal + '.html">' + title + '</a></h2><div class="entry-content">商品ID : FC2 PPV ' + code + '</div></article>'
+      + '</main>';
+    const imageUrl = 'https://img.example.com/fc2-' + code + '.jpg';
+    const article = '<main id="genesis-content"><article class="entry"><div class="entry-content">'
+      + '<p>Preview:</p><p><a href="' + imageUrl + '"><img src="' + imageUrl + '"></a></p><p>BTFile:</p>'
+      + '</div></article></main>';
+    const gm = ({url, onload}) => {
+      requests.push(url);
+      if (url === 'https://javclub.me/?s=' + code) {
+        onload({status:200, finalUrl:url, responseText:search});
+      } else if (url === 'https://javclub.me/' + normal + '.html') {
+        onload({status:200, finalUrl:url, responseText:article});
+      } else {
+        throw new Error('Unexpected request for watermarked article: ' + url);
+      }
+    };
+    try {
+      const result = await fetchHdblogPreviewForCode('FC2-' + code, gm, dom.window.document);
+      assert.equal(result.articleUrl, 'https://javclub.me/' + normal + '.html');
+      assert.deepEqual(result.imageUrls, [imageUrl]);
+      assert.deepEqual(requests, ['https://javclub.me/?s=' + code, 'https://javclub.me/' + normal + '.html']);
+    } finally { dom.window.close(); }
+  }
+});
+
+test('FC2 duplicate search falls back to watermarked post only when regular post has no Preview', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>', {url:'https://1080xin.com/'});
+  const requests = [];
+  const search = '<main id="genesis-content">'
+    + '<article class="entry"><h2 class="entry-title"><a href="https://javclub.me/1002050.html">FC2-PPV 4990430 regular</a></h2><div class="entry-content">商品ID : FC2 PPV 4990430</div></article>'
+    + '<article class="entry"><h2 class="entry-title"><a href="https://javclub.me/1002016.html">FC2-PPV 4990430</a></h2><div class="entry-content">商品ID : FC2 PPV 4990430 (with watermark)</div></article></main>';
+  const imageUrl = 'https://img.example.com/alternative.jpg';
+  const withPreview = '<main id="genesis-content"><article class="entry"><div class="entry-content"><p>Preview:</p><p><img src="' + imageUrl + '"></p><p>BTFile:</p></div></article></main>';
+  const withoutPreview = '<main id="genesis-content"><article class="entry"><div class="entry-content"><p>BTFile:</p></div></article></main>';
+  const gm = ({url, onload}) => {
+    requests.push(url);
+    const responseText = url.includes('?s=') ? search :
+      url.includes('/1002050.html') ? withoutPreview :
+        url.includes('/1002016.html') ? withPreview : null;
+    if (!responseText) throw Error('Unexpected '+url);
+    onload({status:200, finalUrl:url, responseText});
+  };
+  try {
+    const result = await fetchHdblogPreviewForCode('FC2-4990430', gm, dom.window.document);
+    assert.deepEqual(result.imageUrls, [imageUrl]);
+    assert.equal(result.articleUrl, 'https://javclub.me/1002016.html');
+    assert.deepEqual(requests, [
+      'https://javclub.me/?s=4990430',
+      'https://javclub.me/1002050.html',
+      'https://javclub.me/1002016.html',
+    ]);
+  } finally { dom.window.close(); }
+});
+
+test('restoring cached Preview after switching it off and on does not repeatedly reinsert the section', async () => {
+  const dom = new JSDOM('<!doctype html><body><header class="thread-header"><h1>FC2-4990430 Sample</h1></header>'
+    + '<article id="first-post"><div class="post-content"><div class="post-text">正文</div></div></article>'
+    + '</body>', {url:'https://1080xin.com/resources/sample01'});
+  const originalGet = globalThis.GM_getValue;
+  globalThis.GM_getValue = (_key, fallback) => fallback;
+  let requests = 0;
+  const imageUrl = 'https://img.example.com/4990430.jpg';
+  const gm = ({url, onload}) => {
+    requests++;
+    const responseText = url.includes('?s=')
+      ? '<main id="genesis-content"><article class="entry"><h2 class="entry-title"><a href="https://javclub.me/1002050.html">FC2-PPV 4990430</a></h2></article></main>'
+      : '<main id="genesis-content"><article class="entry"><div class="entry-content"><p>Preview:</p><p><img src="' + imageUrl + '"></p><p>BTFile:</p></div></article></main>';
+    onload({status:200, finalUrl:url, responseText});
+  };
+  try {
+    const first = await installAgaghhhHdblogPreview(dom.window.document, dom.window.location, gm);
+    assert.ok(first);
+    const cacheKey = first.dataset.x1080xPreviewKey;
+    assert.ok(cacheKey);
+    first.remove();
+    const second = await installAgaghhhHdblogPreview(dom.window.document, dom.window.location, gm);
+    assert.ok(second);
+    assert.equal(second.dataset.x1080xPreviewKey, cacheKey);
+    assert.strictEqual(await installAgaghhhHdblogPreview(dom.window.document, dom.window.location, gm), second);
+    assert.equal(requests, 2, 'cache restore does not refetch or reinsert');
+  } finally {
+    if (originalGet === undefined) delete globalThis.GM_getValue;
+    else globalThis.GM_getValue = originalGet;
     dom.window.close();
   }
 });
