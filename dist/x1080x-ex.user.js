@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.50
+// @version      1.10.51
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -10168,8 +10168,16 @@ ${title}`;
     if (!file) {
       return "\u9644\u4EF6\u94FE\u63A5\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u697C\u4E3B\u9644\u4EF6\u3002";
     }
-    link.click();
-    return "\u5DF2\u89E6\u53D1\u7F51\u7AD9\u539F\u751F\u9644\u4EF6\u4E0B\u8F7D\uFF0C\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u3002";
+    const suggested = sehuatangAttachmentDownloadName(document2, file.name);
+    const originalDownload = link.getAttribute("download");
+    link.setAttribute("download", suggested);
+    try {
+      link.click();
+    } finally {
+      if (originalDownload === null) link.removeAttribute("download");
+      else link.setAttribute("download", originalDownload);
+    }
+    return "\u5DF2\u89E6\u53D1\u7F51\u7AD9\u540E\u53F0\u9644\u4EF6\u4E0B\u8F7D\uFF0C\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\uFF08\u670D\u52A1\u5668\u53EF\u80FD\u4F7F\u7528\u539F\u6587\u4EF6\u540D\uFF09\u3002";
   }
   function submitSehuatangQuickReply(document2, phrase) {
     const editor = document2.getElementById("fastpostmessage");
@@ -10235,7 +10243,7 @@ ${title}`;
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
-        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\uFF0C\u751F\u6210\u4E3B\u8981\u8D44\u6E90 TXT \u7684\u5EFA\u8BAE\u6587\u4EF6\u540D\uFF1B\u4E0B\u8F7D\u59CB\u7EC8\u8D70\u7F51\u7AD9\u539F\u59CB\u94FE\u63A5\uFF0C\u4E0D\u518D\u56E0\u91CD\u547D\u540D\u89E6\u53D1 403\u3002\u82E5\u8981\u81EA\u52A8\u8986\u76D6\u670D\u52A1\u5668\u6307\u5B9A\u7684\u6587\u4EF6\u540D\uFF0C\u53EF\u53E6\u88C5 Chrome \u914D\u5957\u91CD\u547D\u540D\u6269\u5C55\uFF1B\u5426\u5219\u53EF\u4F7F\u7528\u4E0B\u8F7D\u540E\u7684\u300C\u590D\u5236\u5EFA\u8BAE\u6587\u4EF6\u540D\u300D\u624B\u52A8\u91CD\u547D\u540D\u3002\u76EE\u5F55\u3001\u6E05\u5355\u4FDD\u7559\u539F\u540D\u3002</small></span>
+        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u6CBF\u7528\u6B64\u524D\u540E\u53F0\u4E0B\u8F7D\u65B9\u5F0F\uFF0C\u540C\u65F6\u628A\u53BB\u6389 ED2K \u6807\u7B7E\u7684\u5E16\u5B50\u6807\u9898\u4F5C\u4E3A TXT \u5EFA\u8BAE\u6587\u4EF6\u540D\u3002\u7F51\u7AD9\u5F3A\u5236\u7684\u6587\u4EF6\u540D\u53EF\u80FD\u8986\u76D6\u5EFA\u8BAE\u540D\u79F0\uFF1B\u6B64\u65F6\u53EF\u590D\u5236\u5EFA\u8BAE\u6587\u4EF6\u540D\u624B\u52A8\u4FEE\u6539\u3002\u76EE\u5F55\u3001\u6E05\u5355\u4FDD\u6301\u539F\u540D\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
@@ -10334,9 +10342,6 @@ ${title}`;
     installations.get(document2)?.();
     document2.getElementById(TOOLBAR_ID)?.remove();
     const view = document2.defaultView;
-    if (isSehuatangHost(view.location)) {
-      document2.documentElement.dataset.x1080xExShtRename = getSehuatangSettings().renameText ? "on" : "off";
-    }
     const initiatedAttachments = initiatedAttachmentsByDocument.get(document2) || /* @__PURE__ */ new Map();
     initiatedAttachmentsByDocument.set(document2, initiatedAttachments);
     const settings = getSehuatangSettings();
@@ -10491,12 +10496,12 @@ ${name}`;
             const showInitiated = (icon2) => {
               icon2.dataset.downloadState = "started";
               icon2.textContent = "\u2197";
-              icon2.title = "\u5DF2\u53D1\u8D77\u539F\u751F\u9644\u4EF6\u4E0B\u8F7D\uFF08\u4FDD\u5B58\u60C5\u51B5\u4EE5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u4E3A\u51C6\uFF09";
+              icon2.title = "\u5DF2\u53D1\u8D77\u7F51\u7AD9\u540E\u53F0\u4E0B\u8F7D\uFF08\u4FDD\u5B58\u60C5\u51B5\u4EE5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u4E3A\u51C6\uFF09";
               icon2.setAttribute("aria-label", icon2.title);
             };
             const icon = addIcon(
               "download-attachment",
-              `\u539F\u751F\u4E0B\u8F7D\u9644\u4EF6\uFF1A${name}`,
+              `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${downloadName}`,
               DOWNLOAD_ICON_PATH,
               () => {
                 let result;
@@ -10508,7 +10513,7 @@ ${name}`;
                   return;
                 }
                 status.textContent = result;
-                if (result.startsWith("\u5DF2\u89E6\u53D1\u7F51\u7AD9\u539F\u751F\u9644\u4EF6\u4E0B\u8F7D")) {
+                if (result.startsWith("\u5DF2\u89E6\u53D1\u7F51\u7AD9\u540E\u53F0\u9644\u4EF6\u4E0B\u8F7D")) {
                   initiatedAttachments.set(key, "started");
                   showInitiated(icon);
                   if (downloadName !== name) {
