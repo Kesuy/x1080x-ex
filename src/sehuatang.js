@@ -280,6 +280,10 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     if (folder) folderStatus.textContent = '当前标签已授权：' + folder.name + '。打开新帖子需重新授权。';
   }).catch(() => {});
   folderButton.addEventListener('click', () => {
+    if (!isSehuatangHost(view.location)) {
+      folderStatus.textContent = '本地目录授权只能在 98堂帖子中完成。请打开 98堂帖子，再从设置中心选择下载文件夹。';
+      return;
+    }
     folderButton.disabled = true;
     folderStatus.textContent = '请在浏览器弹出的文件夹选择器中选择 Chrome 实际下载位置…';
     // Picker is invoked synchronously from the button click (user activation).
