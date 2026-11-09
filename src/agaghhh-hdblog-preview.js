@@ -151,6 +151,17 @@ export function chooseHdblogSearchResult(candidates, code, keywords = getHdblogB
 
   const exactTitle = remaining.filter((candidate) => codeTokenMatches(candidate.title, code));
   if (exactTitle.length === 1) return { blocked, remaining, selected: exactTitle[0] };
+  if (exactTitle.length > 1) {
+    // Multiple posts can share one FC2 code, often regular + watermark.
+    // Prefer the regular result; only include exact-code matches as fallbacks.
+    const isWatermarked = (candidate) => /\bwith\s+watermark\b|(?:带|含|有)水印|ウォーターマーク/iu.test(
+      candidate.article?.querySelector('.entry-content, .entry-summary')?.textContent
+        || candidate.article?.textContent || candidate.title || ''
+    );
+    const ranked = [...exactTitle].sort((a, b) =>
+      Number(isWatermarked(a)) - Number(isWatermarked(b)));
+    return { blocked, remaining, selected: ranked[0], alternates: ranked.slice(1) };
+  }
   return { blocked, remaining, selected: null };
 }
 
@@ -498,34 +509,38 @@ export async function fetchHdblogPreviewForCode(
     return { code: normalizedCode, articleUrl: '', imageUrls: [], ...selection };
   }
 
-  // A matching HDblog article is confirmed. Only the article/Preview stage is
-  // retryable; an article with no Preview section is a definitive miss.
-  const articleUrl = selection.selected.url;
+  // Try regular first, then other matching-code variants, before provider fallback.
+  const articles = [selection.selected, ...(selection.alternates || [])].slice(0, 4);
+  let articleUrl = articles[0].url;
   let imageUrls = [];
-  for (let attempt = 0; attempt <= retryCount; attempt += 1) {
-    let shouldRetry = false;
-    try {
-      const articleResponse = await requestText(articleUrl, gmRequest, searchUrl, timeoutMs);
-      const articleDocument = parseHtml(
-        articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument
-      );
-      if (!articleDocument || !previewRange(articleDocument)) break;
-      imageUrls = await collectHdblogPreviewImageUrls(
-        articleDocument, articleUrl, gmRequest,
-        verifyImages ? hostDocument : null, timeoutMs
-      );
-      if (imageUrls.length) break;
-      shouldRetry = true;
-    } catch (error) {
-      shouldRetry = true;
-      console.warn('[x1080x-ex] matched JavClub article Preview loading failed', {
-        code: normalizedCode, attempt: attempt + 1,
-        error: error?.message || String(error),
-      });
+  for (const candidate of articles) {
+    articleUrl = candidate.url;
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      let shouldRetry = false;
+      try {
+        const articleResponse = await requestText(articleUrl, gmRequest, searchUrl, timeoutMs);
+        const articleDocument = parseHtml(
+          articleResponse.html, articleResponse.finalUrl || articleUrl, hostDocument
+        );
+        // No Preview is final for this article, not for same-code alternatives.
+        if (!articleDocument || !previewRange(articleDocument)) break;
+        imageUrls = await collectHdblogPreviewImageUrls(
+          articleDocument, articleUrl, gmRequest,
+          verifyImages ? hostDocument : null, timeoutMs
+        );
+        if (imageUrls.length) break;
+        shouldRetry = true;
+      } catch (error) {
+        shouldRetry = true;
+        console.warn('[x1080x-ex] matched JavClub article Preview loading failed', {
+          code: normalizedCode, articleUrl, attempt: attempt + 1,
+          error: error?.message || String(error),
+        });
+      }
+      if (!shouldRetry || attempt >= retryCount) break;
+      await wait(Math.min(500 * (attempt + 1), 2000));
     }
-    if (!shouldRetry || attempt >= retryCount) break;
-    const delay = Math.min(500 * (attempt + 1), 2000);
-    await wait(delay);
+    if (imageUrls.length) break;
   }
   return { code: normalizedCode, articleUrl, imageUrls, ...selection };
 }
@@ -657,7 +672,11 @@ export async function installAgaghhhHdblogPreview(
   const cached = previewLookups.get(document);
   if (cached?.key === key) {
     if (cached.promise) return cached.promise;
-    return renderAgaghhhHdblogPreview(document, cached.result);
+    // Without a key on a cache-restored section the MutationObserver repeatedly
+    // removes and reinserts it after the Preview toggle, freezing the tab.
+    const restored = renderAgaghhhHdblogPreview(document, cached.result);
+    if (restored) restored.dataset.x1080xPreviewKey = key;
+    return restored;
   }
 
   const task = (async () => {
