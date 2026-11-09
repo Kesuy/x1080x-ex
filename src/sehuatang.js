@@ -1,9 +1,11 @@
 import { DOWNLOAD_ICON_PATH } from './download-icon.js';
 import { organizeSettingsPanel } from './settings-layout.js';
+import { chooseSehuatangRenameFolder, getSehuatangRenameFolder, renameSehuatangDownloadedTxt } from './sehuatang-local-rename.js';
 const PREFIX = 'x1080x-ex:sehuatang-';
 export const SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + 'attachments-enabled';
 export const SHT_DOWNLOAD_ENABLED_KEY = PREFIX + 'attachment-download-enabled';
 export const SHT_RENAME_TXT_ENABLED_KEY = PREFIX + 'rename-txt-by-title-enabled';
+export const SHT_LOCAL_RENAME_ENABLED_KEY = PREFIX + 'local-rename-after-download-enabled';
 export const SHT_REPLY_ENABLED_KEY = PREFIX + 'quick-reply-enabled';
 export const SHT_HIDDEN_NOTICE_ENABLED_KEY = PREFIX + 'reply-hidden-notice-enabled';
 export const SHT_REPLY_PHRASE_KEY = PREFIX + 'reply-phrase';
@@ -32,6 +34,7 @@ export function getSehuatangSettings() {
     attachments: read(SHT_ATTACHMENTS_ENABLED_KEY, true) !== false,
     download: read(SHT_DOWNLOAD_ENABLED_KEY, true) !== false,
     renameText: read(SHT_RENAME_TXT_ENABLED_KEY, true) !== false,
+    localRename: read(SHT_LOCAL_RENAME_ENABLED_KEY, false) === true,
     reply: read(SHT_REPLY_ENABLED_KEY, true) !== false,
     hiddenNotice: read(SHT_HIDDEN_NOTICE_ENABLED_KEY, true) !== false,
     phrase: typeof phrase === 'string' ? phrase : DEFAULT_SHT_REPLY_PHRASE,
@@ -216,6 +219,14 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
         <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。沿用此前后台下载方式，同时把去掉 ED2K 标签的帖子标题作为 TXT 建议文件名。网站强制的文件名可能覆盖建议名称；此时可复制建议文件名手动修改。目录、清单保持原名。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="local-rename" style="margin-top:3px">
+        <span><strong>原生下载后自动重命名 TXT（当前标签授权文件夹）</strong><small style="display:block;color:#64748b;margin-top:3px">不改变原来的后台下载，也不再请求附件。需要明确授权实际下载目录的读写权限；只处理本次下载的主要 TXT，不处理目录树或 ZIP。为防止网站脚本访问你的本地目录，授权仅在当前页面有效，打开新帖子需重新授权。默认关闭。</small></span>
+      </label>
+      <div data-setting="rename-folder" style="margin:-3px 0 12px 24px">
+        <button type="button" data-action="select-download-folder" style="width:auto;padding:6px 10px;border-radius:7px">选择 Chrome 实际下载文件夹</button>
+        <small data-folder-status style="display:block;color:#64748b;margin-top:5px">未授权下载目录；仅在 Chrome/Edge 桌面版可用。</small>
+      </div>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
         <span><strong>回复后可见内容提示</strong><small style="display:block;color:#64748b;margin-top:3px">提示楼主回复后可见的内容，不会自动绕过限制。</small></span>
       </label>
@@ -245,7 +256,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     </div>`;
   organizeSettingsPanel(form, [
     { key: 'attachments', title: '附件功能', description: '附件定位、下载和内容提示',
-      settings: ['attachments', 'download', 'rename-text', 'hidden-notice'] },
+      settings: ['attachments', 'download', 'rename-text', 'local-rename', 'rename-folder', 'hidden-notice'] },
     { key: 'reply', title: '快捷回复', description: '启用快捷回复并设置回复短语',
       settings: ['reply', 'phrase'] },
     { key: 'position', title: '浮动栏位置', description: '浮动按钮的位置管理',
@@ -256,9 +267,37 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
   field('attachments').checked = settings.attachments;
   field('download').checked = settings.download;
   field('rename-text').checked = settings.renameText;
+  field('local-rename').checked = settings.localRename;
   field('reply').checked = settings.reply;
   field('hidden-notice').checked = settings.hiddenNotice;
   field('phrase').value = settings.phrase;
+  const folderStatus = form.querySelector('[data-folder-status]');
+  const folderButton = form.querySelector('[data-action="select-download-folder"]');
+  const view = document.defaultView;
+  let hasFolder = false;
+  getSehuatangRenameFolder(view).then(folder => {
+    hasFolder = Boolean(folder);
+    if (folder) folderStatus.textContent = '当前标签已授权：' + folder.name + '。打开新帖子需重新授权。';
+  }).catch(() => {});
+  folderButton.addEventListener('click', () => {
+    if (!isSehuatangHost(view.location)) {
+      folderStatus.textContent = '本地目录授权只能在 98堂帖子中完成。请打开 98堂帖子，再从设置中心选择下载文件夹。';
+      return;
+    }
+    folderButton.disabled = true;
+    folderStatus.textContent = '请在浏览器弹出的文件夹选择器中选择 Chrome 实际下载位置…';
+    // Picker is invoked synchronously from the button click (user activation).
+    chooseSehuatangRenameFolder(view).then(({ name, persisted }) => {
+      hasFolder = true;
+      field('local-rename').checked = true;
+      folderStatus.textContent = '已选：' + name + (persisted
+        ? '（可在此浏览器配置中恢复，权限可能需重新授予）'
+        : '（仅当前标签有效；不将文件夹句柄保存到网站存储）') + '。点击下方「保存」启用。';
+    }, error => {
+      folderStatus.textContent = '无法授权：' + (error?.message || String(error))
+        + '。原有网站下载按钮不受影响。';
+    }).finally(() => { folderButton.disabled = false; });
+  });
   let resetPosition = false;
   form.querySelector('[data-action="reset-position"]').addEventListener('click', (event) => {
     resetPosition = true;
@@ -276,7 +315,12 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     }
     save(SHT_ATTACHMENTS_ENABLED_KEY, field('attachments').checked);
     save(SHT_DOWNLOAD_ENABLED_KEY, field('download').checked);
+    if (field('local-rename').checked && !hasFolder) {
+      folderStatus.textContent = '请先点击「选择 Chrome 实际下载文件夹」，或关闭自动重命名选项。';
+      return;
+    }
     save(SHT_RENAME_TXT_ENABLED_KEY, field('rename-text').checked);
+    save(SHT_LOCAL_RENAME_ENABLED_KEY, field('local-rename').checked);
     save(SHT_REPLY_ENABLED_KEY, field('reply').checked);
     save(SHT_HIDDEN_NOTICE_ENABLED_KEY, field('hidden-notice').checked);
     save(SHT_REPLY_PHRASE_KEY, field('phrase').value.trim());
@@ -449,14 +493,17 @@ export function installSehuatangToolbar(document) {
         if (settings.download) {
           const downloadName = sehuatangAttachmentDownloadName(document, name, settings.renameText);
           const key = `${link.href}\n${name}`;
-          const showInitiated = (icon) => {
-            icon.dataset.downloadState = 'started';
-            icon.textContent = '↗';
-            icon.title = '已发起网站后台下载（保存情况以浏览器下载列表为准）';
+          const showInitiated = (icon, confirmed = false) => {
+            icon.dataset.downloadState = confirmed ? 'saved' : 'started';
+            icon.textContent = confirmed ? '✓' : '↗';
+            icon.title = confirmed ? '已在授权文件夹中确认文件名：' + downloadName
+              : '已发起网站后台下载（保存情况以浏览器下载列表为准）';
             icon.setAttribute('aria-label', icon.title);
           };
           const icon = addIcon('download-attachment', `下载附件：${downloadName}`,
             DOWNLOAD_ICON_PATH, () => {
+              const startedAt = Date.now();
+              const currentSettings = getSehuatangSettings();
               let result;
               try { result = downloadSehuatangAttachment(document, link); }
               catch (error) {
@@ -464,37 +511,57 @@ export function installSehuatangToolbar(document) {
                 place();
                 return;
               }
+              const offerCopy = () => {
+                if (downloadName === name) return;
+                const copyButton = document.createElement('button');
+                copyButton.type = 'button';
+                copyButton.textContent = '复制建议文件名';
+                copyButton.style.cssText = 'margin-top:6px;padding:4px 8px;width:auto;display:block;font-size:12px';
+                copyButton.title = downloadName;
+                copyButton.addEventListener('click', () => {
+                  if (typeof GM_setClipboard === 'function') {
+                    GM_setClipboard(downloadName, 'text');
+                    copyButton.textContent = '已复制 ✓';
+                  } else if (view.navigator.clipboard?.writeText) {
+                    Promise.resolve(view.navigator.clipboard.writeText(downloadName))
+                      .then(() => { copyButton.textContent = '已复制 ✓'; })
+                      .catch(() => { copyButton.textContent = '复制失败，请手动重命名'; });
+                  } else copyButton.textContent = '复制不可用，请手动重命名';
+                });
+                status.append(copyButton);
+              };
               status.textContent = result;
               if (result.startsWith('已触发网站后台附件下载')) {
                 initiatedAttachments.set(key, 'started');
                 showInitiated(icon);
-                if (downloadName !== name) {
-                  const note = document.createElement('span');
-                  note.textContent = ' 网站可能按原名保存。';
-                  status.append(note);
-                  const copyButton = document.createElement('button');
-                  copyButton.type = 'button';
-                  copyButton.textContent = '复制建议文件名';
-                  copyButton.style.cssText = 'margin-top:6px;padding:4px 8px;width:auto;display:block;font-size:12px';
-                  copyButton.title = downloadName;
-                  copyButton.addEventListener('click', () => {
-                    if (typeof GM_setClipboard === 'function') {
-                      GM_setClipboard(downloadName, 'text');
-                      copyButton.textContent = '已复制 ✓';
-                    } else if (view.navigator.clipboard?.writeText) {
-                      Promise.resolve(view.navigator.clipboard.writeText(downloadName))
-                        .then(() => { copyButton.textContent = '已复制 ✓'; })
-                        .catch(() => { copyButton.textContent = '复制失败，请手动重命名'; });
-                    } else {
-                      copyButton.textContent = '复制不可用，请手动重命名';
+                const localRename = currentSettings.localRename && currentSettings.renameText
+                  && downloadName !== name && /\.txt$/i.test(name);
+                if (localRename) {
+                  status.textContent += ' 正在授权目录中确认下载完成并自动更名…';
+                  renameSehuatangDownloadedTxt(view, {
+                    originalName: name, desiredName: downloadName, startedAt,
+                  }).then(outcome => {
+                    if (outcome.renamed || outcome.alreadyNamed) {
+                      initiatedAttachments.set(key, 'saved');
+                      showInitiated(icon, true);
+                      status.textContent = (outcome.renamed ? '本地 TXT 已更名：' : '浏览器已按目标名称保存：')
+                        + outcome.filename;
                     }
-                  });
-                  status.append(copyButton);
+                  }, error => {
+                    status.textContent = '原生附件下载不受影响；本地更名未完成：'
+                      + (error?.message || String(error));
+                    offerCopy();
+                  }).finally(place);
+                } else {
+                  if (downloadName !== name) {
+                    status.textContent += ' 网站可能按原名保存。';
+                    offerCopy();
+                  }
                 }
               }
               place();
             });
-          if (initiatedAttachments.has(key)) showInitiated(icon);
+          if (initiatedAttachments.has(key)) showInitiated(icon, initiatedAttachments.get(key) === 'saved');
         }
         row.append(filename, icons);
         choices.append(row);
