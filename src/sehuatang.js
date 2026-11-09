@@ -3,6 +3,7 @@ import { organizeSettingsPanel } from './settings-layout.js';
 const PREFIX = 'x1080x-ex:sehuatang-';
 export const SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + 'attachments-enabled';
 export const SHT_DOWNLOAD_ENABLED_KEY = PREFIX + 'attachment-download-enabled';
+export const SHT_RENAME_TXT_ENABLED_KEY = PREFIX + 'rename-txt-by-title-enabled';
 export const SHT_REPLY_ENABLED_KEY = PREFIX + 'quick-reply-enabled';
 export const SHT_HIDDEN_NOTICE_ENABLED_KEY = PREFIX + 'reply-hidden-notice-enabled';
 export const SHT_REPLY_PHRASE_KEY = PREFIX + 'reply-phrase';
@@ -30,6 +31,7 @@ export function getSehuatangSettings() {
   return {
     attachments: read(SHT_ATTACHMENTS_ENABLED_KEY, true) !== false,
     download: read(SHT_DOWNLOAD_ENABLED_KEY, true) !== false,
+    renameText: read(SHT_RENAME_TXT_ENABLED_KEY, true) !== false,
     reply: read(SHT_REPLY_ENABLED_KEY, true) !== false,
     hiddenNotice: read(SHT_HIDDEN_NOTICE_ENABLED_KEY, true) !== false,
     phrase: typeof phrase === 'string' ? phrase : DEFAULT_SHT_REPLY_PHRASE,
@@ -112,6 +114,25 @@ function focusAttachment(link) {
   ], { duration: 2500 });
 }
 
+// A post may contain both a file-list TXT and the actual resource TXT.
+// Never rename both to the same title: preserve directory-list filenames.
+// ASCII '/' cannot be saved in a Windows filename: replace with '／'.
+export function sehuatangAttachmentDownloadName(document, filename, enabled = getSehuatangSettings().renameText) {
+  const original = String(filename || '').trim();
+  if (!enabled || !/\.txt$/i.test(original)
+    || /(?:目录(?:树)?|目錄(?:樹)?|清单|清單|文件列表|readme|file[\s_-]*list)/iu.test(original)) return original;
+  const heading = String(document?.querySelector('#thread_subject')?.textContent || '').trim();
+  if (!heading) return original;
+  const title = heading.replace(/^(?:【[^】]*(?:ED2K|整理)[^】]*】\s*)+/iu, '').trim();
+  if (!title) return original;
+  const replacements = { '\\': '＼', '/': '／', ':': '：', '*': '＊', '?': '？',
+    '"': '＂', '<': '〈', '>': '〉', '|': '｜' };
+  const safeTitle = title.replace(/[\\/:*?"<>|]/g, (char) => replacements[char])
+    .replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ')
+    .replace(/[.\s]+$/g, '').slice(0, 180).replace(/[.\s]+$/g, '');
+  return safeTitle ? safeTitle + '.txt' : original;
+}
+
 export function downloadSehuatangAttachment(document, link) {
   if (!getSehuatangSettings().download) {
     return '附件下载已关闭，请在「⚙️ 98堂设置」中开启。';
@@ -123,7 +144,7 @@ export function downloadSehuatangAttachment(document, link) {
   // Prefer native saving even for inline TXT responses, while keeping the signed URL,
   // original target and onclick (including native purchase/permission dialogs).
   const originalDownload = link.getAttribute('download');
-  link.setAttribute('download', file.name);
+  link.setAttribute('download', sehuatangAttachmentDownloadName(document, file.name));
   try { link.click(); }
   finally {
     if (originalDownload === null) link.removeAttribute('download');
@@ -184,6 +205,10 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
         <span><strong>附件下载图标</strong><small style="display:block;color:#64748b;margin-top:3px">沿用网站原生下载链接，仍需遵守原有权限和付费规则。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
+        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。主要资源 TXT 使用去掉 ED2K 等分类标签的帖子标题；目录、清单 TXT 保留原名。文件名中的 / 会替换成 Windows 可用的 ／。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
         <span><strong>回复后可见内容提示</strong><small style="display:block;color:#64748b;margin-top:3px">提示楼主回复后可见的内容，不会自动绕过限制。</small></span>
       </label>
@@ -213,7 +238,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     </div>`;
   organizeSettingsPanel(form, [
     { key: 'attachments', title: '附件功能', description: '附件定位、下载和内容提示',
-      settings: ['attachments', 'download', 'hidden-notice'] },
+      settings: ['attachments', 'download', 'rename-text', 'hidden-notice'] },
     { key: 'reply', title: '快捷回复', description: '启用快捷回复并设置回复短语',
       settings: ['reply', 'phrase'] },
     { key: 'position', title: '浮动栏位置', description: '浮动按钮的位置管理',
@@ -223,6 +248,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
   const field = (name) => form.querySelector(`[data-setting="${name}"]`);
   field('attachments').checked = settings.attachments;
   field('download').checked = settings.download;
+  field('rename-text').checked = settings.renameText;
   field('reply').checked = settings.reply;
   field('hidden-notice').checked = settings.hiddenNotice;
   field('phrase').value = settings.phrase;
@@ -243,6 +269,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     }
     save(SHT_ATTACHMENTS_ENABLED_KEY, field('attachments').checked);
     save(SHT_DOWNLOAD_ENABLED_KEY, field('download').checked);
+    save(SHT_RENAME_TXT_ENABLED_KEY, field('rename-text').checked);
     save(SHT_REPLY_ENABLED_KEY, field('reply').checked);
     save(SHT_HIDDEN_NOTICE_ENABLED_KEY, field('hidden-notice').checked);
     save(SHT_REPLY_PHRASE_KEY, field('phrase').value.trim());
@@ -412,14 +439,15 @@ export function installSehuatangToolbar(document) {
             if (getSehuatangSettings().attachments) focusAttachment(link);
           });
         if (settings.download) {
+          const downloadName = sehuatangAttachmentDownloadName(document, name, settings.renameText);
           const key = `${link.href}\n${name}`;
           const showInitiated = (icon) => {
             icon.dataset.downloadState = 'started';
             icon.textContent = '↗';
-            icon.title = `已发起下载：${name}（实际保存结果请检查浏览器）`;
+            icon.title = `已发起下载：${downloadName}（实际保存结果请检查浏览器）`;
             icon.setAttribute('aria-label', icon.title);
           };
-          const icon = addIcon('download-attachment', `下载附件：${name}`,
+          const icon = addIcon('download-attachment', `下载附件：${downloadName}`,
             DOWNLOAD_ICON_PATH, () => {
               const result = downloadSehuatangAttachment(document, link);
               status.textContent = result;
