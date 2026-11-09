@@ -11,6 +11,7 @@ import {
 } from './core.js';
 import { resolvePixhostShowUrl } from './pixhost.js';
 import { pendingAgaghhhHdblogPreview } from './agaghhh-hdblog-preview.js';
+import { isX1080xPreviewEnabled } from './preview-visibility.js';
 import { isHdblogArticleUrl } from './hdblog-search.js';
 import {
   DEFAULT_AGAGHHH_PRIMARY_DOMAIN,
@@ -1818,7 +1819,7 @@ async function downloadAll(button) {
   // The modern forum's Preview is appended asynchronously. If HDblog (or a
   // configured fallback) is still loading, snapshotting the DOM now silently
   // drops Preview from the job count and the downloaded files.
-  const pendingPreview = isAgaghhhHost(location)
+  const pendingPreview = isAgaghhhHost(location) && isX1080xPreviewEnabled()
     ? pendingAgaghhhHdblogPreview(document)
     : null;
   if (pendingPreview) {

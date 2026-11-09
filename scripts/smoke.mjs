@@ -91,12 +91,12 @@ const button = dom.window.document.querySelector('#x1080x-ex-download');
 assert.ok(button, '构建产物应在 Discuz 帖子页插入下载按钮');
 assert.equal(button.style.margin, '0px 8px 6px 6px', '下载按钮应与相邻操作按钮保持统一 6px 间距');
 button.click();
-for (let attempt = 0; attempt < 100 && (saved.length < 3 || revoked.length < 3); attempt += 1) {
+for (let attempt = 0; attempt < 100 && (saved.length < 2 || revoked.length < 2); attempt += 1) {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
-assert.equal(saved.length, 3, 'attachment, original cover and Preview should all be saved');
-assert.equal(revoked.length, 3, 'all Object URLs should be revoked');
-assert.deepEqual(releaseDelays, [10000, 10000, 10000], 'fallback Object URLs remain valid while the browser starts downloads');
+assert.equal(saved.length, 2, 'Preview is disabled: only attachment and original cover should be saved');
+assert.equal(revoked.length, 2, 'all Object URLs should be revoked');
+assert.deepEqual(releaseDelays, [10000, 10000], 'fallback Object URLs remain valid while the browser starts downloads');
 
 assert.deepEqual(calls, [
   {
@@ -114,28 +114,19 @@ assert.deepEqual(calls, [
     responseType: 'blob',
     anonymous: undefined,
     referer: 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806',
-  },
-  {
-    transport: 'gm',
-    method: 'GET',
-    url: 'https://img1.pixhost.to/images/preview.jpg',
-    responseType: 'blob',
-    anonymous: undefined,
-    referer: 'https://hdblog.me/123/abcd-123/',
-    blobSize: 65536,
+    blobSize: 3,
   },
 ]);
 assert.deepEqual(saved, [
   { url: 'blob:smoke-1', name: 'ABCD-123 本文タイトル.rar' },
-  { url: 'blob:smoke-2', name: 'ABCD-123 A.jpg' },
-  { url: 'blob:smoke-3', name: 'ABCD-123 B.jpg' },
+  { url: 'blob:smoke-2', name: 'ABCD-123.jpg' },
 ]);
-assert.deepEqual(revoked, ['blob:smoke-1', 'blob:smoke-2', 'blob:smoke-3']);
+assert.deepEqual(revoked, ['blob:smoke-1', 'blob:smoke-2']);
 assert.equal(dom.window.location.href, 'https://agaghhh.cc/forum.php?mod=viewthread&tid=1053806');
 assert.equal(dom.window.document.querySelector('a[download]'), null);
 
 dom.window.close();
-console.log('Built userscript smoke test passed: attachment, original cover and Preview all use validated Blob downloads.');
+console.log('Built userscript smoke test passed: hidden Preview is excluded; attachment and original cover use validated Blob downloads.');
 
 // Exercise the actual bundled entry point on 98堂, including native form dispatch.
 for (const enabled of [true, false]) {

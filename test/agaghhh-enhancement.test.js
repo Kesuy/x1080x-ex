@@ -407,6 +407,7 @@ test('新版详情页搜索、复制、下载按钮统一放在收藏左侧，�
     assert.deepEqual([...group.children].map((button) => button.id), [
       'x1080x-ex-download',
       'x1080x-ex-agaghhh-hdblog-search',
+      'x1080x-ex-agaghhh-preview-toggle',
       'x1080x-ex-agaghhh-copy-code',
     ]);
 
@@ -418,6 +419,7 @@ test('新版详情页搜索、复制、下载按钮统一放在收藏左侧，�
     assert.deepEqual([...restoredGroup.children].map((button) => button.id), [
       'x1080x-ex-download',
       'x1080x-ex-agaghhh-hdblog-search',
+      'x1080x-ex-agaghhh-preview-toggle',
       'x1080x-ex-agaghhh-copy-code',
     ]);
   } finally {

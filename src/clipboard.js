@@ -36,13 +36,20 @@ export async function copyTextToClipboard(
   return text;
 }
 
+// 复制 FC2 番号时仅输出数字，其它番号保持不变。
+export function normalizeCodeForClipboard(code) {
+  const normalized = String(code ?? '').trim();
+  const fc2 = normalized.match(/^FC2(?:[\s_-]*PPV)?[\s_-]*(\d{5,9})$/i);
+  return fc2 ? fc2[1] : normalized;
+}
+
 export async function copyCodeWithButtonFeedback(button, document, code) {
   if (!button) return false;
   const originalText = button.textContent || '📋';
   const originalTitle = button.title || '复制番号到剪切板';
   button.disabled = true;
   try {
-    const copied = await copyTextToClipboard(document, code);
+    const copied = await copyTextToClipboard(document, normalizeCodeForClipboard(code));
     button.textContent = '✓';
     button.title = `已复制：${copied}`;
     return true;

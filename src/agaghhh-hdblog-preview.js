@@ -1,4 +1,5 @@
 import { preparePreviewForNativeSave } from './preview-native-save.js';
+import { isX1080xPreviewEnabled } from './preview-visibility.js';
 import { getThreadHeadingText, parseThreadTitle } from './core.js';
 import {
   collectHdblogSearchResults,
@@ -643,7 +644,7 @@ export async function installAgaghhhHdblogPreview(
   locationObject = globalThis.location,
   gmRequest = globalThis.GM_xmlhttpRequest
 ) {
-  if (!document || !isThreadPage(locationObject)) return null;
+  if (!document || !isThreadPage(locationObject) || !isX1080xPreviewEnabled()) return null;
   const code = threadCode(document);
   if (!code || !firstPostContent(document)) return null;
 
@@ -695,7 +696,8 @@ export async function installAgaghhhHdblogPreview(
     result = await filterPixhostUnavailableImageUrls(result, document);
 
     // Ignore results from a prior resource when Next.js navigates without a reload.
-    if ((document.location?.href || locationObject?.href || '') !== pageUrl
+    if (!isX1080xPreviewEnabled()
+      || (document.location?.href || locationObject?.href || '') !== pageUrl
       || threadCode(document) !== code) return null;
     previewLookups.set(document, { key, result, promise: null });
     const rendered = renderAgaghhhHdblogPreview(document, result);

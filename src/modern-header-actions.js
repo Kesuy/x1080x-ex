@@ -3,13 +3,16 @@ const MODERN_RESOURCE_ACTIONS_ID = 'x1080x-ex-resource-actions';
 const ACTION_ORDER = [
   'x1080x-ex-download',
   'x1080x-ex-agaghhh-hdblog-search',
+  'x1080x-ex-agaghhh-preview-toggle',
   'x1080x-ex-agaghhh-copy-code',
 ];
 
 function favoriteButton(actions) {
-  return actions?.querySelector(
+  // Preview 快捷开关也使用 aria-pressed，但它位于脚本自己的快捷操作组内。
+  // 只把组外的原站收藏按钮当作锚点，否则 insertBefore 会引用嵌套节点而报错。
+  return [...(actions?.querySelectorAll(
     '.button.dock-side, button.dock-side, button[aria-pressed], .dock-side'
-  ) || null;
+  ) || [])].find((element) => !element.closest('#' + MODERN_RESOURCE_ACTIONS_ID)) || null;
 }
 
 export function renderModernDownloadButton(button, state = 'idle', count = '') {

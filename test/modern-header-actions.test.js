@@ -30,9 +30,12 @@ test('modern resource actions are grouped in stable download/search/copy order i
   search.id = 'x1080x-ex-agaghhh-hdblog-search';
   const copy = doc.createElement('button');
   copy.id = 'x1080x-ex-agaghhh-copy-code';
+  const preview = doc.createElement('button');
+  preview.id = 'x1080x-ex-agaghhh-preview-toggle';
 
   placeModernResourceActionButton(doc, copy);
   placeModernResourceActionButton(doc, search);
+  placeModernResourceActionButton(doc, preview);
   placeModernResourceActionButton(doc, download);
 
   const group = doc.getElementById('x1080x-ex-resource-actions');
@@ -42,6 +45,7 @@ test('modern resource actions are grouped in stable download/search/copy order i
   assert.deepEqual([...group.children].map((button) => button.id), [
     'x1080x-ex-download',
     'x1080x-ex-agaghhh-hdblog-search',
+    'x1080x-ex-agaghhh-preview-toggle',
     'x1080x-ex-agaghhh-copy-code',
   ]);
   assert.equal(download.style.float, 'none');
