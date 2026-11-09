@@ -3,6 +3,7 @@ const MODERN_RESOURCE_ACTIONS_ID = 'x1080x-ex-resource-actions';
 const ACTION_ORDER = [
   'x1080x-ex-download',
   'x1080x-ex-agaghhh-hdblog-search',
+  'x1080x-ex-agaghhh-preview-toggle',
   'x1080x-ex-agaghhh-copy-code',
 ];
 
