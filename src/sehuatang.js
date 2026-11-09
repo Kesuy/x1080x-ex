@@ -222,7 +222,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
         <input type="checkbox" data-setting="local-rename" style="margin-top:3px">
         <span><strong>原生下载后自动重命名 TXT（当前标签授权文件夹）</strong><small style="display:block;color:#64748b;margin-top:3px">不改变原来的后台下载，也不再请求附件。需要明确授权实际下载目录的读写权限；只处理本次下载的主要 TXT，不处理目录树或 ZIP。为防止网站脚本访问你的本地目录，授权仅在当前页面有效，打开新帖子需重新授权。默认关闭。</small></span>
       </label>
-      <div style="margin:-3px 0 12px 24px">
+      <div data-setting="rename-folder" style="margin:-3px 0 12px 24px">
         <button type="button" data-action="select-download-folder" style="width:auto;padding:6px 10px;border-radius:7px">选择 Chrome 实际下载文件夹</button>
         <small data-folder-status style="display:block;color:#64748b;margin-top:5px">未授权下载目录；仅在 Chrome/Edge 桌面版可用。</small>
       </div>
@@ -256,7 +256,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     </div>`;
   organizeSettingsPanel(form, [
     { key: 'attachments', title: '附件功能', description: '附件定位、下载和内容提示',
-      settings: ['attachments', 'download', 'rename-text', 'local-rename', 'hidden-notice'] },
+      settings: ['attachments', 'download', 'rename-text', 'local-rename', 'rename-folder', 'hidden-notice'] },
     { key: 'reply', title: '快捷回复', description: '启用快捷回复并设置回复短语',
       settings: ['reply', 'phrase'] },
     { key: 'position', title: '浮动栏位置', description: '浮动按钮的位置管理',
