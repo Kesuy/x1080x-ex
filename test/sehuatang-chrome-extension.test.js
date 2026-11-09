@@ -29,7 +29,8 @@ test('可选 Chrome 扩展：先登记楼主主要 TXT，不包含目录或回�
   dom.window.eval(await read('content.js'));
   assert.equal(msgs.length, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(msgs[0])), { type: 'sht-suggest', url: LINK, filename: NAME });
-  // Flush any jsdom MutationObserver microtasks before destroying its window.
+  // Simulate a real page unloading so content-script DOM observers disconnect.
+  dom.window.dispatchEvent(new dom.window.Event('pagehide'));
   await new Promise(resolve => dom.window.setTimeout(resolve, 0));
   dom.window.close();
 });
