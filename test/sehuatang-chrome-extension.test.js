@@ -24,6 +24,7 @@ test('可选 Chrome 扩展：先登记楼主主要 TXT，不包含目录或回�
     </div></body>`;
   const dom = new JSDOM(html, { url: 'https://www.sehuatang.org/forum.php?mod=viewthread&tid=3726403', runScripts: 'outside-only' });
   const msgs = [];
+  dom.window.document.documentElement.dataset.x1080xExShtRename = 'on';
   dom.window.chrome = { runtime: { sendMessage: (msg, cb) => { msgs.push(msg); cb?.(); }, lastError: null } };
   dom.window.eval(await read('content.js'));
   assert.equal(msgs.length, 1);
@@ -40,6 +41,7 @@ test('可选 Chrome 扩展：原生下载时回调修改目标文件名，不再
     storage: { session: {
       set: async (items) => { Object.assign(session, items); },
       get: async (key) => ({ [key]: session[key] }),
+      remove: async (key) => { delete session[key]; },
     }},
     downloads: {
       download: () => { downloadsRequested++; },
@@ -66,6 +68,14 @@ test('可选 Chrome 扩展：原生下载时回调修改目标文件名，不再
     assert.equal(returned, true);
   });
   assert.equal(missing, undefined, 'unknown files keep the server filename');
+  await new Promise(resolve => {
+    messageListener({ type: 'sht-remove', url: LINK },
+      { url: 'https://www.sehuatang.org/forum.php?mod=viewthread&tid=3726403' }, resolve);
+  });
+  const disabled = await new Promise(resolve => {
+    downloadListener({ url: LINK }, resolve);
+  });
+  assert.equal(disabled, undefined, 'disabling rename must clear saved suggestions');
   assert.equal(downloadsRequested, 0, 'extension must not issue another network download');
 });
 
