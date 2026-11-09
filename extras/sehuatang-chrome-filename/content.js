@@ -29,6 +29,8 @@
   }
 
   function sync() {
+    // The page can unload before a pending MutationObserver microtask runs.
+    if (!document.defaultView) return;
     if (document.documentElement.dataset.x1080xExShtRename !== 'on') {
       for (const url of reported.keys()) {
         chrome.runtime.sendMessage({ type: 'sht-remove', url }, () => void chrome.runtime.lastError);
