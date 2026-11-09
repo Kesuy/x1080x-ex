@@ -365,7 +365,7 @@ test('one visible file downloads through its row icon and original link handlers
   assert.equal(link.getAttribute('href'), href);
   assert.equal(link.target, '_blank');
   assert.equal(link.hasAttribute('download'), false);
-  assert.match(root.querySelector('.status').textContent, /已触发网站附件下载/);
+  assert.match(root.querySelector('.status').textContent, /已触发网站原生附件下载/);
   const icon = root.querySelector('[data-action="download-attachment"]');
   assert.equal(icon.dataset.downloadState, 'started', '98堂 only confirms native handoff, not completion');
   assert.equal(icon.textContent, '↗');
