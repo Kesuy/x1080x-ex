@@ -3,6 +3,7 @@ import { getResolvedThreadActress, getThreadHeadingText, parseThreadTitle, setRe
 import { isAgaghhhHost } from './site-domains.js';
 export { isAgaghhhHost };
 import { copyCodeWithButtonFeedback } from './clipboard.js';
+import { isX1080xPreviewEnabled, setX1080xPreviewEnabled } from './preview-visibility.js';
 import { placeModernResourceActionButton } from './modern-header-actions.js';
 import {
   hdblogSearchCodeForThreadCode,
@@ -51,6 +52,7 @@ const SETTINGS_PANEL_ID = 'x1080x-ex-settings-panel';
 const DOWNLOAD_BUTTON_ID = 'x1080x-ex-download';
 const SEARCH_BUTTON_ID = 'x1080x-ex-agaghhh-hdblog-search';
 const COPY_BUTTON_ID = 'x1080x-ex-agaghhh-copy-code';
+const PREVIEW_TOGGLE_BUTTON_ID = 'x1080x-ex-agaghhh-preview-toggle';
 const BATCH_BUTTON_ID = 'x1080x-ex-open-page';
 const BATCH_PROGRESS_BUTTON_ID = 'x1080x-ex-batch-progress-locator';
 const BATCH_TOOLBAR_ID = 'x1080x-ex-open-page-toolbar';
@@ -204,7 +206,7 @@ export function isAgaghhhRealActressEnabled() {
 }
 
 export function isAgaghhhHdblogPreviewEnabled() {
-  return readBooleanSetting(AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY);
+  return isX1080xPreviewEnabled();
 }
 
 export function isAgaghhhForumSearchPage(locationObject = globalThis.location) {
@@ -610,6 +612,67 @@ function installHdblogSearchButton(document) {
   else host.prepend(button);
 }
 
+function updatePreviewToggleButton(button) {
+  const enabled = isX1080xPreviewEnabled();
+  if (button.dataset.previewEnabled === String(enabled)) return;
+  button.dataset.previewEnabled = String(enabled);
+  button.textContent = enabled ? '👁️' : '🙈';
+  button.title = enabled
+    ? '关闭 Preview（批量下载跳过 Preview 图片）'
+    : '开启 Preview（批量下载包含 Preview 图片）';
+  button.setAttribute('aria-label', button.title);
+  button.setAttribute('aria-pressed', String(enabled));
+  button.style.background = enabled ? '#398bd4' : '#667085';
+  button.style.borderColor = enabled ? '#2878c8' : '#667085';
+}
+
+function installPreviewToggleButton(document, gmRequest = globalThis.GM_xmlhttpRequest) {
+  if (!threadCode(document)) return;
+  let button = document.getElementById(PREVIEW_TOGGLE_BUTTON_ID);
+  const created = !button;
+  if (!button) {
+    button = document.createElement('button');
+    button.id = PREVIEW_TOGGLE_BUTTON_ID;
+    button.type = 'button';
+    Object.assign(button.style, {
+      float: 'right', position: 'relative', zIndex: '20', margin: '0 0 6px 6px',
+      padding: '7px 10px', minWidth: '38px', border: '1px solid #2878c8',
+      borderRadius: '5px', color: '#fff', cursor: 'pointer',
+      fontSize: '14px', lineHeight: '20px',
+    });
+    button.addEventListener('mouseenter', () => {
+      button.style.filter = 'brightness(0.88)';
+    });
+    button.addEventListener('mouseleave', () => {
+      button.style.filter = '';
+    });
+    button.addEventListener('click', () => {
+      const enabled = !isX1080xPreviewEnabled();
+      if (!setX1080xPreviewEnabled(enabled)) {
+        document.defaultView?.alert?.('无法保存 Preview 开关状态，请检查脚本管理器。');
+        return;
+      }
+      updatePreviewToggleButton(button);
+      if (!enabled) {
+        document.getElementById('x1080x-ex-agaghhh-hdblog-preview')?.remove();
+      } else {
+        void installAgaghhhHdblogPreview(document, document.location, gmRequest);
+      }
+    });
+  }
+  updatePreviewToggleButton(button);
+  if (isModernResourceDetailPage(document)
+    && placeModernResourceActionButton(document, button)) return;
+  if (!created) return;
+
+  const searchButton = document.getElementById(SEARCH_BUTTON_ID);
+  const title = threadTitleElement(document);
+  const host = searchButton?.parentElement || title?.closest('.vwthd, .ts') || title?.parentElement;
+  if (!host) return;
+  if (searchButton) searchButton.insertAdjacentElement('afterend', button);
+  else host.prepend(button);
+}
+
 function installCopyCodeButton(document) {
   const code = threadCode(document);
   if (!code) return;
@@ -651,8 +714,10 @@ function installCopyCodeButton(document) {
     || title?.closest('.vwthd, .ts')
     || title?.parentElement;
   if (!host) return;
-  if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
+  const previewButton = document.getElementById(PREVIEW_TOGGLE_BUTTON_ID);
+  if (previewButton) previewButton.insertAdjacentElement('afterend', button);
   else if (searchButton) searchButton.insertAdjacentElement('afterend', button);
+  else if (downloadButton) downloadButton.insertAdjacentElement('afterend', button);
   else host.prepend(button);
 }
 
@@ -672,6 +737,7 @@ function refreshModernResourceActionButtons(document, gmRequest = globalThis.GM_
   if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document);
   else document.getElementById(SEARCH_BUTTON_ID)?.remove();
 
+  installPreviewToggleButton(document, gmRequest);
   if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton(document);
   else document.getElementById(COPY_BUTTON_ID)?.remove();
 }
@@ -843,7 +909,7 @@ export function openX1080xSettingsPanel(document = globalThis.document, { embedd
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="copy-code" type="checkbox" style="margin-top:3px">
-        <span><strong>复制番号按钮（📋）</strong><small style="display:block;margin-top:2px;color:#666">在搜索与下载按钮之间显示复制按钮，一键复制当前帖子番号。</small></span>
+        <span><strong>复制番号按钮（📋）</strong><small style="display:block;margin-top:2px;color:#666">一键复制当前番号；FC2 作品只复制数字。详情页预览开关位于大搜索与复制按钮之间。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="search-auto-redirect" type="checkbox" style="margin-top:3px">
@@ -851,7 +917,7 @@ export function openX1080xSettingsPanel(document = globalThis.document, { embedd
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:13px">
         <input data-setting="hdblog-preview" type="checkbox" style="margin-top:3px">
-        <span><strong>显示 JavClub 大预览图</strong><small style="display:block;margin-top:2px;color:#666">按帖子番号搜索 JavClub，沿用 JavClub 的“搜索结果屏蔽关键词”，并把匹配文章的 Preview 大图显示到主楼。</small></span>
+        <span><strong>显示 JavClub 大预览图</strong><small style="display:block;margin-top:2px;color:#666">与详情页 👁️／🙈 按钮共用状态。关闭后隐藏 Preview，且批量下载不包含这些 Preview 图片；原帖封面及附件不受影响。</small></span>
       </label>
       <div data-hdblog-preview-load-settings style="margin:0 0 13px 24px">
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
@@ -1175,6 +1241,7 @@ export function installAgaghhhEnhancement(
   if (isAgaghhhCrossSearchEnabled()) installHdblogSearchButton(document);
   else document.getElementById(SEARCH_BUTTON_ID)?.remove();
 
+  installPreviewToggleButton(document, gmRequest);
   if (isAgaghhhCopyCodeEnabled()) installCopyCodeButton(document);
   else document.getElementById(COPY_BUTTON_ID)?.remove();
 
