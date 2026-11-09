@@ -291,6 +291,11 @@ export function installSehuatangToolbar(document) {
   installations.get(document)?.();
   document.getElementById(TOOLBAR_ID)?.remove();
   const view = document.defaultView;
+  // Share only the local on/off flag with the optional Chrome filename
+  // extension. Never pass attachment contents, login data or user settings.
+  if (isSehuatangHost(view.location)) {
+    document.documentElement.dataset.x1080xExShtRename = getSehuatangSettings().renameText ? 'on' : 'off';
+  }
   const initiatedAttachments = initiatedAttachmentsByDocument.get(document) || new Map();
   initiatedAttachmentsByDocument.set(document, initiatedAttachments);
   const settings = getSehuatangSettings();
