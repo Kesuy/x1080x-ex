@@ -5,65 +5,17 @@
 //
 // Privacy/safety: no network calls, no directory traversal, only fresh TXT,
 // no silent overwrite, verify the copy before deleting the original file.
-const DB_NAME = 'x1080x-ex-sehuatang-local-rename';
-const STORE = 'permissions';
-const FOLDER_KEY = 'download-folder';
+// A FileSystemDirectoryHandle must never be saved into the site's IndexedDB:
+// 98堂 page scripts share that origin and could recover the handle.
+// Keep it in Tampermonkey's current page execution memory only.
 const cached = new WeakMap();
 const active = new WeakMap();
 const TIMEOUT_MS = 45000;
 const POLL_MS = 450;
 const MAX_TXT_BYTES = 2 * 1024 * 1024;
 
-function idbRequest(request) {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('IndexedDB 操作失败'));
-  });
-}
-
-async function openDb(view) {
-  if (!view.indexedDB) return null;
-  const req = view.indexedDB.open(DB_NAME, 1);
-  req.onupgradeneeded = () => {
-    if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
-  };
-  return idbRequest(req);
-}
-
-async function readStoredFolder(view) {
-  const db = await openDb(view);
-  if (!db) return null;
-  try { return await idbRequest(db.transaction(STORE, 'readonly').objectStore(STORE).get(FOLDER_KEY)); }
-  finally { db.close(); }
-}
-
-async function saveStoredFolder(view, folder) {
-  const db = await openDb(view);
-  if (!db) return false;
-  try {
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(folder, FOLDER_KEY);
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error || new Error('保存下载目录授权失败'));
-      tx.onabort = () => reject(tx.error || new Error('保存下载目录授权被中止'));
-    });
-    return true;
-  } finally { db.close(); }
-}
-
 export async function getSehuatangRenameFolder(view) {
-  if (cached.has(view)) return cached.get(view);
-  try {
-    const value = await readStoredFolder(view);
-    if (value?.kind === 'directory') {
-      cached.set(view, value);
-      return value;
-    }
-  } catch (error) {
-    console.warn('[x1080x-ex] cannot restore local rename directory:', error?.message || error);
-  }
-  return null;
+  return cached.get(view) || null;
 }
 
 export async function chooseSehuatangRenameFolder(view) {
@@ -78,8 +30,7 @@ export async function chooseSehuatangRenameFolder(view) {
   });
   if (!folder || folder.kind !== 'directory') throw new Error('没有选择有效的下载文件夹');
   cached.set(view, folder);
-  const persisted = await saveStoredFolder(view, folder).catch(() => false);
-  return { name: folder.name || '下载文件夹', persisted };
+  return { name: folder.name || '下载文件夹', persisted: false };
 }
 
 async function authorizedFolder(view) {
