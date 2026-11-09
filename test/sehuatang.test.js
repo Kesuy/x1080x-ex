@@ -41,8 +41,15 @@ function withSettings(values, action) {
   globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
   globalThis.GM_setValue = (key, value) => values.set(key, value);
   globalThis.GM_registerMenuCommand = (label, callback) => menus.set(label, callback);
-  try { return action(menus); }
-  finally { keys.forEach((key, i) => { if (old[i] === undefined) delete globalThis[key]; else globalThis[key] = old[i]; }); }
+  const restore = () => keys.forEach((key, i) => {
+    if (old[i] === undefined) delete globalThis[key]; else globalThis[key] = old[i];
+  });
+  try {
+    const result = action(menus);
+    if (result && typeof result.then === 'function') return result.finally(restore);
+    restore();
+    return result;
+  } catch (error) { restore(); throw error; }
 }
 
 function toolbar(dom) {
@@ -529,7 +536,7 @@ test('fixed toolbar remembers drag and clamps stale coordinates after resize', (
 });
 
 
-test('98堂两份 ED2K 实例：主要资源 TXT 按标题命名；目录附件保持原名，不会相互覆盖', () => {
+test('98堂两份 ED2K 实例：服务器原文件名不影响 Blob 实际保存名，目录仍使用原生下载', async () => {
   const samples = [
     ['3719259', '【ED2K丨原档合集丨整理】新川空 DMM原档合集【305GB/38V/38配额】',
       '新川空目录树.txt', '新川空.txt',
@@ -538,37 +545,99 @@ test('98堂两份 ED2K 实例：主要资源 TXT 按标题命名；目录附件�
       'www.98T.la@長浜みつり_目录.txt', 'www.98T.la@長浜みつり_eD2k.txt',
       '長浜みつり（长滨蜜璃）DMM原档合集【1.07TB／116V／116配额】.txt'],
   ];
-  withSettings(new Map(), () => {
-    for (const [tid, title, directory, resource, expected] of samples) {
-      const dom = new JSDOM('<!doctype html><body><span id="thread_subject"></span>'
-        + '<div id="postlist"><div id="post_100"><a id="postnum100">楼主</a>'
-        + '<div id="postmessage_100"><span id="attach_101"><a href="forum.php?mod=attachment&aid=directory"></a></span>'
-        + '<span id="attach_102"><a href="forum.php?mod=attachment&aid=resource"></a></span>'
-        + '</div></div></div></body>', {
-        url: 'https://www.sehuatang.org/forum.php?mod=viewthread&tid=' + tid,
-      });
-      const doc = dom.window.document;
-      doc.getElementById('thread_subject').textContent = title;
-      const links = [...doc.querySelectorAll('#postmessage_100 a')];
-      links[0].textContent = directory;
-      links[1].textContent = resource;
-      assert.deepEqual(collectSehuatangAttachments(doc).map(file => file.name), [directory, resource]);
-      assert.equal(sehuatangAttachmentDownloadName(doc, directory), directory);
-      assert.equal(sehuatangAttachmentDownloadName(doc, resource), expected);
-      assert.doesNotMatch(expected, /[\\/:*?"<>|]/);
-      const clicked = [];
-      links.forEach(link => link.addEventListener('click', event => {
-        event.preventDefault();
-        clicked.push(link.getAttribute('download'));
-      }));
-      downloadSehuatangAttachment(doc, links[0]);
-      downloadSehuatangAttachment(doc, links[1]);
-      assert.deepEqual(clicked, [directory, expected]);
-      assert.equal(links[0].hasAttribute('download'), false);
-      assert.equal(links[1].hasAttribute('download'), false);
-      dom.window.close();
+  const originals = ['fetch', 'GM_download', 'GM_info'].map(key => [key, globalThis[key]]);
+  const names = [];
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return {
+      ok: true, status: 200,
+      headers: new Headers({
+        'content-type': 'application/octet-stream',
+        'content-disposition': 'attachment; filename="original-from-server.txt"',
+      }),
+      blob: async () => new Blob(['ed2k://sample-file'], { type: 'text/plain' }),
+    };
+  };
+  globalThis.GM_info = { scriptHandler: 'Tampermonkey', version: '5.4.6226' };
+  globalThis.GM_download = ({ name, onload }) => {
+    names.push(name);
+    queueMicrotask(() => onload());
+    return { abort() {} };
+  };
+  try {
+    await withSettings(new Map(), async () => {
+      for (const [tid, title, directory, resource, expected] of samples) {
+        const dom = new JSDOM('<!doctype html><body><span id="thread_subject"></span>'
+          + '<div id="postlist"><div id="post_100"><a id="postnum100">楼主</a>'
+          + '<div id="postmessage_100"><span id="attach_101"><a href="forum.php?mod=attachment&aid=directory"></a></span>'
+          + '<span id="attach_102"><a href="forum.php?mod=attachment&aid=resource"></a></span>'
+          + '</div></div></div></body>', {
+          url: 'https://www.sehuatang.org/forum.php?mod=viewthread&tid=' + tid,
+        });
+        const doc = dom.window.document;
+        doc.getElementById('thread_subject').textContent = title;
+        const links = [...doc.querySelectorAll('#postmessage_100 a')];
+        links[0].textContent = directory;
+        links[1].textContent = resource;
+        assert.deepEqual(collectSehuatangAttachments(doc).map(file => file.name), [directory, resource]);
+        assert.equal(sehuatangAttachmentDownloadName(doc, directory), directory);
+        assert.equal(sehuatangAttachmentDownloadName(doc, resource), expected);
+        assert.doesNotMatch(expected, /[\\/:*?"<>|]/);
+        const clicked = [];
+        links.forEach(link => link.addEventListener('click', event => {
+          event.preventDefault();
+          clicked.push(link.getAttribute('download'));
+        }));
+        downloadSehuatangAttachment(doc, links[0]);
+        const result = await downloadSehuatangAttachment(doc, links[1]);
+        assert.deepEqual(clicked, [directory], 'resource TXT must not use the original server-named download');
+        assert.match(result, /已保存附件/);
+        assert.equal(links[0].hasAttribute('download'), false);
+        assert.equal(links[1].hasAttribute('download'), false);
+        dom.window.close();
+      }
+    });
+    assert.deepEqual(names, samples.map(s => s[4]), 'GM_download must receive desired filenames');
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      assert.match(request.url, /^https:\/\/www\.sehuatang\.org\/forum\.php\?mod=attachment&aid=resource$/);
+      assert.equal(request.options.credentials, 'include');
     }
-  });
+  } finally {
+    for (const [key, value] of originals) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
+});
+
+test('98堂 TXT 响应为 HTML 验证页或下载失败时，不保存伪 TXT、也不重复触发原生下载', async () => {
+  const dom = fixture();
+  const doc = dom.window.document;
+  doc.body.insertAdjacentHTML('afterbegin', '<span id="thread_subject">【ED2K丨整理】测试合集</span>');
+  const link = doc.querySelector('#attach_2 a');
+  let clicked = 0;
+  link.addEventListener('click', event => { event.preventDefault(); clicked++; });
+  const oldFetch = globalThis.fetch;
+  const oldGMDownload = globalThis.GM_download;
+  let saved = 0;
+  globalThis.GM_download = () => { saved++; throw new Error('must not save'); };
+  try {
+    for (const response of [
+      { ok: true, headers: new Headers({ 'content-type': 'text/html' }), blob: async () => new Blob(['<html>Login</html>']) },
+      { ok: true, headers: new Headers({ 'content-type': 'application/octet-stream' }), blob: async () => new Blob(['<!doctype html><html>login</html>']) },
+      { ok: false, status: 403, headers: new Headers() },
+    ]) {
+      globalThis.fetch = async () => response;
+      await assert.rejects(downloadSehuatangAttachment(doc, link), /验证|登录|权限|HTTP/);
+    }
+    assert.equal(clicked, 0);
+    assert.equal(saved, 0);
+  } finally {
+    if (oldFetch === undefined) delete globalThis.fetch; else globalThis.fetch = oldFetch;
+    if (oldGMDownload === undefined) delete globalThis.GM_download; else globalThis.GM_download = oldGMDownload;
+    dom.window.close();
+  }
 });
 
 test('98堂 TXT 命名独立开关默认开启、关闭恢复原名，原有附件按钮仍工作', () => {
