@@ -4,6 +4,7 @@ const PREFIX = 'x1080x-ex:sehuatang-';
 export const SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + 'attachments-enabled';
 export const SHT_DOWNLOAD_ENABLED_KEY = PREFIX + 'attachment-download-enabled';
 export const SHT_RENAME_TXT_ENABLED_KEY = PREFIX + 'rename-txt-by-title-enabled';
+export const SHT_GM_DOWNLOAD_EXPERIMENT_KEY = PREFIX + 'gm-download-name-experiment-enabled';
 export const SHT_REPLY_ENABLED_KEY = PREFIX + 'quick-reply-enabled';
 export const SHT_HIDDEN_NOTICE_ENABLED_KEY = PREFIX + 'reply-hidden-notice-enabled';
 export const SHT_REPLY_PHRASE_KEY = PREFIX + 'reply-phrase';
@@ -32,6 +33,7 @@ export function getSehuatangSettings() {
     attachments: read(SHT_ATTACHMENTS_ENABLED_KEY, true) !== false,
     download: read(SHT_DOWNLOAD_ENABLED_KEY, true) !== false,
     renameText: read(SHT_RENAME_TXT_ENABLED_KEY, true) !== false,
+    gmDownloadExperiment: read(SHT_GM_DOWNLOAD_EXPERIMENT_KEY, false) === true,
     reply: read(SHT_REPLY_ENABLED_KEY, true) !== false,
     hiddenNotice: read(SHT_HIDDEN_NOTICE_ENABLED_KEY, true) !== false,
     phrase: typeof phrase === 'string' ? phrase : DEFAULT_SHT_REPLY_PHRASE,
@@ -160,6 +162,42 @@ export function downloadSehuatangAttachment(document, link) {
   return '已触发网站后台附件下载，请查看浏览器下载列表（服务器可能使用原文件名）。';
 }
 
+// Explicitly opt-in, one-shot test of Tampermonkey's browser download API.
+// It is NOT the usual sehuatang downloader, and on failure never auto-retries
+// the signed URL (which may cost points or trigger an HTTP 403).
+export function experimentSehuatangNamedDownload(document, link) {
+  const settings = getSehuatangSettings();
+  if (!settings.download || !settings.renameText || !settings.gmDownloadExperiment) {
+    throw new Error('请在 98堂设置中先启用实验性 GM_download 命名');
+  }
+  const file = collectSehuatangAttachments(document).find((entry) => entry.link === link);
+  if (!file) throw new Error('附件链接已变化，请刷新页面');
+  const name = sehuatangAttachmentDownloadName(document, file.name);
+  if (name === file.name || !/\.txt$/i.test(name)) {
+    throw new Error('实验仅适用于可按帖子标题命名的主要 TXT 附件');
+  }
+  if (typeof GM_download !== 'function') throw new Error('当前油猴缺少 GM_download 权限');
+  if (typeof GM_info !== 'object' || GM_info?.downloadMode !== 'browser') {
+    throw new Error('请先在 Tampermonkey 设置 → 下载 → 下载模式中选择 Browser API 并授予下载权限');
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      GM_download({
+        url: link.href,
+        name,
+        saveAs: false,
+        conflictAction: 'uniquify',
+        // Leave headers alone to use the browser session in Browser API mode.
+        onload: () => resolve('油猴报告下载完成；请在 Chrome 下载列表确认文件内容和实际文件名：' + name),
+        onerror: (reason) => reject(new Error('油猴下载未成功（' + String(reason?.error || 'unknown') + '）；不自动重试，以免重复下载')),
+        ontimeout: () => reject(new Error('油猴下载超时；不自动重试，以免重复下载')),
+      });
+    } catch (error) {
+      reject(new Error('无法发起 GM_download：' + error.message));
+    }
+  });
+}
+
 // Use the site's own button, form validation and result UI. No direct POST or automatic retry.
 export function submitSehuatangQuickReply(document, phrase) {
   const editor = document.getElementById('fastpostmessage');
@@ -216,6 +254,10 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
         <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。沿用此前后台下载方式，同时把去掉 ED2K 标签的帖子标题作为 TXT 建议文件名。网站强制的文件名可能覆盖建议名称；此时可复制建议文件名手动修改。目录、清单保持原名。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="gm-download-experiment" style="margin-top:3px">
+        <span><strong>实验：油猴原链接按标题下载（默认关闭）</strong><small style="display:block;color:#64748b;margin-top:3px">开启后，主要资源 TXT 显示「试」按钮，使用 Tampermonkey Browser API 的 GM_download 尝试按标题保存。不自动重复请求；网站可能拒绝或仍使用原文件名。原有下载按钮不变。需在油猴设置中选择 Browser API 下载模式。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
         <span><strong>回复后可见内容提示</strong><small style="display:block;color:#64748b;margin-top:3px">提示楼主回复后可见的内容，不会自动绕过限制。</small></span>
       </label>
@@ -245,7 +287,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     </div>`;
   organizeSettingsPanel(form, [
     { key: 'attachments', title: '附件功能', description: '附件定位、下载和内容提示',
-      settings: ['attachments', 'download', 'rename-text', 'hidden-notice'] },
+      settings: ['attachments', 'download', 'rename-text', 'gm-download-experiment', 'hidden-notice'] },
     { key: 'reply', title: '快捷回复', description: '启用快捷回复并设置回复短语',
       settings: ['reply', 'phrase'] },
     { key: 'position', title: '浮动栏位置', description: '浮动按钮的位置管理',
@@ -256,6 +298,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
   field('attachments').checked = settings.attachments;
   field('download').checked = settings.download;
   field('rename-text').checked = settings.renameText;
+  field('gm-download-experiment').checked = settings.gmDownloadExperiment;
   field('reply').checked = settings.reply;
   field('hidden-notice').checked = settings.hiddenNotice;
   field('phrase').value = settings.phrase;
@@ -277,6 +320,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     save(SHT_ATTACHMENTS_ENABLED_KEY, field('attachments').checked);
     save(SHT_DOWNLOAD_ENABLED_KEY, field('download').checked);
     save(SHT_RENAME_TXT_ENABLED_KEY, field('rename-text').checked);
+    save(SHT_GM_DOWNLOAD_EXPERIMENT_KEY, field('gm-download-experiment').checked);
     save(SHT_REPLY_ENABLED_KEY, field('reply').checked);
     save(SHT_HIDDEN_NOTICE_ENABLED_KEY, field('hidden-notice').checked);
     save(SHT_REPLY_PHRASE_KEY, field('phrase').value.trim());
@@ -495,6 +539,30 @@ export function installSehuatangToolbar(document) {
               place();
             });
           if (initiatedAttachments.has(key)) showInitiated(icon);
+          if (settings.gmDownloadExperiment && settings.renameText && downloadName !== name
+              && /\.txt$/i.test(downloadName)) {
+            const probe = addIcon('gm-download-experiment', '试验 GM_download：' + downloadName,
+              '', () => {
+                if (probe.disabled) return;
+                let result;
+                try { result = experimentSehuatangNamedDownload(document, link); }
+                catch (error) {
+                  status.textContent = '命名试验未启动：' + error.message;
+                  place();
+                  return;
+                }
+                probe.disabled = true;
+                status.textContent = 'GM_download 正在尝试按指定文件名下载（只请求一次）…';
+                result.then(message => {
+                  status.textContent = message;
+                  probe.textContent = '✓';
+                  probe.title = message;
+                }, error => {
+                  status.textContent = error.message + '；原有下载按钮仍可独立使用。';
+                }).finally(() => { probe.disabled = false; place(); });
+              });
+            probe.textContent = '试';
+          }
         }
         row.append(filename, icons);
         choices.append(row);
