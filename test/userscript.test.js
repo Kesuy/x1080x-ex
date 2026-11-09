@@ -1256,6 +1256,7 @@ test('modern download counts native attachments and uses the image element refer
     assert.deepEqual([...group.children].map((item) => item.id), [
       'x1080x-ex-download',
       'x1080x-ex-agaghhh-hdblog-search',
+      'x1080x-ex-agaghhh-preview-toggle',
       'x1080x-ex-agaghhh-copy-code',
     ]);
     assert.equal(group.nextElementSibling, dom.window.document.querySelector('.thread-actions .dock-side'));
