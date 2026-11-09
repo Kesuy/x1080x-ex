@@ -723,6 +723,16 @@ function installCopyCodeButton(document) {
 
 const modernActionObservers = new WeakMap();
 
+// Ignore changes to our own toolbar and Preview so they cannot recursively
+// trigger another render. Next.js header/post replacement is still observed.
+function isInternalPreviewMutation(mutation) {
+  const selectors = '#x1080x-ex-resource-actions, #x1080x-ex-agaghhh-hdblog-preview';
+  if (mutation.target?.nodeType === 1 && mutation.target.closest?.(selectors)) return true;
+  const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+  return nodes.length > 0 && nodes.every((node) =>
+    node.nodeType === 1 && (node.matches?.(selectors) || node.closest?.(selectors)));
+}
+
 function refreshModernResourceActionButtons(document, gmRequest = globalThis.GM_xmlhttpRequest) {
   if (!isModernResourceDetailPage(document)) return;
   const downloadButton = document.getElementById(DOWNLOAD_BUTTON_ID);
@@ -746,7 +756,8 @@ function observeModernResourceActionButtons(document, gmRequest = globalThis.GM_
   if (!document?.body || modernActionObservers.has(document)) return;
   const Observer = document.defaultView?.MutationObserver;
   if (typeof Observer !== 'function') return;
-  const observer = new Observer(() => {
+  const observer = new Observer((mutations) => {
+    if (mutations.every(isInternalPreviewMutation)) return;
     refreshModernResourceActionButtons(document, gmRequest);
     // Next.js can hydrate the resource title and first post after document-idle.
     // The Preview installer deduplicates in-flight lookups and completed pages.
