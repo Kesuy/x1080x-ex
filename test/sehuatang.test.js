@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import {
   DEFAULT_SHT_REPLY_PHRASE, SHT_ATTACHMENTS_ENABLED_KEY, SHT_DOWNLOAD_ENABLED_KEY, SHT_REPLY_ENABLED_KEY,
   SHT_REPLY_PHRASE_KEY, SHT_POSITION_KEY, collectSehuatangAttachments,
-  SHT_HIDDEN_NOTICE_ENABLED_KEY, SHT_RENAME_TXT_ENABLED_KEY, SHT_LOCAL_RENAME_ENABLED_KEY,
+  SHT_HIDDEN_NOTICE_ENABLED_KEY, SHT_RENAME_TXT_ENABLED_KEY,
   sehuatangAttachmentDownloadName, hasSehuatangReplyHiddenContent,
   downloadSehuatangAttachment, getSehuatangSettings, installSehuatangEnhancement, installSehuatangToolbar, isSehuatangHost,
   openSehuatangSettings, sehuatangFirstPageUrl, submitSehuatangQuickReply,
@@ -60,7 +60,7 @@ test('98堂 domains are exact and settings preserve defaults on old installation
   for (const hostname of ['sehuatang.org', 'www.sehuatang.org']) assert.equal(isSehuatangHost({ hostname }), true);
   for (const hostname of ['fake-sehuatang.org', 'sehuatang.org.evil.example', 'hdblog.me']) assert.equal(isSehuatangHost({ hostname }), false);
   withSettings(new Map(), () => assert.deepEqual(getSehuatangSettings(), {
-    attachments: true, download: true, renameText: true, localRename: false, reply: true, hiddenNotice: true, phrase: DEFAULT_SHT_REPLY_PHRASE,
+    attachments: true, download: true, renameText: true, reply: true, hiddenNotice: true, phrase: DEFAULT_SHT_REPLY_PHRASE,
   }));
 });
 
@@ -536,7 +536,7 @@ test('fixed toolbar remembers drag and clamps stale coordinates after resize', (
 });
 
 
-test('98堂 真实 ED2K 页面：任何 TXT 均仅点击原始附件，不请求第二次下载', () => {
+test('98堂 原生下载回退：不额外请求附件，文件名仅为建议（目录 TXT 不更名）', () => {
   const samples = [
     ['3719259', '【ED2K丨原档合集丨整理】新川空 DMM原档合集【305GB/38V/38配额】',
       '新川空目录树.txt', '新川空.txt', '新川空 DMM原档合集【305GB／38V／38配额】.txt'],
@@ -596,35 +596,50 @@ test('98堂 真实 ED2K 页面：任何 TXT 均仅点击原始附件，不请求
   }
 });
 
-test('98堂 默认开启重命名时仍可原生下载，建议文件名通过按钮复制', () => {
-  const oldClipboard = globalThis.GM_setClipboard;
-  const copy = [];
-  globalThis.GM_setClipboard = (value) => copy.push(value);
-  try {
-    withSettings(new Map(), () => {
-      const dom = fixture();
-      const doc = dom.window.document;
-      const heading = doc.createElement('span');
-      heading.id = 'thread_subject';
-      heading.textContent = '【ED2K丨整理】测试合集【30GB/5V/5配额】';
-      doc.body.prepend(heading);
-      const link = doc.querySelector('#attach_2 a');
-      let nativeClicks = 0;
-      link.addEventListener('click', event => { event.preventDefault(); nativeClicks++; });
+test('98堂 默认以 Blob 按标题下载主要 TXT，且不需要下载文件夹', async () => {
+  await withSettings(new Map(), async () => {
+    const dom = fixture();
+    const doc = dom.window.document;
+    doc.body.insertAdjacentHTML('afterbegin', '<span id="thread_subject">【ED2K丨整理】测试合集【30GB/5V/5配额】</span>');
+    const link = doc.querySelector('#attach_2 a');
+    const saved = [];
+    let nativeClicks = 0, requests = 0;
+    const originalClick = dom.window.HTMLAnchorElement.prototype.click;
+    dom.window.HTMLAnchorElement.prototype.click = function () {
+      if (this === link) nativeClicks++;
+      else saved.push({ name: this.download, url: this.href });
+    };
+    dom.window.URL.createObjectURL = () => 'blob:sehuatang-renamed';
+    dom.window.URL.revokeObjectURL = () => {};
+    dom.window.fetch = async (url, opts) => {
+      requests++;
+      assert.equal(url, link.href);
+      assert.equal(opts.credentials, 'include');
+      return {
+        ok: true, status: 200,
+        headers: new Map([['content-type', 'text/plain; charset=utf-8']]),
+        blob: async () => new Blob(['ed2k://example'], { type: 'text/plain' }),
+      };
+    };
+    try {
       const root = toolbar(dom);
-      root.querySelectorAll('[data-action="download-attachment"]')[1].click();
-      assert.equal(nativeClicks, 1);
-      assert.match(root.querySelector('.status').textContent, /后台附件下载/);
-      const copyButton = root.querySelector('.status button');
-      assert.equal(copyButton?.textContent, '复制建议文件名');
-      copyButton.click();
-      assert.deepEqual(copy, ['测试合集【30GB／5V／5配额】.txt']);
-      assert.equal(root.querySelectorAll('[data-action="download-attachment"]')[1].dataset.downloadState, 'started');
+      const icon = root.querySelectorAll('[data-action="download-attachment"]')[1];
+      icon.click();
+      await new Promise(resolve => dom.window.setTimeout(resolve, 15));
+      assert.equal(requests, 1);
+      assert.equal(nativeClicks, 0);
+      assert.deepEqual(saved, [{ name: '测试合集【30GB／5V／5配额】.txt', url: 'blob:sehuatang-renamed' }]);
+      assert.equal(icon.dataset.downloadState, 'started');
+      assert.match(root.querySelector('.status').textContent, /已按帖子标题提交下载/);
+      const panel = openSehuatangSettings(doc);
+      assert.equal(panel.querySelector('[data-setting="local-rename"]'), null);
+      assert.equal(panel.querySelector('[data-action="select-download-folder"]'), null);
+      assert.equal('localRename' in getSehuatangSettings(), false);
+    } finally {
+      dom.window.HTMLAnchorElement.prototype.click = originalClick;
       dom.window.close();
-    });
-  } finally {
-    if (oldClipboard === undefined) delete globalThis.GM_setClipboard; else globalThis.GM_setClipboard = oldClipboard;
-  }
+    }
+  });
 });
 
 test('98堂 TXT 命名独立开关默认开启、关闭恢复原名，原有附件按钮仍工作', () => {
@@ -682,80 +697,49 @@ test('98堂 仅重命名有效标题下的主要 TXT，不影响 ZIP、图片和
   dom.window.close();
 }));
 
-test('98堂 本地改名默认关闭：页面无需文件系统权限，正常后台下载完全不变', () => withSettings(new Map(), () => {
-  const dom = fixture();
-  const doc = dom.window.document;
-  doc.body.insertAdjacentHTML('afterbegin', '<span id="thread_subject">【ED2K丨整理】单次附件测试</span>');
-  const resource = doc.querySelector('#attach_2 a');
-  let clicks = 0;
-  resource.addEventListener('click', event => {
-    event.preventDefault();
-    clicks++;
-    assert.equal(resource.getAttribute('download'), '单次附件测试.txt');
-  });
-  const root = toolbar(dom);
-  root.querySelectorAll('[data-action="download-attachment"]')[1].click();
-  assert.equal(clicks, 1);
-  assert.equal(resource.hasAttribute('download'), false);
-  assert.equal(getSehuatangSettings().localRename, false);
-  dom.window.close();
-}));
-
-test('98堂 授权文件夹后可独立启用本地自动命名，不影响其它开关', async () => {
-  const values = new Map();
-  await withSettings(values, async () => {
+test('98堂：旧本地重命名键不再生效，关闭自动命名后保留原生下载', () => {
+  const values = new Map([['x1080x-ex:sehuatang-local-rename-after-download-enabled', true],
+    [SHT_RENAME_TXT_ENABLED_KEY, false]]);
+  withSettings(values, () => {
     const dom = fixture();
     const doc = dom.window.document;
+    doc.body.insertAdjacentHTML('afterbegin', '<span id="thread_subject">【ED2K丨整理】示例合集</span>');
+    const original = doc.querySelector('#attach_2 a');
+    let clicked = 0;
+    original.addEventListener('click', event => { event.preventDefault(); clicked++; });
+    const root = toolbar(dom);
+    root.querySelectorAll('[data-action="download-attachment"]')[1].click();
+    assert.equal(clicked, 1);
+    assert.equal(getSehuatangSettings().renameText, false);
+    assert.equal('localRename' in getSehuatangSettings(), false);
     const panel = openSehuatangSettings(doc);
-    const rename = panel.querySelector('[data-setting="local-rename"]');
-    assert.equal(rename.checked, false);
-    rename.checked = true;
-    panel.querySelector('form').dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
-    assert.equal(panel.isConnected, true, 'without directory authorization Save must not enable renaming');
-    assert.equal(values.has(SHT_LOCAL_RENAME_ENABLED_KEY), false);
-    const folder = { kind: 'directory', name: 'Downloads', queryPermission: async () => 'granted' };
-    dom.window.showDirectoryPicker = async options => {
-      assert.equal(options.mode, 'readwrite');
-      assert.equal(options.startIn, 'downloads');
-      return folder;
-    };
-    panel.querySelector('[data-action="select-download-folder"]').click();
-    await new Promise(resolve => dom.window.setTimeout(resolve, 20));
-    assert.equal(rename.checked, true);
-    assert.match(panel.querySelector('[data-folder-status]').textContent, /Downloads/);
-    panel.querySelector('form').dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
-    assert.equal(values.get(SHT_LOCAL_RENAME_ENABLED_KEY), true);
-    assert.equal(values.get(SHT_RENAME_TXT_ENABLED_KEY), true);
-    assert.equal(values.get(SHT_DOWNLOAD_ENABLED_KEY), true);
+    assert.equal(panel.querySelector('[data-setting="local-rename"]'), null);
+    assert.equal(panel.querySelector('[data-action="select-download-folder"]'), null);
     dom.window.close();
   });
 });
 
-test('98堂 未授权目录时自动重命名失败也不触发额外下载请求', async () => {
-  const values = new Map([[SHT_LOCAL_RENAME_ENABLED_KEY, true]]);
-  const oldFetch = globalThis.fetch, oldGM = globalThis.GM_download, oldXHR = globalThis.GM_xmlhttpRequest;
-  globalThis.fetch = () => { throw new Error('fetch forbidden'); };
-  globalThis.GM_xmlhttpRequest = () => { throw new Error('GM xhr forbidden'); };
-  globalThis.GM_download = () => { throw new Error('GM_download forbidden'); };
-  try {
-    await withSettings(values, async () => {
-      const dom = fixture();
-      const doc = dom.window.document;
-      doc.body.insertAdjacentHTML('afterbegin', '<span id="thread_subject">【ED2K丨整理】可恢复下载</span>');
-      let clicked = 0;
-      const link = doc.querySelector('#attach_2 a');
-      link.addEventListener('click', event => { event.preventDefault(); clicked++; });
-      const root = toolbar(dom);
-      root.querySelectorAll('[data-action="download-attachment"]')[1].click();
-      assert.equal(clicked, 1);
-      assert.equal(link.hasAttribute('download'), false);
-      await new Promise(resolve => dom.window.setTimeout(resolve, 15));
-      assert.match(root.querySelector('.status').textContent, /尚未授权下载文件夹/);
-      dom.window.close();
-    });
-  } finally {
-    if (oldFetch === undefined) delete globalThis.fetch; else globalThis.fetch = oldFetch;
-    if (oldGM === undefined) delete globalThis.GM_download; else globalThis.GM_download = oldGM;
-    if (oldXHR === undefined) delete globalThis.GM_xmlhttpRequest; else globalThis.GM_xmlhttpRequest = oldXHR;
-  }
+test('98堂 Blob 读取 403 时提供用户点击的原生回退，而不是生成错误 TXT', async () => {
+  await withSettings(new Map(), async () => {
+    const dom = fixture();
+    const doc = dom.window.document;
+    doc.body.insertAdjacentHTML('afterbegin', '<span id="thread_subject">【ED2K丨整理】失败重试</span>');
+    doc.defaultView.fetch = async () => ({ ok: false, status: 403 });
+    const link = doc.querySelector('#attach_2 a');
+    let clicks = 0;
+    link.addEventListener('click', event => { event.preventDefault(); clicks++; });
+    const root = toolbar(dom);
+    const icon = root.querySelectorAll('[data-action="download-attachment"]')[1];
+    icon.click();
+    await new Promise(resolve => dom.window.setTimeout(resolve, 15));
+    assert.equal(clicks, 0);
+    assert.equal(icon.dataset.downloadState, undefined);
+    assert.match(root.querySelector('.status').textContent, /HTTP 403/);
+    const fallback = root.querySelector('[data-action="native-download-fallback"]');
+    assert.ok(fallback);
+    fallback.click();
+    assert.equal(clicks, 1);
+    assert.equal(icon.dataset.downloadState, 'started');
+    dom.window.close();
+  });
 });
