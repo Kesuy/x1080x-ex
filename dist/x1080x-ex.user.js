@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.53
+// @version      1.10.54
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -10041,29 +10041,80 @@ ${title}`;
   }
 
   // src/sehuatang-download.js
+  function requestSehuatangBlob(document2, url) {
+    const view = document2.defaultView;
+    if (typeof GM_xmlhttpRequest === "function") {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (fn, value) => {
+          if (settled) return;
+          settled = true;
+          fn(value);
+        };
+        try {
+          GM_xmlhttpRequest({
+            method: "GET",
+            url,
+            responseType: "blob",
+            timeout: 2e4,
+            anonymous: false,
+            // Discuz may check the referring thread. Never transmit cookies or
+            // authentication tokens manually.
+            headers: { Referer: document2.location.href },
+            onload: (result) => {
+              if (result.status < 200 || result.status >= 300) {
+                finish(reject, new Error("\u7F51\u7AD9\u8FD4\u56DE HTTP " + result.status));
+                return;
+              }
+              const match = /^content-type:\s*([^\r\n]+)/im.exec(result.responseHeaders || "");
+              finish(resolve, { blob: result.response, type: match?.[1] || "" });
+            },
+            onerror: (error) => finish(reject, new Error("\u811A\u672C\u7BA1\u7406\u5668\u8BF7\u6C42\u9644\u4EF6\u5931\u8D25\uFF1A" + (error?.error || error?.message || "\u7F51\u7EDC\u6216\u7F51\u7AD9\u9650\u5236"))),
+            ontimeout: () => finish(reject, new Error("\u8BFB\u53D6\u9644\u4EF6\u8D85\u65F6")),
+            onabort: () => finish(reject, new Error("\u9644\u4EF6\u8BF7\u6C42\u5DF2\u53D6\u6D88"))
+          });
+        } catch (error) {
+          finish(reject, error);
+        }
+      });
+    }
+    if (typeof view?.fetch !== "function") {
+      throw new Error("\u5F53\u524D\u811A\u672C\u7BA1\u7406\u5668\u4E0D\u652F\u6301\u9644\u4EF6\u8BFB\u53D6");
+    }
+    return view.fetch(url, {
+      method: "GET",
+      credentials: "include",
+      redirect: "follow",
+      cache: "no-store"
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("\u7F51\u7AD9\u8FD4\u56DE HTTP " + response.status);
+      return { blob: await response.blob(), type: response.headers?.get?.("content-type") || "" };
+    });
+  }
   async function downloadSehuatangNamedTxtBlob(document2, link, filename) {
     const view = document2?.defaultView;
     const url = new URL(link?.getAttribute("href") || "", document2?.baseURI);
     if (url.origin !== document2?.location?.origin || !/\.txt$/i.test(filename)) {
       throw new Error("\u9644\u4EF6\u6765\u6E90\u6216\u76EE\u6807\u6587\u4EF6\u540D\u65E0\u6548");
     }
-    if (typeof view?.fetch !== "function") {
-      throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u540C\u6E90\u9644\u4EF6\u8BFB\u53D6");
-    }
-    const response = await view.fetch(url.href, {
-      method: "GET",
-      credentials: "include",
-      redirect: "follow",
-      cache: "no-store"
-    });
-    if (!response?.ok) throw new Error("\u7F51\u7AD9\u8FD4\u56DE HTTP " + (response?.status ?? "\u672A\u77E5\u72B6\u6001"));
-    const type = response.headers?.get?.("content-type") || "";
+    const { blob, type } = await requestSehuatangBlob(document2, url.href);
     if (/(?:text\/html|application\/(?:json|xml|xhtml\+xml))/i.test(type)) {
       throw new Error("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u7F51\u9875\u6216\u9A8C\u8BC1\u63D0\u793A\uFF0C\u800C\u975E\u9644\u4EF6");
     }
-    const blob = await response.blob();
-    if (!blob || blob.size === 0) throw new Error("\u9644\u4EF6\u4E3A\u7A7A");
-    const prefix = await blob.slice(0, 512).text();
+    if (!blob || typeof blob.size !== "number" || typeof blob.slice !== "function" || blob.size === 0) {
+      throw new Error("\u672A\u83B7\u53D6\u5230\u6709\u6548\u7684\u9644\u4EF6\u5185\u5BB9");
+    }
+    const slice = blob.slice(0, 1024);
+    let prefix;
+    if (typeof slice.text === "function") prefix = await slice.text();
+    else if (typeof view?.FileReader === "function") {
+      prefix = await new Promise((resolve, reject) => {
+        const reader = new view.FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("\u65E0\u6CD5\u8BFB\u53D6\u9644\u4EF6\u5185\u5BB9"));
+        reader.readAsText(slice);
+      });
+    } else throw new Error("\u65E0\u6CD5\u6821\u9A8C\u9644\u4EF6\u5185\u5BB9");
     if (/^\s*(?:<!doctype\s+html|<html\b|<head\b|<body\b|<script\b|<form\b)/i.test(prefix)) {
       throw new Error("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u767B\u5F55\u6216\u6743\u9650\u9875\u9762\uFF0C\u800C\u975E TXT \u9644\u4EF6");
     }
@@ -10269,11 +10320,11 @@ ${title}`;
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="download" style="margin-top:3px">
-        <span><strong>\u9644\u4EF6\u4E0B\u8F7D\u56FE\u6807</strong><small style="display:block;color:#64748b;margin-top:3px">\u4E3B\u8981 TXT \u5C1D\u8BD5 Blob \u4E0B\u8F7D\u5E76\u81EA\u52A8\u547D\u540D\uFF1B\u5176\u4ED6\u9644\u4EF6\u4ECD\u6CBF\u7528\u7F51\u7AD9\u539F\u751F\u4E0B\u8F7D\uFF0C\u6743\u9650\u89C4\u5219\u4E0D\u53D8\u3002</small></span>
+        <span><strong>\u9644\u4EF6\u4E0B\u8F7D\u56FE\u6807</strong><small style="display:block;color:#64748b;margin-top:3px">\u4E3B\u8981 TXT \u901A\u8FC7\u811A\u672C\u7BA1\u7406\u5668\u8BFB\u53D6 Blob \u5E76\u6309\u6807\u9898\u4E0B\u8F7D\uFF1B\u5176\u4ED6\u9644\u4EF6\u4ECD\u6CBF\u7528\u7F51\u7AD9\u539F\u751F\u4E0B\u8F7D\uFF0C\u6743\u9650\u89C4\u5219\u4E0D\u53D8\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
-        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u4E3B\u8981 TXT \u76F4\u63A5\u83B7\u53D6 Blob \u5E76\u6309\u5E16\u5B50\u6807\u9898\u4E0B\u8F7D\uFF0C\u65E0\u9700\u9009\u62E9 Chrome \u4E0B\u8F7D\u6587\u4EF6\u5939\uFF1B\u76EE\u5F55\u3001\u6E05\u5355\u53CA ZIP \u4FDD\u6301\u539F\u540D\u548C\u539F\u751F\u4E0B\u8F7D\u65B9\u5F0F\u3002\u8BFB\u53D6\u5931\u8D25\u65F6\u63D0\u4F9B\u539F\u751F\u4E0B\u8F7D\u6309\u94AE\u3002</small></span>
+        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u4E3B\u8981 TXT \u4F18\u5148\u901A\u8FC7\u811A\u672C\u7BA1\u7406\u5668\u8BFB\u53D6 Blob \u5E76\u6309\u5E16\u5B50\u6807\u9898\u4E0B\u8F7D\uFF0C\u65E0\u9700\u9009\u62E9 Chrome \u4E0B\u8F7D\u6587\u4EF6\u5939\uFF1B\u76EE\u5F55\u3001\u6E05\u5355\u53CA ZIP \u4FDD\u6301\u539F\u540D\u548C\u539F\u751F\u4E0B\u8F7D\u65B9\u5F0F\u3002\u8BFB\u53D6\u5931\u8D25\u65F6\u63D0\u4F9B\u539F\u751F\u4E0B\u8F7D\u6309\u94AE\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
@@ -10570,7 +10621,7 @@ ${name}`;
                 void downloadSehuatangNamedTxtBlob(document2, link, target).then(() => {
                   markStarted("\u5DF2\u6309\u5E16\u5B50\u6807\u9898\u63D0\u4EA4\u4E0B\u8F7D\uFF1A" + target + "\uFF08\u8BF7\u5728\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u786E\u8BA4\u4FDD\u5B58\u7ED3\u679C\uFF09");
                 }, (error) => {
-                  status.textContent = "TXT \u81EA\u52A8\u547D\u540D\u5931\u8D25\uFF1A" + (error?.message || String(error)) + "\u3002\u53EF\u6539\u7528\u539F\u751F\u4E0B\u8F7D\uFF1A";
+                  status.textContent = "TXT \u81EA\u52A8\u547D\u540D\u5931\u8D25\uFF08\u7F51\u7AD9\u53EF\u80FD\u9650\u5236\u811A\u672C\u8BF7\u6C42\uFF09\uFF1A" + (error?.message || String(error)) + "\u3002\u53EF\u6539\u7528\u539F\u751F\u4E0B\u8F7D\uFF1A";
                   const fallback = createSehuatangButton(document2, "\u4F7F\u7528\u539F\u751F\u4E0B\u8F7D", "native-download-fallback");
                   fallback.style.cssText = "margin-top:6px;padding:4px 8px;width:auto;display:block;font-size:12px";
                   fallback.addEventListener("click", nativeDownload);
