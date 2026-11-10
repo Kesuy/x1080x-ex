@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.52
+// @version      1.10.53
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -699,11 +699,11 @@
     workspace.append(nav, content);
     nav.addEventListener("keydown", (event) => {
       const tabs = [...nav.querySelectorAll("[data-settings-tab]")];
-      const active2 = tabs.indexOf(nav.getRootNode()?.activeElement || document2.activeElement);
+      const active = tabs.indexOf(nav.getRootNode()?.activeElement || document2.activeElement);
       const keys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"];
-      if (active2 < 0 || !keys.includes(event.key)) return;
+      if (active < 0 || !keys.includes(event.key)) return;
       event.preventDefault();
-      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (active2 + (["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1) + tabs.length) % tabs.length;
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (active + (["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1) + tabs.length) % tabs.length;
       tabs[next].click();
       tabs[next].focus();
     });
@@ -5141,9 +5141,9 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     );
   }
   function pendingAgaghhhHdblogPreview(document2, pageUrl = document2?.location?.href) {
-    const cached2 = previewLookups.get(document2);
-    if (!cached2?.promise || !pageUrl || !cached2.key.startsWith(`${pageUrl}::`)) return null;
-    return cached2.promise;
+    const cached = previewLookups.get(document2);
+    if (!cached?.promise || !pageUrl || !cached.key.startsWith(`${pageUrl}::`)) return null;
+    return cached.promise;
   }
   async function installAgaghhhHdblogPreview(document2 = globalThis.document, locationObject = globalThis.location, gmRequest2 = globalThis.GM_xmlhttpRequest) {
     if (!document2 || !isThreadPage(locationObject) || !isX1080xPreviewEnabled()) return null;
@@ -5154,10 +5154,10 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
     const section = document2.getElementById(CONTAINER_ID);
     if (section && section.dataset.x1080xPreviewKey === key) return section;
     if (section) section.remove();
-    const cached2 = previewLookups.get(document2);
-    if (cached2?.key === key) {
-      if (cached2.promise) return cached2.promise;
-      const restored = renderAgaghhhHdblogPreview(document2, cached2.result);
+    const cached = previewLookups.get(document2);
+    if (cached?.key === key) {
+      if (cached.promise) return cached.promise;
+      const restored = renderAgaghhhHdblogPreview(document2, cached.result);
       if (restored) restored.dataset.x1080xPreviewKey = key;
       return restored;
     }
@@ -5286,8 +5286,8 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
       if (!nextButton || nextButton.disabled) return "";
       const url = new URL(baseUrl);
       if (!/^\/boards\/[a-z0-9]+\/?$/i.test(url.pathname)) return "";
-      const active2 = Number.parseInt(document2.querySelector(".pgt .pg strong, .pg strong")?.textContent || "", 10);
-      const current = Number.isInteger(active2) && active2 > 0 ? active2 : Number.parseInt(url.searchParams.get("page") || "1", 10) || 1;
+      const active = Number.parseInt(document2.querySelector(".pgt .pg strong, .pg strong")?.textContent || "", 10);
+      const current = Number.isInteger(active) && active > 0 ? active : Number.parseInt(url.searchParams.get("page") || "1", 10) || 1;
       url.searchParams.set("page", String(current + 1));
       return url.href;
     }
@@ -10040,162 +10040,34 @@ ${title}`;
     observeModernResourceActionButtons(document2, gmRequest2);
   }
 
-  // src/sehuatang-local-rename.js
-  var cached = /* @__PURE__ */ new WeakMap();
-  var active = /* @__PURE__ */ new WeakMap();
-  var TIMEOUT_MS = 45e3;
-  var POLL_MS = 450;
-  var MAX_TXT_BYTES = 2 * 1024 * 1024;
-  async function getSehuatangRenameFolder(view) {
-    return cached.get(view) || null;
-  }
-  async function chooseSehuatangRenameFolder(view) {
-    if (typeof view?.showDirectoryPicker !== "function") {
-      throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u672C\u5730\u6587\u4EF6\u5939\u6388\u6743\uFF1B\u8BF7\u4F7F\u7528\u6700\u65B0\u7248 Chrome/Edge");
+  // src/sehuatang-download.js
+  async function downloadSehuatangNamedTxtBlob(document2, link, filename) {
+    const view = document2?.defaultView;
+    const url = new URL(link?.getAttribute("href") || "", document2?.baseURI);
+    if (url.origin !== document2?.location?.origin || !/\.txt$/i.test(filename)) {
+      throw new Error("\u9644\u4EF6\u6765\u6E90\u6216\u76EE\u6807\u6587\u4EF6\u540D\u65E0\u6548");
     }
-    const folder = await view.showDirectoryPicker({
-      id: "x1080x-ex-98t-downloads",
-      startIn: "downloads",
-      mode: "readwrite"
+    if (typeof view?.fetch !== "function") {
+      throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u540C\u6E90\u9644\u4EF6\u8BFB\u53D6");
+    }
+    const response = await view.fetch(url.href, {
+      method: "GET",
+      credentials: "include",
+      redirect: "follow",
+      cache: "no-store"
     });
-    if (!folder || folder.kind !== "directory") throw new Error("\u6CA1\u6709\u9009\u62E9\u6709\u6548\u7684\u4E0B\u8F7D\u6587\u4EF6\u5939");
-    cached.set(view, folder);
-    return { name: folder.name || "\u4E0B\u8F7D\u6587\u4EF6\u5939", persisted: false };
-  }
-  async function authorizedFolder(view) {
-    const folder = await getSehuatangRenameFolder(view);
-    if (!folder) throw new Error("\u5C1A\u672A\u6388\u6743\u4E0B\u8F7D\u6587\u4EF6\u5939\u3002\u8BF7\u5230 98\u5802\u8BBE\u7F6E\u4E2D\u9009\u62E9 Chrome \u5B9E\u9645\u4FDD\u5B58\u6587\u4EF6\u7684\u76EE\u5F55");
-    if (typeof folder.queryPermission === "function" && await folder.queryPermission({ mode: "readwrite" }) !== "granted") {
-      throw new Error("\u4E0B\u8F7D\u76EE\u5F55\u5199\u5165\u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u5728 98\u5802\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u9009\u62E9\u6587\u4EF6\u5939");
+    if (!response?.ok) throw new Error("\u7F51\u7AD9\u8FD4\u56DE HTTP " + (response?.status ?? "\u672A\u77E5\u72B6\u6001"));
+    const type = response.headers?.get?.("content-type") || "";
+    if (/(?:text\/html|application\/(?:json|xml|xhtml\+xml))/i.test(type)) {
+      throw new Error("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u7F51\u9875\u6216\u9A8C\u8BC1\u63D0\u793A\uFF0C\u800C\u975E\u9644\u4EF6");
     }
-    return folder;
-  }
-  function isVariantOf(filename, base) {
-    if (!filename || !base || !/\.txt$/i.test(filename) || !/\.txt$/i.test(base)) return false;
-    const norm = (value) => value.normalize("NFC").toLocaleLowerCase();
-    const name = norm(filename);
-    const exact = norm(base);
-    if (name === exact) return true;
-    const stem = exact.slice(0, -4);
-    if (!name.startsWith(stem + " (") || !name.endsWith(").txt")) return false;
-    const number = name.slice(stem.length + 2, -5);
-    return /^[1-9]\d*$/.test(number);
-  }
-  async function nameExists(folder, name) {
-    try {
-      await folder.getFileHandle(name, { create: false });
-      return true;
-    } catch (error) {
-      if (error?.name === "NotFoundError") return false;
-      throw error;
+    const blob = await response.blob();
+    if (!blob || blob.size === 0) throw new Error("\u9644\u4EF6\u4E3A\u7A7A");
+    const prefix = await blob.slice(0, 512).text();
+    if (/^\s*(?:<!doctype\s+html|<html\b|<head\b|<body\b|<script\b|<form\b)/i.test(prefix)) {
+      throw new Error("\u7F51\u7AD9\u8FD4\u56DE\u4E86\u767B\u5F55\u6216\u6743\u9650\u9875\u9762\uFF0C\u800C\u975E TXT \u9644\u4EF6");
     }
-  }
-  async function unusedFilename(folder, name) {
-    if (!await nameExists(folder, name)) return name;
-    const stem = name.slice(0, -4);
-    for (let n = 1; n < 1e3; n += 1) {
-      const candidate = stem + " (" + n + ").txt";
-      if (!await nameExists(folder, candidate)) return candidate;
-    }
-    throw new Error("\u540C\u540D\u6587\u4EF6\u8FC7\u591A\uFF0C\u5DF2\u4FDD\u7559\u4E0B\u8F7D\u539F\u6587\u4EF6");
-  }
-  async function recentCandidates(folder, originalName, desiredName, startedAt) {
-    const entries = [];
-    for await (const [name, handle] of folder.entries()) {
-      if (handle.kind !== "file" || !/\.txt$/i.test(name)) continue;
-      if (!isVariantOf(name, originalName) && !isVariantOf(name, desiredName)) continue;
-      const file = await handle.getFile();
-      if (file.size <= 0 || file.size > MAX_TXT_BYTES) continue;
-      if (file.lastModified < startedAt - 1500 || file.lastModified > Date.now() + 1e3) continue;
-      entries.push({ name, handle, file });
-    }
-    return entries;
-  }
-  async function copyAndReplace(folder, source) {
-    const target = await unusedFilename(folder, source.desiredName);
-    const targetHandle = await folder.getFileHandle(target, { create: true });
-    let written = false;
-    try {
-      const writer = await targetHandle.createWritable({ keepExistingData: false });
-      try {
-        await writer.write(source.file);
-        await writer.close();
-        written = true;
-      } catch (error) {
-        try {
-          await writer.abort?.();
-        } catch {
-        }
-        throw error;
-      }
-      const copied = await targetHandle.getFile();
-      if (copied.size !== source.file.size) {
-        throw new Error("\u91CD\u547D\u540D\u540E\u7684\u6587\u4EF6\u5927\u5C0F\u6821\u9A8C\u5931\u8D25\uFF0C\u5DF2\u4FDD\u7559\u539F\u6587\u4EF6");
-      }
-      const latest = await source.handle.getFile();
-      if (latest.size !== source.file.size || latest.lastModified !== source.file.lastModified) {
-        throw new Error("\u539F\u59CB TXT \u5728\u5904\u7406\u671F\u95F4\u53D1\u751F\u4E86\u53D8\u5316\uFF1B\u65B0\u6587\u4EF6\u5DF2\u4FDD\u7559\uFF0C\u8BF7\u68C0\u67E5\u540E\u624B\u52A8\u5220\u9664\u91CD\u590D\u6587\u4EF6");
-      }
-      await folder.removeEntry(source.name);
-      return { renamed: true, filename: target, from: source.name };
-    } catch (error) {
-      if (!written) {
-        try {
-          await folder.removeEntry(target);
-        } catch {
-        }
-      }
-      throw error;
-    }
-  }
-  async function renameSehuatangDownloadedTxt(view, {
-    originalName,
-    desiredName,
-    startedAt = Date.now(),
-    timeoutMs = TIMEOUT_MS
-  } = {}) {
-    if (!/\.txt$/i.test(originalName || "") || !/\.txt$/i.test(desiredName || "") || originalName === desiredName) {
-      return { renamed: false, skipped: true, reason: "\u65E0\u9700\u66F4\u540D" };
-    }
-    if (originalName.includes("/") || originalName.includes("\\") || desiredName.includes("/") || desiredName.includes("\\")) {
-      throw new Error("\u9644\u4EF6\u6587\u4EF6\u540D\u5305\u542B\u8DEF\u5F84\u5206\u9694\u7B26\uFF0C\u5DF2\u53D6\u6D88\u672C\u5730\u64CD\u4F5C");
-    }
-    const folder = await authorizedFolder(view);
-    if (active.has(view)) {
-      throw new Error("\u5DF2\u6709\u4E00\u4E2A TXT \u6B63\u5728\u786E\u8BA4\u4E0B\u8F7D\u7ED3\u679C\uFF0C\u8BF7\u5B8C\u6210\u540E\u518D\u5904\u7406\u4E0B\u4E00\u4E2A\uFF0C\u907F\u514D\u8BEF\u6539\u540D");
-    }
-    const task = { originalName, desiredName, startedAt };
-    active.set(view, task);
-    let lastCandidate = null;
-    let stable = 0;
-    try {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const candidates = await recentCandidates(folder, originalName, desiredName, startedAt);
-        const alreadyNamed = candidates.filter((c) => isVariantOf(c.name, desiredName));
-        if (alreadyNamed.length === 1 && candidates.length === 1) {
-          return { renamed: false, filename: alreadyNamed[0].name, alreadyNamed: true };
-        }
-        const raw = candidates.filter((c) => isVariantOf(c.name, originalName));
-        if (raw.length > 1 || raw.length && alreadyNamed.length) {
-          throw new Error("\u53D1\u73B0\u591A\u4E2A\u65B0 TXT\uFF0C\u65E0\u6CD5\u5B89\u5168\u5224\u65AD\u672C\u6B21\u9644\u4EF6\uFF0C\u5DF2\u4FDD\u7559\u539F\u6587\u4EF6");
-        }
-        if (raw.length === 1) {
-          const current = raw[0];
-          const signature = current.name + ":" + current.file.size + ":" + current.file.lastModified;
-          stable = signature === lastCandidate ? stable + 1 : 1;
-          lastCandidate = signature;
-          if (stable >= 2) return copyAndReplace(folder, { ...current, desiredName });
-        } else {
-          stable = 0;
-          lastCandidate = null;
-        }
-        await new Promise((resolve) => view.setTimeout(resolve, POLL_MS));
-      }
-      throw new Error("\u672A\u5728\u6388\u6743\u76EE\u5F55\u4E2D\u627E\u5230\u672C\u6B21\u65B0\u4E0B\u8F7D\u7684 TXT\u3002\u539F\u751F\u4E0B\u8F7D\u4E0D\u53D7\u5F71\u54CD\uFF1B\u8BF7\u786E\u8BA4 Chrome \u7684\u5B9E\u9645\u4E0B\u8F7D\u76EE\u5F55");
-    } finally {
-      if (active.get(view) === task) active.delete(view);
-    }
+    return saveDownloadBlob(blob, filename, document2, { browserDownload: true });
   }
 
   // src/sehuatang.js
@@ -10203,7 +10075,6 @@ ${title}`;
   var SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + "attachments-enabled";
   var SHT_DOWNLOAD_ENABLED_KEY = PREFIX + "attachment-download-enabled";
   var SHT_RENAME_TXT_ENABLED_KEY = PREFIX + "rename-txt-by-title-enabled";
-  var SHT_LOCAL_RENAME_ENABLED_KEY = PREFIX + "local-rename-after-download-enabled";
   var SHT_REPLY_ENABLED_KEY = PREFIX + "quick-reply-enabled";
   var SHT_HIDDEN_NOTICE_ENABLED_KEY = PREFIX + "reply-hidden-notice-enabled";
   var SHT_REPLY_PHRASE_KEY = PREFIX + "reply-phrase";
@@ -10228,7 +10099,6 @@ ${title}`;
       attachments: read(SHT_ATTACHMENTS_ENABLED_KEY, true) !== false,
       download: read(SHT_DOWNLOAD_ENABLED_KEY, true) !== false,
       renameText: read(SHT_RENAME_TXT_ENABLED_KEY, true) !== false,
-      localRename: read(SHT_LOCAL_RENAME_ENABLED_KEY, false) === true,
       reply: read(SHT_REPLY_ENABLED_KEY, true) !== false,
       hiddenNotice: read(SHT_HIDDEN_NOTICE_ENABLED_KEY, true) !== false,
       phrase: typeof phrase === "string" ? phrase : DEFAULT_SHT_REPLY_PHRASE
@@ -10399,20 +10269,12 @@ ${title}`;
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="download" style="margin-top:3px">
-        <span><strong>\u9644\u4EF6\u4E0B\u8F7D\u56FE\u6807</strong><small style="display:block;color:#64748b;margin-top:3px">\u6CBF\u7528\u7F51\u7AD9\u539F\u751F\u4E0B\u8F7D\u94FE\u63A5\uFF0C\u4ECD\u9700\u9075\u5B88\u539F\u6709\u6743\u9650\u548C\u4ED8\u8D39\u89C4\u5219\u3002</small></span>
+        <span><strong>\u9644\u4EF6\u4E0B\u8F7D\u56FE\u6807</strong><small style="display:block;color:#64748b;margin-top:3px">\u4E3B\u8981 TXT \u5C1D\u8BD5 Blob \u4E0B\u8F7D\u5E76\u81EA\u52A8\u547D\u540D\uFF1B\u5176\u4ED6\u9644\u4EF6\u4ECD\u6CBF\u7528\u7F51\u7AD9\u539F\u751F\u4E0B\u8F7D\uFF0C\u6743\u9650\u89C4\u5219\u4E0D\u53D8\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
-        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u6CBF\u7528\u6B64\u524D\u540E\u53F0\u4E0B\u8F7D\u65B9\u5F0F\uFF0C\u540C\u65F6\u628A\u53BB\u6389 ED2K \u6807\u7B7E\u7684\u5E16\u5B50\u6807\u9898\u4F5C\u4E3A TXT \u5EFA\u8BAE\u6587\u4EF6\u540D\u3002\u7F51\u7AD9\u5F3A\u5236\u7684\u6587\u4EF6\u540D\u53EF\u80FD\u8986\u76D6\u5EFA\u8BAE\u540D\u79F0\uFF1B\u6B64\u65F6\u53EF\u590D\u5236\u5EFA\u8BAE\u6587\u4EF6\u540D\u624B\u52A8\u4FEE\u6539\u3002\u76EE\u5F55\u3001\u6E05\u5355\u4FDD\u6301\u539F\u540D\u3002</small></span>
+        <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u4E3B\u8981 TXT \u76F4\u63A5\u83B7\u53D6 Blob \u5E76\u6309\u5E16\u5B50\u6807\u9898\u4E0B\u8F7D\uFF0C\u65E0\u9700\u9009\u62E9 Chrome \u4E0B\u8F7D\u6587\u4EF6\u5939\uFF1B\u76EE\u5F55\u3001\u6E05\u5355\u53CA ZIP \u4FDD\u6301\u539F\u540D\u548C\u539F\u751F\u4E0B\u8F7D\u65B9\u5F0F\u3002\u8BFB\u53D6\u5931\u8D25\u65F6\u63D0\u4F9B\u539F\u751F\u4E0B\u8F7D\u6309\u94AE\u3002</small></span>
       </label>
-      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
-        <input type="checkbox" data-setting="local-rename" style="margin-top:3px">
-        <span><strong>\u539F\u751F\u4E0B\u8F7D\u540E\u81EA\u52A8\u91CD\u547D\u540D TXT\uFF08\u5F53\u524D\u6807\u7B7E\u6388\u6743\u6587\u4EF6\u5939\uFF09</strong><small style="display:block;color:#64748b;margin-top:3px">\u4E0D\u6539\u53D8\u539F\u6765\u7684\u540E\u53F0\u4E0B\u8F7D\uFF0C\u4E5F\u4E0D\u518D\u8BF7\u6C42\u9644\u4EF6\u3002\u9700\u8981\u660E\u786E\u6388\u6743\u5B9E\u9645\u4E0B\u8F7D\u76EE\u5F55\u7684\u8BFB\u5199\u6743\u9650\uFF1B\u53EA\u5904\u7406\u672C\u6B21\u4E0B\u8F7D\u7684\u4E3B\u8981 TXT\uFF0C\u4E0D\u5904\u7406\u76EE\u5F55\u6811\u6216 ZIP\u3002\u4E3A\u9632\u6B62\u7F51\u7AD9\u811A\u672C\u8BBF\u95EE\u4F60\u7684\u672C\u5730\u76EE\u5F55\uFF0C\u6388\u6743\u4EC5\u5728\u5F53\u524D\u9875\u9762\u6709\u6548\uFF0C\u6253\u5F00\u65B0\u5E16\u5B50\u9700\u91CD\u65B0\u6388\u6743\u3002\u9ED8\u8BA4\u5173\u95ED\u3002</small></span>
-      </label>
-      <div data-setting="rename-folder" style="margin:-3px 0 12px 24px">
-        <button type="button" data-action="select-download-folder" style="width:auto;padding:6px 10px;border-radius:7px">\u9009\u62E9 Chrome \u5B9E\u9645\u4E0B\u8F7D\u6587\u4EF6\u5939</button>
-        <small data-folder-status style="display:block;color:#64748b;margin-top:5px">\u672A\u6388\u6743\u4E0B\u8F7D\u76EE\u5F55\uFF1B\u4EC5\u5728 Chrome/Edge \u684C\u9762\u7248\u53EF\u7528\u3002</small>
-      </div>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
         <span><strong>\u56DE\u590D\u540E\u53EF\u89C1\u5185\u5BB9\u63D0\u793A</strong><small style="display:block;color:#64748b;margin-top:3px">\u63D0\u793A\u697C\u4E3B\u56DE\u590D\u540E\u53EF\u89C1\u7684\u5185\u5BB9\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u7ED5\u8FC7\u9650\u5236\u3002</small></span>
@@ -10446,7 +10308,7 @@ ${title}`;
         key: "attachments",
         title: "\u9644\u4EF6\u529F\u80FD",
         description: "\u9644\u4EF6\u5B9A\u4F4D\u3001\u4E0B\u8F7D\u548C\u5185\u5BB9\u63D0\u793A",
-        settings: ["attachments", "download", "rename-text", "local-rename", "rename-folder", "hidden-notice"]
+        settings: ["attachments", "download", "rename-text", "hidden-notice"]
       },
       {
         key: "reply",
@@ -10465,36 +10327,9 @@ ${title}`;
     field("attachments").checked = settings.attachments;
     field("download").checked = settings.download;
     field("rename-text").checked = settings.renameText;
-    field("local-rename").checked = settings.localRename;
     field("reply").checked = settings.reply;
     field("hidden-notice").checked = settings.hiddenNotice;
     field("phrase").value = settings.phrase;
-    const folderStatus = form.querySelector("[data-folder-status]");
-    const folderButton = form.querySelector('[data-action="select-download-folder"]');
-    const view = document2.defaultView;
-    let hasFolder = false;
-    getSehuatangRenameFolder(view).then((folder) => {
-      hasFolder = Boolean(folder);
-      if (folder) folderStatus.textContent = "\u5F53\u524D\u6807\u7B7E\u5DF2\u6388\u6743\uFF1A" + folder.name + "\u3002\u6253\u5F00\u65B0\u5E16\u5B50\u9700\u91CD\u65B0\u6388\u6743\u3002";
-    }).catch(() => {
-    });
-    folderButton.addEventListener("click", () => {
-      if (!isSehuatangHost(view.location)) {
-        folderStatus.textContent = "\u672C\u5730\u76EE\u5F55\u6388\u6743\u53EA\u80FD\u5728 98\u5802\u5E16\u5B50\u4E2D\u5B8C\u6210\u3002\u8BF7\u6253\u5F00 98\u5802\u5E16\u5B50\uFF0C\u518D\u4ECE\u8BBE\u7F6E\u4E2D\u5FC3\u9009\u62E9\u4E0B\u8F7D\u6587\u4EF6\u5939\u3002";
-        return;
-      }
-      folderButton.disabled = true;
-      folderStatus.textContent = "\u8BF7\u5728\u6D4F\u89C8\u5668\u5F39\u51FA\u7684\u6587\u4EF6\u5939\u9009\u62E9\u5668\u4E2D\u9009\u62E9 Chrome \u5B9E\u9645\u4E0B\u8F7D\u4F4D\u7F6E\u2026";
-      chooseSehuatangRenameFolder(view).then(({ name, persisted }) => {
-        hasFolder = true;
-        field("local-rename").checked = true;
-        folderStatus.textContent = "\u5DF2\u9009\uFF1A" + name + (persisted ? "\uFF08\u53EF\u5728\u6B64\u6D4F\u89C8\u5668\u914D\u7F6E\u4E2D\u6062\u590D\uFF0C\u6743\u9650\u53EF\u80FD\u9700\u91CD\u65B0\u6388\u4E88\uFF09" : "\uFF08\u4EC5\u5F53\u524D\u6807\u7B7E\u6709\u6548\uFF1B\u4E0D\u5C06\u6587\u4EF6\u5939\u53E5\u67C4\u4FDD\u5B58\u5230\u7F51\u7AD9\u5B58\u50A8\uFF09") + "\u3002\u70B9\u51FB\u4E0B\u65B9\u300C\u4FDD\u5B58\u300D\u542F\u7528\u3002";
-      }, (error) => {
-        folderStatus.textContent = "\u65E0\u6CD5\u6388\u6743\uFF1A" + (error?.message || String(error)) + "\u3002\u539F\u6709\u7F51\u7AD9\u4E0B\u8F7D\u6309\u94AE\u4E0D\u53D7\u5F71\u54CD\u3002";
-      }).finally(() => {
-        folderButton.disabled = false;
-      });
-    });
     let resetPosition = false;
     form.querySelector('[data-action="reset-position"]').addEventListener("click", (event) => {
       resetPosition = true;
@@ -10516,12 +10351,7 @@ ${title}`;
       }
       save(SHT_ATTACHMENTS_ENABLED_KEY, field("attachments").checked);
       save(SHT_DOWNLOAD_ENABLED_KEY, field("download").checked);
-      if (field("local-rename").checked && !hasFolder) {
-        folderStatus.textContent = "\u8BF7\u5148\u70B9\u51FB\u300C\u9009\u62E9 Chrome \u5B9E\u9645\u4E0B\u8F7D\u6587\u4EF6\u5939\u300D\uFF0C\u6216\u5173\u95ED\u81EA\u52A8\u91CD\u547D\u540D\u9009\u9879\u3002";
-        return;
-      }
       save(SHT_RENAME_TXT_ENABLED_KEY, field("rename-text").checked);
-      save(SHT_LOCAL_RENAME_ENABLED_KEY, field("local-rename").checked);
       save(SHT_REPLY_ENABLED_KEY, field("reply").checked);
       save(SHT_HIDDEN_NOTICE_ENABLED_KEY, field("hidden-notice").checked);
       save(SHT_REPLY_PHRASE_KEY, field("phrase").value.trim());
@@ -10696,7 +10526,7 @@ ${name}`;
             const showInitiated = (icon2, confirmed = false) => {
               icon2.dataset.downloadState = confirmed ? "saved" : "started";
               icon2.textContent = confirmed ? "\u2713" : "\u2197";
-              icon2.title = confirmed ? "\u5DF2\u5728\u6388\u6743\u6587\u4EF6\u5939\u4E2D\u786E\u8BA4\u6587\u4EF6\u540D\uFF1A" + downloadName : "\u5DF2\u53D1\u8D77\u7F51\u7AD9\u540E\u53F0\u4E0B\u8F7D\uFF08\u4FDD\u5B58\u60C5\u51B5\u4EE5\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u4E3A\u51C6\uFF09";
+              icon2.title = confirmed ? "\u5DF2\u786E\u8BA4\u4E0B\u8F7D\uFF1A" + downloadName : "\u5DF2\u53D1\u8D77\u7F51\u7AD9\u540E\u53F0\u4E0B\u8F7D\u6216\u6309\u6807\u9898\u63D0\u4EA4\u4FDD\u5B58\uFF08\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\uFF09";
               icon2.setAttribute("aria-label", icon2.title);
             };
             const icon = addIcon(
@@ -10704,66 +10534,52 @@ ${name}`;
               `\u4E0B\u8F7D\u9644\u4EF6\uFF1A${downloadName}`,
               DOWNLOAD_ICON_PATH,
               () => {
-                const startedAt = Date.now();
-                const currentSettings = getSehuatangSettings();
-                let result;
-                try {
-                  result = downloadSehuatangAttachment(document2, link);
-                } catch (error) {
-                  status.textContent = "\u65E0\u6CD5\u6253\u5F00\u539F\u59CB\u9644\u4EF6\uFF1A" + error.message;
+                const current = getSehuatangSettings();
+                if (!current.download) {
+                  status.textContent = "\u9644\u4EF6\u4E0B\u8F7D\u5DF2\u5173\u95ED\uFF0C\u8BF7\u5728\u300C\u2699\uFE0F 98\u5802\u8BBE\u7F6E\u300D\u4E2D\u5F00\u542F\u3002";
                   place();
                   return;
                 }
-                const offerCopy = () => {
-                  if (downloadName === name) return;
-                  const copyButton = document2.createElement("button");
-                  copyButton.type = "button";
-                  copyButton.textContent = "\u590D\u5236\u5EFA\u8BAE\u6587\u4EF6\u540D";
-                  copyButton.style.cssText = "margin-top:6px;padding:4px 8px;width:auto;display:block;font-size:12px";
-                  copyButton.title = downloadName;
-                  copyButton.addEventListener("click", () => {
-                    if (typeof GM_setClipboard === "function") {
-                      GM_setClipboard(downloadName, "text");
-                      copyButton.textContent = "\u5DF2\u590D\u5236 \u2713";
-                    } else if (view.navigator.clipboard?.writeText) {
-                      Promise.resolve(view.navigator.clipboard.writeText(downloadName)).then(() => {
-                        copyButton.textContent = "\u5DF2\u590D\u5236 \u2713";
-                      }).catch(() => {
-                        copyButton.textContent = "\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u91CD\u547D\u540D";
-                      });
-                    } else copyButton.textContent = "\u590D\u5236\u4E0D\u53EF\u7528\uFF0C\u8BF7\u624B\u52A8\u91CD\u547D\u540D";
-                  });
-                  status.append(copyButton);
-                };
-                status.textContent = result;
-                if (result.startsWith("\u5DF2\u89E6\u53D1\u7F51\u7AD9\u540E\u53F0\u9644\u4EF6\u4E0B\u8F7D")) {
+                const markStarted = (message) => {
                   initiatedAttachments.set(key, "started");
                   showInitiated(icon);
-                  const localRename = currentSettings.localRename && currentSettings.renameText && downloadName !== name && /\.txt$/i.test(name);
-                  if (localRename) {
-                    status.textContent += " \u6B63\u5728\u6388\u6743\u76EE\u5F55\u4E2D\u786E\u8BA4\u4E0B\u8F7D\u5B8C\u6210\u5E76\u81EA\u52A8\u66F4\u540D\u2026";
-                    renameSehuatangDownloadedTxt(view, {
-                      originalName: name,
-                      desiredName: downloadName,
-                      startedAt
-                    }).then((outcome) => {
-                      if (outcome.renamed || outcome.alreadyNamed) {
-                        initiatedAttachments.set(key, "saved");
-                        showInitiated(icon, true);
-                        status.textContent = (outcome.renamed ? "\u672C\u5730 TXT \u5DF2\u66F4\u540D\uFF1A" : "\u6D4F\u89C8\u5668\u5DF2\u6309\u76EE\u6807\u540D\u79F0\u4FDD\u5B58\uFF1A") + outcome.filename;
-                      }
-                    }, (error) => {
-                      status.textContent = "\u539F\u751F\u9644\u4EF6\u4E0B\u8F7D\u4E0D\u53D7\u5F71\u54CD\uFF1B\u672C\u5730\u66F4\u540D\u672A\u5B8C\u6210\uFF1A" + (error?.message || String(error));
-                      offerCopy();
-                    }).finally(place);
-                  } else {
-                    if (downloadName !== name) {
-                      status.textContent += " \u7F51\u7AD9\u53EF\u80FD\u6309\u539F\u540D\u4FDD\u5B58\u3002";
-                      offerCopy();
+                  status.textContent = message;
+                  place();
+                };
+                const nativeDownload = () => {
+                  try {
+                    const message = downloadSehuatangAttachment(document2, link);
+                    if (message.startsWith("\u5DF2\u89E6\u53D1\u7F51\u7AD9\u540E\u53F0\u9644\u4EF6\u4E0B\u8F7D")) markStarted(message);
+                    else {
+                      status.textContent = message;
+                      place();
                     }
+                  } catch (error) {
+                    status.textContent = "\u539F\u751F\u9644\u4EF6\u4E0B\u8F7D\u5931\u8D25\uFF1A" + (error?.message || String(error));
+                    place();
                   }
+                };
+                const target = sehuatangAttachmentDownloadName(document2, name, current.renameText);
+                if (!/\.txt$/i.test(name) || target === name) {
+                  nativeDownload();
+                  return;
                 }
+                icon.disabled = true;
+                status.textContent = "\u6B63\u5728\u83B7\u53D6\u9644\u4EF6 TXT \u5E76\u6309\u5E16\u5B50\u6807\u9898\u4FDD\u5B58\u2026";
                 place();
+                void downloadSehuatangNamedTxtBlob(document2, link, target).then(() => {
+                  markStarted("\u5DF2\u6309\u5E16\u5B50\u6807\u9898\u63D0\u4EA4\u4E0B\u8F7D\uFF1A" + target + "\uFF08\u8BF7\u5728\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868\u786E\u8BA4\u4FDD\u5B58\u7ED3\u679C\uFF09");
+                }, (error) => {
+                  status.textContent = "TXT \u81EA\u52A8\u547D\u540D\u5931\u8D25\uFF1A" + (error?.message || String(error)) + "\u3002\u53EF\u6539\u7528\u539F\u751F\u4E0B\u8F7D\uFF1A";
+                  const fallback = createSehuatangButton(document2, "\u4F7F\u7528\u539F\u751F\u4E0B\u8F7D", "native-download-fallback");
+                  fallback.style.cssText = "margin-top:6px;padding:4px 8px;width:auto;display:block;font-size:12px";
+                  fallback.addEventListener("click", nativeDownload);
+                  status.append(fallback);
+                  place();
+                }).finally(() => {
+                  icon.disabled = false;
+                  place();
+                });
               }
             );
             if (initiatedAttachments.has(key)) showInitiated(icon, initiatedAttachments.get(key) === "saved");
