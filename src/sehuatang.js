@@ -210,11 +210,11 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="download" style="margin-top:3px">
-        <span><strong>附件下载图标</strong><small style="display:block;color:#64748b;margin-top:3px">主要 TXT 尝试 Blob 下载并自动命名；其他附件仍沿用网站原生下载，权限规则不变。</small></span>
+        <span><strong>附件下载图标</strong><small style="display:block;color:#64748b;margin-top:3px">主要 TXT 通过脚本管理器读取 Blob 并按标题下载；其他附件仍沿用网站原生下载，权限规则不变。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="rename-text" style="margin-top:3px">
-        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。主要 TXT 直接获取 Blob 并按帖子标题下载，无需选择 Chrome 下载文件夹；目录、清单及 ZIP 保持原名和原生下载方式。读取失败时提供原生下载按钮。</small></span>
+        <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。主要 TXT 优先通过脚本管理器读取 Blob 并按帖子标题下载，无需选择 Chrome 下载文件夹；目录、清单及 ZIP 保持原名和原生下载方式。读取失败时提供原生下载按钮。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
@@ -496,7 +496,7 @@ export function installSehuatangToolbar(document) {
               }, (error) => {
                 // Never silently issue another GET or save error HTML as a TXT.
                 // Explicit retry provides a fresh user gesture for native download.
-                status.textContent = 'TXT 自动命名失败：'
+                status.textContent = 'TXT 自动命名失败（网站可能限制脚本请求）：'
                   + (error?.message || String(error)) + '。可改用原生下载：';
                 const fallback = createSehuatangButton(document, '使用原生下载', 'native-download-fallback');
                 fallback.style.cssText = 'margin-top:6px;padding:4px 8px;width:auto;display:block;font-size:12px';
