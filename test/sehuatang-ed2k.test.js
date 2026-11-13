@@ -26,7 +26,11 @@ test('ED2K control is independent, idempotent and saves one named UTF-8 TXT', as
   let enabled=true, saved;
   globalThis.GM_getValue=(key,fallback)=>key===SHT_ED2K_EXPORT_ENABLED_KEY?enabled:fallback;
   globalThis.GM_info={scriptHandler:'Tampermonkey',version:'5.4.6226'};
-  globalThis.GM_download=options=>{saved=options;options.onload();};
+  globalThis.GM_download=()=>{throw new Error('ED2K must use native browser download');};
+  let blob;
+  dom.window.URL.createObjectURL=value=>{blob=value;return 'blob:ed2k-test';};
+  dom.window.URL.revokeObjectURL=()=>{};
+  dom.window.HTMLAnchorElement.prototype.click=function(){saved={name:this.download,url:blob};};
   try {
     installSehuatangEd2kExport(d); installSehuatangEd2kExport(d);
     const buttons=d.querySelectorAll('[data-x1080x-ed2k-export]');
@@ -37,13 +41,13 @@ test('ED2K control is independent, idempotent and saves one named UTF-8 TXT', as
     assert.equal(saved.name,'授权样例.txt');
     const text=await new Promise((resolve,reject)=>{const reader=new dom.window.FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsText(saved.url);});
     assert.equal(text,a+'\r\n'+b+'\r\n');
-    assert.equal(buttons[0].dataset.downloadState,'saved');
+    assert.equal(buttons[0].dataset.downloadState,'started');
     installSehuatangEd2kExport(d);
-    assert.equal(buttons[0].dataset.downloadState,'saved');
+    assert.equal(buttons[0].dataset.downloadState,'started');
     enabled=false;installSehuatangEd2kExport(d);
     assert.equal(d.querySelector('[data-x1080x-ed2k-export]'),null);
     enabled=true;installSehuatangEd2kExport(d);
-    assert.equal(d.querySelector('[data-x1080x-ed2k-export]').dataset.downloadState,'saved');
+    assert.equal(d.querySelector('[data-x1080x-ed2k-export]').dataset.downloadState,'started');
   } finally {
     globalThis.GM_getValue=oldGet;globalThis.GM_download=oldDownload;globalThis.GM_info=oldInfo;dom.window.close();
   }
@@ -56,7 +60,10 @@ test('Discuz real-layout code list exposes both export controls and shares compl
   const oldDownload=globalThis.GM_download, oldInfo=globalThis.GM_info;
   let saved, calls=0;
   globalThis.GM_info={scriptHandler:'Tampermonkey',version:'5.4.6226'};
-  globalThis.GM_download=options=>{saved=options;calls++;options.onload();};
+  globalThis.GM_download=()=>{throw new Error('ED2K must use native browser download');};
+  dom.window.URL.createObjectURL=()=> 'blob:ed2k-test';
+  dom.window.URL.revokeObjectURL=()=>{};
+  dom.window.HTMLAnchorElement.prototype.click=function(){saved={name:this.download};calls++;};
   try {
     const root=installSehuatangToolbar(d).shadowRoot;
     const inline=d.querySelector('[data-x1080x-ed2k-export]');
@@ -68,8 +75,8 @@ test('Discuz real-layout code list exposes both export controls and shares compl
     await new Promise(resolve=>setTimeout(resolve,0));
     assert.equal(calls,1);
     assert.equal(saved.name,'授权样例.txt');
-    assert.equal(inline.dataset.downloadState,'saved');
-    assert.equal(floating.dataset.downloadState,'saved');
+    assert.equal(inline.dataset.downloadState,'started');
+    assert.equal(floating.dataset.downloadState,'started');
     assert.equal(d.querySelectorAll('[data-x1080x-ed2k-export]').length,1);
   } finally {
     globalThis.GM_download=oldDownload;globalThis.GM_info=oldInfo;dom.window.close();

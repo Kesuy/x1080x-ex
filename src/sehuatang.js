@@ -165,7 +165,7 @@ function createEd2kControl(document, block, count, floating = false) {
     let error = '';
     try {
       const blob = new document.defaultView.Blob([entry.links.join('\r\n') + '\r\n'], { type: 'text/plain;charset=utf-8' });
-      const result = await saveDownloadBlob(blob, filename, document);
+      const result = await saveDownloadBlob(blob, filename, document, { browserDownload: true });
       ed2kDownloadStates.set(block, result.confirmed ? 'saved' : 'started');
     } catch (cause) {
       error = '下载失败：' + (cause?.message || String(cause));
