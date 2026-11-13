@@ -100,10 +100,6 @@ function isVisibleResourceNode(node, body) {
 export function collectSehuatangEd2kBlocks(document) {
   const body = originalPost(document)?.querySelector('[id^="postmessage_"]');
   if (!body) return [];
-  // Do not provide a bulk export control on posts explicitly labeled as leaked
-  // intimate material. This is a narrow safeguard, not a consent determination.
-  const title = document.querySelector('#thread_subject')?.textContent || '';
-  if (/原[档檔]泄[密露]|未经同意|未經同意|私密泄[露漏]|偷拍|非自[愿願]/u.test(title)) return [];
   const blocks = [...body.querySelectorAll('.blockcode, pre')].filter(node =>
     !node.parentElement?.closest('.blockcode, pre') && isVisibleResourceNode(node, body));
   return blocks.flatMap(block => {

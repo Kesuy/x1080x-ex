@@ -17,7 +17,7 @@ test('ED2K code blocks are limited to visible original-post resources', () => {
   assert.equal(blocks.length,1);
   assert.deepEqual(blocks[0].links,[a,b]);
   dom.window.document.getElementById('thread_subject').textContent='【原档泄密】测试';
-  assert.deepEqual(collectSehuatangEd2kBlocks(dom.window.document),[]);
+  assert.deepEqual(collectSehuatangEd2kBlocks(dom.window.document).map(({ links }) => links), [[a,b]]);
   dom.window.close();
 });
 test('ED2K control is independent, idempotent and saves one named UTF-8 TXT', async () => {
