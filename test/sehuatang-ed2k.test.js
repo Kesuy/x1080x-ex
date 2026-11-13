@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
-import { extractEd2kLinks, collectSehuatangEd2kBlocks, installSehuatangEd2kExport, SHT_ED2K_EXPORT_ENABLED_KEY } from '../src/sehuatang.js';
+import { extractEd2kLinks, collectSehuatangEd2kBlocks, installSehuatangEd2kExport, installSehuatangToolbar, SHT_ED2K_EXPORT_ENABLED_KEY } from '../src/sehuatang.js';
 
 const a = 'ed2k://|file|example one.txt|123|0123456789abcdef0123456789abcdef|/';
 const b = 'ed2k://|file|example-two.txt|456|fedcba9876543210fedcba9876543210|/';
@@ -46,5 +46,32 @@ test('ED2K control is independent, idempotent and saves one named UTF-8 TXT', as
     assert.equal(d.querySelector('[data-x1080x-ed2k-export]').dataset.downloadState,'saved');
   } finally {
     globalThis.GM_getValue=oldGet;globalThis.GM_download=oldDownload;globalThis.GM_info=oldInfo;dom.window.close();
+  }
+});
+
+test('Discuz real-layout code list exposes both export controls and shares completion status', async () => {
+  const dom=fixture(), d=dom.window.document;
+  const body=d.getElementById('postmessage_1');
+  body.innerHTML='<font>【资源链接】：</font><br><div class="blockcode" data-mtt-processed=""><div id="code_rUZ"><ol>'+Array.from({length:6},(_,i)=>'<li>ed2k://|file|example-'+i+'.txt|'+(100+i)+'|0123456789abcdef0123456789abcde'+i+'|/<br></li>').join('')+'</ol></div><em>复制代码</em></div>';
+  const oldDownload=globalThis.GM_download, oldInfo=globalThis.GM_info;
+  let saved, calls=0;
+  globalThis.GM_info={scriptHandler:'Tampermonkey',version:'5.4.6226'};
+  globalThis.GM_download=options=>{saved=options;calls++;options.onload();};
+  try {
+    const root=installSehuatangToolbar(d).shadowRoot;
+    const inline=d.querySelector('[data-x1080x-ed2k-export]');
+    const floating=root.querySelector('[data-action="download-ed2k"]');
+    assert.ok(inline);
+    assert.match(floating.textContent,/6 条/);
+    assert.equal(root.querySelector('.status').textContent,'');
+    floating.click();
+    await new Promise(resolve=>setTimeout(resolve,0));
+    assert.equal(calls,1);
+    assert.equal(saved.name,'授权样例.txt');
+    assert.equal(inline.dataset.downloadState,'saved');
+    assert.equal(floating.dataset.downloadState,'saved');
+    assert.equal(d.querySelectorAll('[data-x1080x-ed2k-export]').length,1);
+  } finally {
+    globalThis.GM_download=oldDownload;globalThis.GM_info=oldInfo;dom.window.close();
   }
 });

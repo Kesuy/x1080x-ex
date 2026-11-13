@@ -75,6 +75,8 @@ export function hasSehuatangReplyHiddenContent(document) {
 // Export only visible, user-authorized resource code blocks in the original post.
 const ED2K_EXPORT_SELECTOR = '[data-x1080x-ed2k-export]';
 const ed2kDownloadStates = new WeakMap();
+const ed2kControls = new WeakMap();
+const ed2kPending = new WeakSet();
 
 export function extractEd2kLinks(text) {
   const links = String(text || '').match(/ed2k:\/\/\|file\|[^|\r\n]+\|\d+\|[a-f0-9]{32}\|\//gi) || [];
@@ -124,64 +126,78 @@ export function collectSehuatangEd2kBlocks(document) {
   });
 }
 
+function createEd2kControl(document, block, count, floating = false) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  const kind = floating ? 'floating' : 'inline';
+  if (floating) button.dataset.action = 'download-ed2k';
+  else {
+    button.dataset.x1080xEd2kExport = '1';
+    button.style.cssText = 'display:inline-flex!important;align-items:center;margin:4px 8px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:#2563eb;font:inherit;cursor:pointer;vertical-align:middle;position:relative';
+  }
+  const controls = ed2kControls.get(block) || {};
+  ed2kControls.set(block, controls);
+  const paint = (error = '') => {
+    const state = ed2kDownloadStates.get(block);
+    const pending = ed2kPending.has(block);
+    button.disabled = pending;
+    button.dataset.downloadState = state || 'idle';
+    button.textContent = pending ? '正在下载…' : state === 'saved' ? '✓ 已下载 TXT'
+      : state === 'started' ? '✓ 已发起下载' : error ? '下载失败，点击重试'
+      : floating ? '下载 ED2K TXT（' + count + ' 条）' : '下载 TXT';
+    button.title = error || (state === 'saved' ? '已确认下载' : state === 'started' ? '已提交下载，请查看浏览器下载列表' : '导出当前资源区块的 ED2K 链接');
+    button.style.background = state ? '#dcfce7' : '#f8fafc';
+    button.style.color = state ? '#166534' : '#2563eb';
+  };
+  controls[kind] = { button, paint };
+  const sync = error => Object.values(controls).forEach(control => control.paint(error));
+  paint();
+  button.addEventListener('click', async () => {
+    if (!getSehuatangSettings().ed2kExport || ed2kPending.has(block)) return;
+    const current = collectSehuatangEd2kBlocks(document);
+    const entry = current.find(item => item.block === block);
+    if (!entry) return;
+    const name = sehuatangAttachmentDownloadName(document, 'ED2K.txt', true);
+    const ordinal = current.indexOf(entry) + 1;
+    const filename = current.length > 1 ? name.replace(/\.txt$/i, ' (' + ordinal + ').txt') : name;
+    ed2kPending.add(block);
+    sync();
+    let error = '';
+    try {
+      const blob = new document.defaultView.Blob([entry.links.join('\r\n') + '\r\n'], { type: 'text/plain;charset=utf-8' });
+      const result = await saveDownloadBlob(blob, filename, document);
+      ed2kDownloadStates.set(block, result.confirmed ? 'saved' : 'started');
+    } catch (cause) {
+      error = '下载失败：' + (cause?.message || String(cause));
+    } finally {
+      ed2kPending.delete(block);
+      sync(error);
+    }
+  });
+  return button;
+}
+
 export function installSehuatangEd2kExport(document) {
   if (!getSehuatangSettings().ed2kExport) {
     document.querySelectorAll(ED2K_EXPORT_SELECTOR).forEach(button => button.remove());
-    return;
+    return [];
   }
   const blocks = collectSehuatangEd2kBlocks(document);
   const active = new Set(blocks.map(({ block }) => block));
   document.querySelectorAll(ED2K_EXPORT_SELECTOR).forEach(button => {
     if (!active.has(button.closest('.blockcode, pre') || button.previousElementSibling)) button.remove();
   });
-  blocks.forEach(({ block }, index) => {
+  blocks.forEach(({ block, links }) => {
     let button = block.querySelector(ED2K_EXPORT_SELECTOR);
     if (!button && block.nextElementSibling?.matches(ED2K_EXPORT_SELECTOR)) button = block.nextElementSibling;
     if (button) return;
-    button = document.createElement('button');
-    button.type = 'button';
-    button.dataset.x1080xEd2kExport = '1';
-    button.style.cssText = 'margin:4px 8px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:#2563eb;font:inherit;cursor:pointer;vertical-align:middle';
-    const showState = (state) => {
-      button.textContent = state === 'saved' ? '✓ 已下载 TXT' : state === 'started'
-        ? '✓ 已发起下载' : '下载 TXT';
-      button.dataset.downloadState = state || 'idle';
-      if (state) {
-        button.style.background = '#dcfce7';
-        button.style.color = '#166534';
-      }
-    };
-    showState(ed2kDownloadStates.get(block));
-    button.addEventListener('click', async () => {
-      if (!getSehuatangSettings().ed2kExport || button.disabled) return;
-      const current = collectSehuatangEd2kBlocks(document);
-      const entry = current.find(item => item.block === block);
-      if (!entry) return;
-      const name = sehuatangAttachmentDownloadName(document, 'ED2K.txt', true);
-      const ordinal = current.indexOf(entry) + 1;
-      const filename = current.length > 1 ? name.replace(/\.txt$/i, ' (' + ordinal + ').txt') : name;
-      button.disabled = true;
-      button.textContent = '正在下载…';
-      try {
-        const blob = new document.defaultView.Blob([entry.links.join('\r\n') + '\r\n'], { type: 'text/plain;charset=utf-8' });
-        const result = await saveDownloadBlob(blob, filename, document);
-        const state = result.confirmed ? 'saved' : 'started';
-        ed2kDownloadStates.set(block, state);
-        showState(state);
-        button.title = result.confirmed ? '已保存 ' + filename : '已提交 ' + filename + '，请查看浏览器下载列表';
-      } catch (error) {
-        showState(ed2kDownloadStates.get(block));
-        button.title = '下载失败：' + (error?.message || String(error));
-        if (!ed2kDownloadStates.has(block)) button.textContent = '下载失败，点击重试';
-      } finally {
-        button.disabled = false;
-      }
-    });
+    button = createEd2kControl(document, block, links.length);
     const copy = block.querySelector('em, [onclick*="copycode"], [onclick*="copyCode"]');
     if (copy) copy.after(button);
     else if (block.matches('pre')) block.after(button);
     else block.append(button);
   });
+  return blocks;
 }
 
 export function collectSehuatangAttachments(document) {
@@ -425,9 +441,9 @@ export function installSehuatangToolbar(document) {
   initiatedAttachmentsByDocument.set(document, initiatedAttachments);
   const settings = getSehuatangSettings();
   if (!isSehuatangHost(view.location) || !isThread(view.location)) return null;
-  installSehuatangEd2kExport(document);
-  if ((!settings.attachments && !settings.download && !settings.reply
-      && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document)))) return null;
+  let ed2kEntries = installSehuatangEd2kExport(document);
+  if (!settings.attachments && !settings.download && !settings.reply && !ed2kEntries.length
+      && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document))) return null;
   const host = document.createElement('div');
   host.id = TOOLBAR_ID;
   Object.assign(host.style, { position: 'fixed', zIndex: '2147483640', width: '220px', maxWidth: 'calc(100vw - 16px)' });
@@ -438,7 +454,7 @@ export function installSehuatangToolbar(document) {
     .handle{cursor:move;touch-action:none;user-select:none;text-align:center;font-size:12px;color:#64748b;padding:2px 0 8px}
     button{font:inherit;cursor:pointer;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#334155;padding:9px 7px;width:100%;text-align:left;overflow-wrap:anywhere}
     button:hover{background:#eff6ff;border-color:#93c5fd}button:focus-visible{outline:2px solid #2563eb}
-    .actions{display:flex;justify-content:center}
+    .actions{display:flex;justify-content:center}.ed2k-actions{display:grid;gap:5px;margin-bottom:8px}.ed2k-actions:empty{display:none}.ed2k-actions button{text-align:center;font-weight:600}
     button[data-action="reply"]{width:auto;max-width:100%;min-width:112px;display:inline-flex;align-items:center;justify-content:center;padding:7px 14px;border-radius:999px;font-weight:600;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border-color:#2563eb;box-shadow:0 2px 6px #2563eb26}
     button[data-action="reply"]:hover{background:linear-gradient(135deg,#2563eb,#1d4ed8)}button:disabled{opacity:.55;cursor:wait}
     .attachments{margin-bottom:12px}.attachments[hidden]{display:none}
@@ -457,6 +473,15 @@ export function installSehuatangToolbar(document) {
     .status{font-size:12px;max-height:25vh;overflow:auto;overflow-wrap:anywhere}.status:empty{display:none}
   </style><div class="bar"><div class="handle" title="拖动移动；双击打开98堂设置">⠿ 98堂助手</div><section class="attachments" hidden><div class="files-heading"></div><div class="attachment-list"><div class="choices"></div><div class="hidden-notice" role="note"></div></div></section><div class="actions"></div><div class="status" role="status" aria-live="polite"></div></div>`;
   const actions = root.querySelector('.actions');
+  const ed2kActions = document.createElement('div');
+  ed2kActions.className = 'ed2k-actions';
+  actions.before(ed2kActions);
+  let renderedEd2k = [];
+  const renderEd2kActions = () => {
+    if (ed2kEntries.length === renderedEd2k.length && ed2kEntries.every((entry, i) => entry.block === renderedEd2k[i].block && entry.links.length === renderedEd2k[i].links.length)) return;
+    renderedEd2k = ed2kEntries;
+    ed2kActions.replaceChildren(...ed2kEntries.map(({ block, links }) => createEd2kControl(document, block, links.length, true)));
+  };
   const choices = root.querySelector('.choices');
   const attachmentsSection = root.querySelector('.attachments');
   const filesHeading = root.querySelector('.files-heading');
@@ -543,7 +568,7 @@ export function installSehuatangToolbar(document) {
       return;
     }
     const attachments = collectSehuatangAttachments(document);
-    if (!attachments.length && !hiddenReply) status.textContent = '楼主暂无可见文件附件；隐藏或付费附件请按网站提示操作。';
+    if (!attachments.length && !hiddenReply && !ed2kEntries.length) status.textContent = '楼主暂无可见文件附件；隐藏或付费附件请按网站提示操作。';
     else if (attachments.length) {
       filesHeading.textContent = `楼主附件（${attachments.length}）`;
       attachmentsSection.hidden = false;
@@ -657,7 +682,8 @@ export function installSehuatangToolbar(document) {
     actions.append(replyButton);
   }
   document.body.append(host);
-  if (settings.attachments || settings.download || settings.hiddenNotice) {
+  renderEd2kActions();
+  if (settings.attachments || settings.download || settings.hiddenNotice || settings.ed2kExport) {
     renderAttachments();
     const post = originalPost(document);
     if (post && typeof view.MutationObserver === 'function') {
@@ -665,10 +691,14 @@ export function installSehuatangToolbar(document) {
       let previous = collect();
       let previousHidden = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document);
       attachmentObserver = new view.MutationObserver(() => {
-        if (settings.ed2kExport) installSehuatangEd2kExport(document);
+        const previousEd2kCount = ed2kEntries.length;
+        if (settings.ed2kExport) {
+          ed2kEntries = installSehuatangEd2kExport(document);
+          renderEd2kActions();
+        }
         const current = collect();
         const currentHidden = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document);
-        if (currentHidden === previousHidden && current.length === previous.length && current.every((file, i) => (
+        if (previousEd2kCount === ed2kEntries.length && currentHidden === previousHidden && current.length === previous.length && current.every((file, i) => (
           file.link === previous[i].link && file.name === previous[i].name
         ))) return;
         previous = current;
