@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.54
+// @version      1.10.56
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -10125,6 +10125,7 @@ ${title}`;
   var PREFIX = "x1080x-ex:sehuatang-";
   var SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + "attachments-enabled";
   var SHT_DOWNLOAD_ENABLED_KEY = PREFIX + "attachment-download-enabled";
+  var SHT_ED2K_EXPORT_ENABLED_KEY = PREFIX + "ed2k-export-enabled";
   var SHT_RENAME_TXT_ENABLED_KEY = PREFIX + "rename-txt-by-title-enabled";
   var SHT_REPLY_ENABLED_KEY = PREFIX + "quick-reply-enabled";
   var SHT_HIDDEN_NOTICE_ENABLED_KEY = PREFIX + "reply-hidden-notice-enabled";
@@ -10149,6 +10150,7 @@ ${title}`;
     return {
       attachments: read(SHT_ATTACHMENTS_ENABLED_KEY, true) !== false,
       download: read(SHT_DOWNLOAD_ENABLED_KEY, true) !== false,
+      ed2kExport: read(SHT_ED2K_EXPORT_ENABLED_KEY, true) !== false,
       renameText: read(SHT_RENAME_TXT_ENABLED_KEY, true) !== false,
       reply: read(SHT_REPLY_ENABLED_KEY, true) !== false,
       hiddenNotice: read(SHT_HIDDEN_NOTICE_ENABLED_KEY, true) !== false,
@@ -10177,6 +10179,122 @@ ${title}`;
       }
       return true;
     });
+  }
+  var ED2K_EXPORT_SELECTOR = "[data-x1080x-ed2k-export]";
+  var ed2kDownloadStates = /* @__PURE__ */ new WeakMap();
+  var ed2kControls = /* @__PURE__ */ new WeakMap();
+  var ed2kPending = /* @__PURE__ */ new WeakSet();
+  function extractEd2kLinks(text) {
+    const links = String(text || "").match(/ed2k:\/\/\|file\|[^|\r\n]+\|\d+\|[a-f0-9]{32}\|\//gi) || [];
+    const seen = /* @__PURE__ */ new Set();
+    return links.filter((link) => {
+      const parts = link.split("|");
+      const key = parts[3] + ":" + parts[4].toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  function isVisibleResourceNode(node, body) {
+    if (node.closest('.quote, blockquote, .locked, .tip, [id$="_menu"], [hidden]')) return false;
+    for (let el = node; el && body.contains(el); el = el.parentElement) {
+      const style = node.ownerDocument.defaultView?.getComputedStyle(el);
+      if (style?.display === "none" || style?.visibility === "hidden") return false;
+    }
+    return true;
+  }
+  function collectSehuatangEd2kBlocks(document2) {
+    const body = originalPost(document2)?.querySelector('[id^="postmessage_"]');
+    if (!body) return [];
+    const blocks = [...body.querySelectorAll(".blockcode, pre")].filter((node) => !node.parentElement?.closest(".blockcode, pre") && isVisibleResourceNode(node, body));
+    return blocks.flatMap((block) => {
+      const rows = [...block.querySelectorAll("li")];
+      const nodes = rows.length ? rows : [block];
+      const text = nodes.filter((node) => isVisibleResourceNode(node, body)).map((node) => {
+        const walker = document2.createTreeWalker(node, 4);
+        const chunks = [];
+        while (walker.nextNode()) {
+          const parent = walker.currentNode.parentElement;
+          if (parent && !parent.closest(ED2K_EXPORT_SELECTOR) && !parent.closest("script, style, em") && isVisibleResourceNode(parent, body)) {
+            chunks.push(walker.currentNode.nodeValue);
+          }
+        }
+        const hrefs = [...node.querySelectorAll('a[href^="ed2k:" i]')].filter((anchor) => isVisibleResourceNode(anchor, body)).map((anchor) => anchor.getAttribute("href"));
+        return [chunks.join(""), ...hrefs].join("\n");
+      }).join("\n");
+      const links = extractEd2kLinks(text);
+      return links.length ? [{ block, links }] : [];
+    });
+  }
+  function createEd2kControl(document2, block, count, floating = false) {
+    const button = document2.createElement("button");
+    button.type = "button";
+    const kind = floating ? "floating" : "inline";
+    if (floating) button.dataset.action = "download-ed2k";
+    else {
+      button.dataset.x1080xEd2kExport = "1";
+      button.style.cssText = "display:inline-flex!important;align-items:center;margin:4px 8px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:#2563eb;font:inherit;cursor:pointer;vertical-align:middle;position:relative";
+    }
+    const controls = ed2kControls.get(block) || {};
+    ed2kControls.set(block, controls);
+    const paint = (error = "") => {
+      const state = ed2kDownloadStates.get(block);
+      const pending = ed2kPending.has(block);
+      button.disabled = pending;
+      button.dataset.downloadState = state || "idle";
+      button.textContent = pending ? "\u6B63\u5728\u4E0B\u8F7D\u2026" : state === "saved" ? "\u2713 \u5DF2\u4E0B\u8F7D TXT" : state === "started" ? "\u2713 \u5DF2\u53D1\u8D77\u4E0B\u8F7D" : error ? "\u4E0B\u8F7D\u5931\u8D25\uFF0C\u70B9\u51FB\u91CD\u8BD5" : floating ? "\u4E0B\u8F7D ED2K TXT\uFF08" + count + " \u6761\uFF09" : "\u4E0B\u8F7D TXT";
+      button.title = error || (state === "saved" ? "\u5DF2\u786E\u8BA4\u4E0B\u8F7D" : state === "started" ? "\u5DF2\u63D0\u4EA4\u4E0B\u8F7D\uFF0C\u8BF7\u67E5\u770B\u6D4F\u89C8\u5668\u4E0B\u8F7D\u5217\u8868" : "\u5BFC\u51FA\u5F53\u524D\u8D44\u6E90\u533A\u5757\u7684 ED2K \u94FE\u63A5");
+      button.style.background = state ? "#dcfce7" : "#f8fafc";
+      button.style.color = state ? "#166534" : "#2563eb";
+    };
+    controls[kind] = { button, paint };
+    const sync = (error) => Object.values(controls).forEach((control) => control.paint(error));
+    paint();
+    button.addEventListener("click", async () => {
+      if (!getSehuatangSettings().ed2kExport || ed2kPending.has(block)) return;
+      const current = collectSehuatangEd2kBlocks(document2);
+      const entry = current.find((item) => item.block === block);
+      if (!entry) return;
+      const name = sehuatangAttachmentDownloadName(document2, "ED2K.txt", true);
+      const ordinal = current.indexOf(entry) + 1;
+      const filename = current.length > 1 ? name.replace(/\.txt$/i, " (" + ordinal + ").txt") : name;
+      ed2kPending.add(block);
+      sync();
+      let error = "";
+      try {
+        const blob = new document2.defaultView.Blob([entry.links.join("\r\n") + "\r\n"], { type: "text/plain;charset=utf-8" });
+        const result = await saveDownloadBlob(blob, filename, document2, { browserDownload: true });
+        ed2kDownloadStates.set(block, result.confirmed ? "saved" : "started");
+      } catch (cause) {
+        error = "\u4E0B\u8F7D\u5931\u8D25\uFF1A" + (cause?.message || String(cause));
+      } finally {
+        ed2kPending.delete(block);
+        sync(error);
+      }
+    });
+    return button;
+  }
+  function installSehuatangEd2kExport(document2) {
+    if (!getSehuatangSettings().ed2kExport) {
+      document2.querySelectorAll(ED2K_EXPORT_SELECTOR).forEach((button) => button.remove());
+      return [];
+    }
+    const blocks = collectSehuatangEd2kBlocks(document2);
+    const active = new Set(blocks.map(({ block }) => block));
+    document2.querySelectorAll(ED2K_EXPORT_SELECTOR).forEach((button) => {
+      if (!active.has(button.closest(".blockcode, pre") || button.previousElementSibling)) button.remove();
+    });
+    blocks.forEach(({ block, links }) => {
+      let button = block.querySelector(ED2K_EXPORT_SELECTOR);
+      if (!button && block.nextElementSibling?.matches(ED2K_EXPORT_SELECTOR)) button = block.nextElementSibling;
+      if (button) return;
+      button = createEd2kControl(document2, block, links.length);
+      const copy = block.querySelector('em, [onclick*="copycode"], [onclick*="copyCode"]');
+      if (copy) copy.after(button);
+      else if (block.matches("pre")) block.after(button);
+      else block.append(button);
+    });
+    return blocks;
   }
   function collectSehuatangAttachments(document2) {
     const post = originalPost(document2);
@@ -10327,6 +10445,10 @@ ${title}`;
         <span><strong>\u4E0B\u8F7D TXT \u9644\u4EF6\u6309\u5E16\u5B50\u6807\u9898\u547D\u540D</strong><small style="display:block;color:#64748b;margin-top:3px">\u9ED8\u8BA4\u5F00\u542F\u3002\u4E3B\u8981 TXT \u4F18\u5148\u901A\u8FC7\u811A\u672C\u7BA1\u7406\u5668\u8BFB\u53D6 Blob \u5E76\u6309\u5E16\u5B50\u6807\u9898\u4E0B\u8F7D\uFF0C\u65E0\u9700\u9009\u62E9 Chrome \u4E0B\u8F7D\u6587\u4EF6\u5939\uFF1B\u76EE\u5F55\u3001\u6E05\u5355\u53CA ZIP \u4FDD\u6301\u539F\u540D\u548C\u539F\u751F\u4E0B\u8F7D\u65B9\u5F0F\u3002\u8BFB\u53D6\u5931\u8D25\u65F6\u63D0\u4F9B\u539F\u751F\u4E0B\u8F7D\u6309\u94AE\u3002</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="ed2k-export" style="margin-top:3px">
+        <span><strong>ED2K \u8D44\u6E90\u94FE\u63A5\u5BFC\u51FA TXT</strong><small style="display:block;color:#64748b;margin-top:3px">\u697C\u4E3B\u53EF\u89C1\u8D44\u6E90\u4EE3\u7801\u533A\u65C1\u6DFB\u52A0\u4E0B\u8F7D\u6309\u94AE\uFF0C\u6309\u5E16\u5B50\u6807\u9898\u4FDD\u5B58\u5408\u6CD5\u6388\u6743\u94FE\u63A5\uFF0C\u4E0D\u4E0B\u8F7D\u5B9E\u9645\u8D44\u6E90\u3002</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
         <span><strong>\u56DE\u590D\u540E\u53EF\u89C1\u5185\u5BB9\u63D0\u793A</strong><small style="display:block;color:#64748b;margin-top:3px">\u63D0\u793A\u697C\u4E3B\u56DE\u590D\u540E\u53EF\u89C1\u7684\u5185\u5BB9\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u7ED5\u8FC7\u9650\u5236\u3002</small></span>
       </label>
@@ -10359,7 +10481,7 @@ ${title}`;
         key: "attachments",
         title: "\u9644\u4EF6\u529F\u80FD",
         description: "\u9644\u4EF6\u5B9A\u4F4D\u3001\u4E0B\u8F7D\u548C\u5185\u5BB9\u63D0\u793A",
-        settings: ["attachments", "download", "rename-text", "hidden-notice"]
+        settings: ["attachments", "download", "rename-text", "ed2k-export", "hidden-notice"]
       },
       {
         key: "reply",
@@ -10377,6 +10499,7 @@ ${title}`;
     const field = (name) => form.querySelector(`[data-setting="${name}"]`);
     field("attachments").checked = settings.attachments;
     field("download").checked = settings.download;
+    field("ed2k-export").checked = settings.ed2kExport;
     field("rename-text").checked = settings.renameText;
     field("reply").checked = settings.reply;
     field("hidden-notice").checked = settings.hiddenNotice;
@@ -10402,6 +10525,7 @@ ${title}`;
       }
       save(SHT_ATTACHMENTS_ENABLED_KEY, field("attachments").checked);
       save(SHT_DOWNLOAD_ENABLED_KEY, field("download").checked);
+      save(SHT_ED2K_EXPORT_ENABLED_KEY, field("ed2k-export").checked);
       save(SHT_RENAME_TXT_ENABLED_KEY, field("rename-text").checked);
       save(SHT_REPLY_ENABLED_KEY, field("reply").checked);
       save(SHT_HIDDEN_NOTICE_ENABLED_KEY, field("hidden-notice").checked);
@@ -10426,7 +10550,9 @@ ${title}`;
     const initiatedAttachments = initiatedAttachmentsByDocument.get(document2) || /* @__PURE__ */ new Map();
     initiatedAttachmentsByDocument.set(document2, initiatedAttachments);
     const settings = getSehuatangSettings();
-    if (!isSehuatangHost(view.location) || !isThread(view.location) || !settings.attachments && !settings.download && !settings.reply && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2))) return null;
+    if (!isSehuatangHost(view.location) || !isThread(view.location)) return null;
+    let ed2kEntries = installSehuatangEd2kExport(document2);
+    if (!settings.attachments && !settings.download && !settings.reply && !ed2kEntries.length && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2))) return null;
     const host = document2.createElement("div");
     host.id = TOOLBAR_ID;
     Object.assign(host.style, { position: "fixed", zIndex: "2147483640", width: "220px", maxWidth: "calc(100vw - 16px)" });
@@ -10437,7 +10563,7 @@ ${title}`;
     .handle{cursor:move;touch-action:none;user-select:none;text-align:center;font-size:12px;color:#64748b;padding:2px 0 8px}
     button{font:inherit;cursor:pointer;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#334155;padding:9px 7px;width:100%;text-align:left;overflow-wrap:anywhere}
     button:hover{background:#eff6ff;border-color:#93c5fd}button:focus-visible{outline:2px solid #2563eb}
-    .actions{display:flex;justify-content:center}
+    .actions{display:flex;justify-content:center}.ed2k-actions{display:grid;gap:5px;margin-bottom:8px}.ed2k-actions:empty{display:none}.ed2k-actions button{text-align:center;font-weight:600}
     button[data-action="reply"]{width:auto;max-width:100%;min-width:112px;display:inline-flex;align-items:center;justify-content:center;padding:7px 14px;border-radius:999px;font-weight:600;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border-color:#2563eb;box-shadow:0 2px 6px #2563eb26}
     button[data-action="reply"]:hover{background:linear-gradient(135deg,#2563eb,#1d4ed8)}button:disabled{opacity:.55;cursor:wait}
     .attachments{margin-bottom:12px}.attachments[hidden]{display:none}
@@ -10456,6 +10582,15 @@ ${title}`;
     .status{font-size:12px;max-height:25vh;overflow:auto;overflow-wrap:anywhere}.status:empty{display:none}
   </style><div class="bar"><div class="handle" title="\u62D6\u52A8\u79FB\u52A8\uFF1B\u53CC\u51FB\u6253\u5F0098\u5802\u8BBE\u7F6E">\u283F 98\u5802\u52A9\u624B</div><section class="attachments" hidden><div class="files-heading"></div><div class="attachment-list"><div class="choices"></div><div class="hidden-notice" role="note"></div></div></section><div class="actions"></div><div class="status" role="status" aria-live="polite"></div></div>`;
     const actions = root.querySelector(".actions");
+    const ed2kActions = document2.createElement("div");
+    ed2kActions.className = "ed2k-actions";
+    actions.before(ed2kActions);
+    let renderedEd2k = [];
+    const renderEd2kActions = () => {
+      if (ed2kEntries.length === renderedEd2k.length && ed2kEntries.every((entry, i) => entry.block === renderedEd2k[i].block && entry.links.length === renderedEd2k[i].links.length)) return;
+      renderedEd2k = ed2kEntries;
+      ed2kActions.replaceChildren(...ed2kEntries.map(({ block, links }) => createEd2kControl(document2, block, links.length, true)));
+    };
     const choices = root.querySelector(".choices");
     const attachmentsSection = root.querySelector(".attachments");
     const filesHeading = root.querySelector(".files-heading");
@@ -10540,7 +10675,7 @@ ${title}`;
         return;
       }
       const attachments = collectSehuatangAttachments(document2);
-      if (!attachments.length && !hiddenReply) status.textContent = "\u697C\u4E3B\u6682\u65E0\u53EF\u89C1\u6587\u4EF6\u9644\u4EF6\uFF1B\u9690\u85CF\u6216\u4ED8\u8D39\u9644\u4EF6\u8BF7\u6309\u7F51\u7AD9\u63D0\u793A\u64CD\u4F5C\u3002";
+      if (!attachments.length && !hiddenReply && !ed2kEntries.length) status.textContent = "\u697C\u4E3B\u6682\u65E0\u53EF\u89C1\u6587\u4EF6\u9644\u4EF6\uFF1B\u9690\u85CF\u6216\u4ED8\u8D39\u9644\u4EF6\u8BF7\u6309\u7F51\u7AD9\u63D0\u793A\u64CD\u4F5C\u3002";
       else if (attachments.length) {
         filesHeading.textContent = `\u697C\u4E3B\u9644\u4EF6\uFF08${attachments.length}\uFF09`;
         attachmentsSection.hidden = false;
@@ -10661,7 +10796,8 @@ ${name}`;
       actions.append(replyButton);
     }
     document2.body.append(host);
-    if (settings.attachments || settings.download || settings.hiddenNotice) {
+    renderEd2kActions();
+    if (settings.attachments || settings.download || settings.hiddenNotice || settings.ed2kExport) {
       renderAttachments();
       const post = originalPost(document2);
       if (post && typeof view.MutationObserver === "function") {
@@ -10669,9 +10805,14 @@ ${name}`;
         let previous = collect();
         let previousHidden = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2);
         attachmentObserver = new view.MutationObserver(() => {
+          const previousEd2kCount = ed2kEntries.length;
+          if (settings.ed2kExport) {
+            ed2kEntries = installSehuatangEd2kExport(document2);
+            renderEd2kActions();
+          }
           const current = collect();
           const currentHidden = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document2);
-          if (currentHidden === previousHidden && current.length === previous.length && current.every((file, i) => file.link === previous[i].link && file.name === previous[i].name)) return;
+          if (previousEd2kCount === ed2kEntries.length && currentHidden === previousHidden && current.length === previous.length && current.every((file, i) => file.link === previous[i].link && file.name === previous[i].name)) return;
           previous = current;
           previousHidden = currentHidden;
           renderAttachments();
