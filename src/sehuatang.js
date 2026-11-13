@@ -1,9 +1,11 @@
 import { DOWNLOAD_ICON_PATH } from './download-icon.js';
 import { organizeSettingsPanel } from './settings-layout.js';
 import { downloadSehuatangNamedTxtBlob } from './sehuatang-download.js';
+import { saveDownloadBlob } from './blob-download.js';
 const PREFIX = 'x1080x-ex:sehuatang-';
 export const SHT_ATTACHMENTS_ENABLED_KEY = PREFIX + 'attachments-enabled';
 export const SHT_DOWNLOAD_ENABLED_KEY = PREFIX + 'attachment-download-enabled';
+export const SHT_ED2K_EXPORT_ENABLED_KEY = PREFIX + 'ed2k-export-enabled';
 export const SHT_RENAME_TXT_ENABLED_KEY = PREFIX + 'rename-txt-by-title-enabled';
 export const SHT_REPLY_ENABLED_KEY = PREFIX + 'quick-reply-enabled';
 export const SHT_HIDDEN_NOTICE_ENABLED_KEY = PREFIX + 'reply-hidden-notice-enabled';
@@ -32,6 +34,7 @@ export function getSehuatangSettings() {
   return {
     attachments: read(SHT_ATTACHMENTS_ENABLED_KEY, true) !== false,
     download: read(SHT_DOWNLOAD_ENABLED_KEY, true) !== false,
+    ed2kExport: read(SHT_ED2K_EXPORT_ENABLED_KEY, true) !== false,
     renameText: read(SHT_RENAME_TXT_ENABLED_KEY, true) !== false,
     reply: read(SHT_REPLY_ENABLED_KEY, true) !== false,
     hiddenNotice: read(SHT_HIDDEN_NOTICE_ENABLED_KEY, true) !== false,
@@ -67,6 +70,134 @@ export function hasSehuatangReplyHiddenContent(document) {
     }
     return true;
   });
+}
+
+// Export only visible, user-authorized resource code blocks in the original post.
+const ED2K_EXPORT_SELECTOR = '[data-x1080x-ed2k-export]';
+const ed2kDownloadStates = new WeakMap();
+const ed2kControls = new WeakMap();
+const ed2kPending = new WeakSet();
+
+export function extractEd2kLinks(text) {
+  const links = String(text || '').match(/ed2k:\/\/\|file\|[^|\r\n]+\|\d+\|[a-f0-9]{32}\|\//gi) || [];
+  const seen = new Set();
+  return links.filter(link => {
+    const parts = link.split('|');
+    const key = parts[3] + ':' + parts[4].toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isVisibleResourceNode(node, body) {
+  if (node.closest('.quote, blockquote, .locked, .tip, [id$="_menu"], [hidden]')) return false;
+  for (let el = node; el && body.contains(el); el = el.parentElement) {
+    const style = node.ownerDocument.defaultView?.getComputedStyle(el);
+    if (style?.display === 'none' || style?.visibility === 'hidden') return false;
+  }
+  return true;
+}
+
+export function collectSehuatangEd2kBlocks(document) {
+  const body = originalPost(document)?.querySelector('[id^="postmessage_"]');
+  if (!body) return [];
+  const blocks = [...body.querySelectorAll('.blockcode, pre')].filter(node =>
+    !node.parentElement?.closest('.blockcode, pre') && isVisibleResourceNode(node, body));
+  return blocks.flatMap(block => {
+    const rows = [...block.querySelectorAll('li')];
+    const nodes = rows.length ? rows : [block];
+    const text = nodes.filter(node => isVisibleResourceNode(node, body)).map(node => {
+      const walker = document.createTreeWalker(node, 4);
+      const chunks = [];
+      while (walker.nextNode()) {
+        const parent = walker.currentNode.parentElement;
+        if (parent && !parent.closest(ED2K_EXPORT_SELECTOR)
+          && !parent.closest('script, style, em') && isVisibleResourceNode(parent, body)) {
+          chunks.push(walker.currentNode.nodeValue);
+        }
+      }
+      const hrefs = [...node.querySelectorAll('a[href^="ed2k:" i]')]
+        .filter(anchor => isVisibleResourceNode(anchor, body)).map(anchor => anchor.getAttribute('href'));
+      return [chunks.join(''), ...hrefs].join('\n');
+    }).join('\n');
+    const links = extractEd2kLinks(text);
+    return links.length ? [{ block, links }] : [];
+  });
+}
+
+function createEd2kControl(document, block, count, floating = false) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  const kind = floating ? 'floating' : 'inline';
+  if (floating) button.dataset.action = 'download-ed2k';
+  else {
+    button.dataset.x1080xEd2kExport = '1';
+    button.style.cssText = 'display:inline-flex!important;align-items:center;margin:4px 8px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:#2563eb;font:inherit;cursor:pointer;vertical-align:middle;position:relative';
+  }
+  const controls = ed2kControls.get(block) || {};
+  ed2kControls.set(block, controls);
+  const paint = (error = '') => {
+    const state = ed2kDownloadStates.get(block);
+    const pending = ed2kPending.has(block);
+    button.disabled = pending;
+    button.dataset.downloadState = state || 'idle';
+    button.textContent = pending ? '正在下载…' : state === 'saved' ? '✓ 已下载 TXT'
+      : state === 'started' ? '✓ 已发起下载' : error ? '下载失败，点击重试'
+      : floating ? '下载 ED2K TXT（' + count + ' 条）' : '下载 TXT';
+    button.title = error || (state === 'saved' ? '已确认下载' : state === 'started' ? '已提交下载，请查看浏览器下载列表' : '导出当前资源区块的 ED2K 链接');
+    button.style.background = state ? '#dcfce7' : '#f8fafc';
+    button.style.color = state ? '#166534' : '#2563eb';
+  };
+  controls[kind] = { button, paint };
+  const sync = error => Object.values(controls).forEach(control => control.paint(error));
+  paint();
+  button.addEventListener('click', async () => {
+    if (!getSehuatangSettings().ed2kExport || ed2kPending.has(block)) return;
+    const current = collectSehuatangEd2kBlocks(document);
+    const entry = current.find(item => item.block === block);
+    if (!entry) return;
+    const name = sehuatangAttachmentDownloadName(document, 'ED2K.txt', true);
+    const ordinal = current.indexOf(entry) + 1;
+    const filename = current.length > 1 ? name.replace(/\.txt$/i, ' (' + ordinal + ').txt') : name;
+    ed2kPending.add(block);
+    sync();
+    let error = '';
+    try {
+      const blob = new document.defaultView.Blob([entry.links.join('\r\n') + '\r\n'], { type: 'text/plain;charset=utf-8' });
+      const result = await saveDownloadBlob(blob, filename, document, { browserDownload: true });
+      ed2kDownloadStates.set(block, result.confirmed ? 'saved' : 'started');
+    } catch (cause) {
+      error = '下载失败：' + (cause?.message || String(cause));
+    } finally {
+      ed2kPending.delete(block);
+      sync(error);
+    }
+  });
+  return button;
+}
+
+export function installSehuatangEd2kExport(document) {
+  if (!getSehuatangSettings().ed2kExport) {
+    document.querySelectorAll(ED2K_EXPORT_SELECTOR).forEach(button => button.remove());
+    return [];
+  }
+  const blocks = collectSehuatangEd2kBlocks(document);
+  const active = new Set(blocks.map(({ block }) => block));
+  document.querySelectorAll(ED2K_EXPORT_SELECTOR).forEach(button => {
+    if (!active.has(button.closest('.blockcode, pre') || button.previousElementSibling)) button.remove();
+  });
+  blocks.forEach(({ block, links }) => {
+    let button = block.querySelector(ED2K_EXPORT_SELECTOR);
+    if (!button && block.nextElementSibling?.matches(ED2K_EXPORT_SELECTOR)) button = block.nextElementSibling;
+    if (button) return;
+    button = createEd2kControl(document, block, links.length);
+    const copy = block.querySelector('em, [onclick*="copycode"], [onclick*="copyCode"]');
+    if (copy) copy.after(button);
+    else if (block.matches('pre')) block.after(button);
+    else block.append(button);
+  });
+  return blocks;
 }
 
 export function collectSehuatangAttachments(document) {
@@ -217,6 +348,10 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
         <span><strong>下载 TXT 附件按帖子标题命名</strong><small style="display:block;color:#64748b;margin-top:3px">默认开启。主要 TXT 优先通过脚本管理器读取 Blob 并按帖子标题下载，无需选择 Chrome 下载文件夹；目录、清单及 ZIP 保持原名和原生下载方式。读取失败时提供原生下载按钮。</small></span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
+        <input type="checkbox" data-setting="ed2k-export" style="margin-top:3px">
+        <span><strong>ED2K 资源链接导出 TXT</strong><small style="display:block;color:#64748b;margin-top:3px">楼主可见资源代码区旁添加下载按钮，按帖子标题保存合法授权链接，不下载实际资源。</small></span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px">
         <input type="checkbox" data-setting="hidden-notice" style="margin-top:3px">
         <span><strong>回复后可见内容提示</strong><small style="display:block;color:#64748b;margin-top:3px">提示楼主回复后可见的内容，不会自动绕过限制。</small></span>
       </label>
@@ -246,7 +381,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     </div>`;
   organizeSettingsPanel(form, [
     { key: 'attachments', title: '附件功能', description: '附件定位、下载和内容提示',
-      settings: ['attachments', 'download', 'rename-text', 'hidden-notice'] },
+      settings: ['attachments', 'download', 'rename-text', 'ed2k-export', 'hidden-notice'] },
     { key: 'reply', title: '快捷回复', description: '启用快捷回复并设置回复短语',
       settings: ['reply', 'phrase'] },
     { key: 'position', title: '浮动栏位置', description: '浮动按钮的位置管理',
@@ -256,6 +391,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
   const field = (name) => form.querySelector(`[data-setting="${name}"]`);
   field('attachments').checked = settings.attachments;
   field('download').checked = settings.download;
+  field('ed2k-export').checked = settings.ed2kExport;
   field('rename-text').checked = settings.renameText;
   field('reply').checked = settings.reply;
   field('hidden-notice').checked = settings.hiddenNotice;
@@ -277,6 +413,7 @@ export function openSehuatangSettings(document = globalThis.document, { embedded
     }
     save(SHT_ATTACHMENTS_ENABLED_KEY, field('attachments').checked);
     save(SHT_DOWNLOAD_ENABLED_KEY, field('download').checked);
+    save(SHT_ED2K_EXPORT_ENABLED_KEY, field('ed2k-export').checked);
     save(SHT_RENAME_TXT_ENABLED_KEY, field('rename-text').checked);
     save(SHT_REPLY_ENABLED_KEY, field('reply').checked);
     save(SHT_HIDDEN_NOTICE_ENABLED_KEY, field('hidden-notice').checked);
@@ -303,9 +440,10 @@ export function installSehuatangToolbar(document) {
   const initiatedAttachments = initiatedAttachmentsByDocument.get(document) || new Map();
   initiatedAttachmentsByDocument.set(document, initiatedAttachments);
   const settings = getSehuatangSettings();
-  if (!isSehuatangHost(view.location) || !isThread(view.location)
-    || (!settings.attachments && !settings.download && !settings.reply
-      && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document)))) return null;
+  if (!isSehuatangHost(view.location) || !isThread(view.location)) return null;
+  let ed2kEntries = installSehuatangEd2kExport(document);
+  if (!settings.attachments && !settings.download && !settings.reply && !ed2kEntries.length
+      && !(settings.hiddenNotice && hasSehuatangReplyHiddenContent(document))) return null;
   const host = document.createElement('div');
   host.id = TOOLBAR_ID;
   Object.assign(host.style, { position: 'fixed', zIndex: '2147483640', width: '220px', maxWidth: 'calc(100vw - 16px)' });
@@ -316,7 +454,7 @@ export function installSehuatangToolbar(document) {
     .handle{cursor:move;touch-action:none;user-select:none;text-align:center;font-size:12px;color:#64748b;padding:2px 0 8px}
     button{font:inherit;cursor:pointer;border:1px solid #dbe3ee;border-radius:7px;background:#f8fafc;color:#334155;padding:9px 7px;width:100%;text-align:left;overflow-wrap:anywhere}
     button:hover{background:#eff6ff;border-color:#93c5fd}button:focus-visible{outline:2px solid #2563eb}
-    .actions{display:flex;justify-content:center}
+    .actions{display:flex;justify-content:center}.ed2k-actions{display:grid;gap:5px;margin-bottom:8px}.ed2k-actions:empty{display:none}.ed2k-actions button{text-align:center;font-weight:600}
     button[data-action="reply"]{width:auto;max-width:100%;min-width:112px;display:inline-flex;align-items:center;justify-content:center;padding:7px 14px;border-radius:999px;font-weight:600;background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;border-color:#2563eb;box-shadow:0 2px 6px #2563eb26}
     button[data-action="reply"]:hover{background:linear-gradient(135deg,#2563eb,#1d4ed8)}button:disabled{opacity:.55;cursor:wait}
     .attachments{margin-bottom:12px}.attachments[hidden]{display:none}
@@ -335,6 +473,15 @@ export function installSehuatangToolbar(document) {
     .status{font-size:12px;max-height:25vh;overflow:auto;overflow-wrap:anywhere}.status:empty{display:none}
   </style><div class="bar"><div class="handle" title="拖动移动；双击打开98堂设置">⠿ 98堂助手</div><section class="attachments" hidden><div class="files-heading"></div><div class="attachment-list"><div class="choices"></div><div class="hidden-notice" role="note"></div></div></section><div class="actions"></div><div class="status" role="status" aria-live="polite"></div></div>`;
   const actions = root.querySelector('.actions');
+  const ed2kActions = document.createElement('div');
+  ed2kActions.className = 'ed2k-actions';
+  actions.before(ed2kActions);
+  let renderedEd2k = [];
+  const renderEd2kActions = () => {
+    if (ed2kEntries.length === renderedEd2k.length && ed2kEntries.every((entry, i) => entry.block === renderedEd2k[i].block && entry.links.length === renderedEd2k[i].links.length)) return;
+    renderedEd2k = ed2kEntries;
+    ed2kActions.replaceChildren(...ed2kEntries.map(({ block, links }) => createEd2kControl(document, block, links.length, true)));
+  };
   const choices = root.querySelector('.choices');
   const attachmentsSection = root.querySelector('.attachments');
   const filesHeading = root.querySelector('.files-heading');
@@ -421,7 +568,7 @@ export function installSehuatangToolbar(document) {
       return;
     }
     const attachments = collectSehuatangAttachments(document);
-    if (!attachments.length && !hiddenReply) status.textContent = '楼主暂无可见文件附件；隐藏或付费附件请按网站提示操作。';
+    if (!attachments.length && !hiddenReply && !ed2kEntries.length) status.textContent = '楼主暂无可见文件附件；隐藏或付费附件请按网站提示操作。';
     else if (attachments.length) {
       filesHeading.textContent = `楼主附件（${attachments.length}）`;
       attachmentsSection.hidden = false;
@@ -535,7 +682,8 @@ export function installSehuatangToolbar(document) {
     actions.append(replyButton);
   }
   document.body.append(host);
-  if (settings.attachments || settings.download || settings.hiddenNotice) {
+  renderEd2kActions();
+  if (settings.attachments || settings.download || settings.hiddenNotice || settings.ed2kExport) {
     renderAttachments();
     const post = originalPost(document);
     if (post && typeof view.MutationObserver === 'function') {
@@ -543,9 +691,14 @@ export function installSehuatangToolbar(document) {
       let previous = collect();
       let previousHidden = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document);
       attachmentObserver = new view.MutationObserver(() => {
+        const previousEd2kCount = ed2kEntries.length;
+        if (settings.ed2kExport) {
+          ed2kEntries = installSehuatangEd2kExport(document);
+          renderEd2kActions();
+        }
         const current = collect();
         const currentHidden = settings.hiddenNotice && hasSehuatangReplyHiddenContent(document);
-        if (currentHidden === previousHidden && current.length === previous.length && current.every((file, i) => (
+        if (previousEd2kCount === ed2kEntries.length && currentHidden === previousHidden && current.length === previous.length && current.every((file, i) => (
           file.link === previous[i].link && file.name === previous[i].name
         ))) return;
         previous = current;

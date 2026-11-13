@@ -60,7 +60,7 @@ test('98堂 domains are exact and settings preserve defaults on old installation
   for (const hostname of ['sehuatang.org', 'www.sehuatang.org']) assert.equal(isSehuatangHost({ hostname }), true);
   for (const hostname of ['fake-sehuatang.org', 'sehuatang.org.evil.example', 'hdblog.me']) assert.equal(isSehuatangHost({ hostname }), false);
   withSettings(new Map(), () => assert.deepEqual(getSehuatangSettings(), {
-    attachments: true, download: true, renameText: true, reply: true, hiddenNotice: true, phrase: DEFAULT_SHT_REPLY_PHRASE,
+    attachments: true, download: true, ed2kExport: true, renameText: true, reply: true, hiddenNotice: true, phrase: DEFAULT_SHT_REPLY_PHRASE,
   }));
 });
 
