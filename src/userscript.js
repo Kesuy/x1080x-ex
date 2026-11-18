@@ -55,7 +55,7 @@ import {
   compatibleHistoryKeys,
 } from './history-migration.js';
 import { planHistoryRecovery } from './history-recovery.js';
-import { HISTORY_LEDGER_REVISION_KEY, durableVisitMarkerKey, listedDurableVisitIds } from './history-ledger.js';
+import { HISTORY_LEDGER_REVISION_KEY, durableVisitMarkerKey, listedDurableVisitIds, readRecentHistoryArray } from './history-ledger.js';
 import { showHistoryImportDialog } from './history-import.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
@@ -467,7 +467,7 @@ function readBatchOpenHistory() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function') return [];
   const rawStored = GM_getValue(config.historyKey, []);
-  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
+  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : readRecentHistoryArray(rawStored);
   // Previous beta releases temporarily saved modern resource IDs in the old key.
   const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
   const aliases = config.kind === 'agaghhh'
@@ -768,7 +768,7 @@ function rememberBatchOpenedThread(url, titleText = '') {
   rememberDurableVisitMarker(id);
   if (config.kind === 'hdblog') rememberJavclubVisitMarker(id);
   const rawStored = GM_getValue(config.historyKey, []);
-  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
+  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : readRecentHistoryArray(rawStored);
   const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
   history.push(id);
   const limit = batchOpenHistoryLimit();
