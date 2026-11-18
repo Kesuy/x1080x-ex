@@ -1594,14 +1594,17 @@ test('split batch button switches between unopened-only and all without visiting
     await waitFor(() => button.textContent === '批量打开本页（2）', 'all mode must become default');
     assert.deepEqual(opened, ['401', '402']);
 
-    // Simulate another unvisited item appearing after the all-mode run.
+    // Simulate a new unvisited item after the all-mode run. Clearing the
+    // recent array must not make previously opened 402 unread again.
     values.set('x1080x-ex:agaghhh-batch-open-history', ['tid:401']);
+    doc.querySelector('#threadlist table').insertAdjacentHTML('beforeend',
+      '<tbody id="normalthread_403"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=403">新主题</a></th></tr></tbody>');
     trigger.click();
     assert.match(unread.textContent, /仅打开未浏览（1）/);
     unread.click();
     assert.equal(values.get('x1080x-ex:agaghhh-batch-open-unopened-only'), true);
-    await waitFor(() => opened.length === 3, 'unread mode must skip visited 401');
-    assert.deepEqual(opened, ['401', '402', '402']);
+    await waitFor(() => opened.length === 3, 'unread mode must skip visited 401 and 402');
+    assert.deepEqual(opened, ['401', '402', '403']);
   } finally {
     dom.window.setTimeout = oldTimeout;
     dom.window.clearTimeout = oldClearTimeout;
@@ -2076,7 +2079,7 @@ test('modern board recognizes independent visits after a stale shared-array over
   const dom = new JSDOM('<!doctype html><html><body><div class="thread-list"><div class="pgt"></div>'
     + '<article class="thread-row"><a class="resource-title" href="/resources/recordA">A</a></article>'
     + '<article class="thread-row"><a class="resource-title" href="/resources/recordB">B</a></article>'
-    + '</div></body></html>', { url: 'https://1080xin.com/boards/history-ledger-test' });
+    + '</div></body></html>', { url: 'https://1080xin.com/boards/historyLedgerTest' });
   const restore = installDomGlobals(dom.window);
   const names = ['GM_listValues', 'GM_deleteValue', 'GM_addValueChangeListener'];
   const previous = names.map((name) => [name, globalThis[name]]);
@@ -2131,7 +2134,7 @@ test('modern board recognizes independent visits after a stale shared-array over
 test('a history cap evicts from the recent array but retains the old record as an independent marker', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div class="thread-list"><div class="pgt"></div>'
     + '<article class="thread-row"><a class="resource-title" href="/resources/newItem">New</a></article>'
-    + '</div></body></html>', { url: 'https://1080xin.com/boards/history-eviction-test' });
+    + '</div></body></html>', { url: 'https://1080xin.com/boards/historyEvictionTest' });
   const restore = installDomGlobals(dom.window);
   const values = new Map([
     ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
