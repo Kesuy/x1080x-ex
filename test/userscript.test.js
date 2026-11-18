@@ -2107,7 +2107,7 @@ test('modern board recognizes independent visits after a stale shared-array over
     const second = dom.window.document.querySelector('[href="/resources/recordB"]');
     assert.equal(first.getAttribute('data-x1080x-batch-opened'), '1');
     assert.equal(second.getAttribute('data-x1080x-batch-opened'), null);
-    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（1)'.replace(')', '）'));
+    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（1）');
     // Simulate two tabs both reading the same old array, with the second
     // tab's write wiping out the first tab's array entry.
     values.set(marker + 'resource:recordB', Date.now());
