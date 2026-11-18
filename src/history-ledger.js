@@ -17,3 +17,11 @@ export function listedDurableVisitIds(keys) {
     .map((key) => key.slice(HISTORY_LEDGER_PREFIX.length))
     .filter((id) => durableVisitMarkerKey(id)))];
 }
+
+/** Some earlier backups stored the recent-history array as JSON text. */
+export function readRecentHistoryArray(value) {
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { return []; }
+  }
+  return Array.isArray(value) ? value.filter((id) => typeof id === 'string') : [];
+}
