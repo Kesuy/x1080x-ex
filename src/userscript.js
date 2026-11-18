@@ -453,6 +453,9 @@ function batchThreadHistoryKeys(thread) {
 function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory())) {
   return batchThreadHistoryKeys(thread).some((key) => (
     history.has(key)
+    || (Boolean(durableVisitMarkerKey(key))
+      && typeof GM_getValue === 'function'
+      && GM_getValue(durableVisitMarkerKey(key), null) !== null)
     || (batchOpenHistoryConfig()?.kind === 'hdblog'
       && Boolean(javclubVisitMarkerKey(key))
       && typeof GM_getValue === 'function'
