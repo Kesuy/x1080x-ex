@@ -5,6 +5,7 @@ import {
   HISTORY_LEDGER_REVISION_KEY,
   durableVisitMarkerKey,
   listedDurableVisitIds,
+  readRecentHistoryArray,
 } from '../src/history-ledger.js';
 
 test('only valid thread IDs get independent durable keys', () => {
@@ -28,4 +29,10 @@ test('key enumeration deduplicates independent entries and rejects unrelated key
     null,
   ]), ['tid:4', 'resource:One']);
   assert.deepEqual(listedDurableVisitIds(null), []);
+});
+
+test('reads legacy JavClub arrays serialized as JSON strings', () => {
+  assert.deepEqual(readRecentHistoryArray('["post:11","post:12"]'), ['post:11', 'post:12']);
+  assert.deepEqual(readRecentHistoryArray('broken JSON'), []);
+  assert.deepEqual(readRecentHistoryArray(['post:11', null, 99]), ['post:11']);
 });
