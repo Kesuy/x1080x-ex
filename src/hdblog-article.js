@@ -1589,12 +1589,8 @@ export function openHdblogSettingsPanel(document = globalThis.document, { embedd
       GM_setValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY, batchProgressLocatorInput.checked);
       GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
       GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
-      if (typeof GM_getValue === 'function') {
-        const existingHistory = GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_KEY, []);
-        if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
-          GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_KEY, existingHistory.slice(-batchHistoryLimit));
-        }
-      }
+      // The limit applies only when appending new visits. Saving settings must
+      // never silently delete already recorded history.
       GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY, searchFilterInput.checked);
       GM_setValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY, browseFilterInput.checked);
       GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
