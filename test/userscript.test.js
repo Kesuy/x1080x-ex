@@ -2163,3 +2163,94 @@ test('a history cap evicts from the recent array but retains the old record as a
     dom.window.close();
   }
 });
+
+test('two JavClub background tabs keep both visits even if each sees a stale recent array', async () => {
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history', []],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
+  ]);
+  const oldList = globalThis.GM_listValues;
+  globalThis.GM_listValues = () => [...store.keys()];
+  try {
+    for (const id of ['1013749', '1013750']) {
+      const dom = new JSDOM('<!doctype html><body class="single-post"><main id="genesis-content">'
+        + '<article class="entry"><h1 class="entry-title">Sample article</h1></article></main></body>',
+      { url: 'https://javclub.me/' + id + '.html' });
+      const restore = installDomGlobals(dom.window);
+      // Both tabs read the same stale array snapshot, so the final array
+      // contains only the most recently written item.
+      globalThis.GM_getValue = (key, fallback) => key === 'x1080x-ex:hdblog-batch-open-history'
+        ? [] : store.has(key) ? store.get(key) : fallback;
+      globalThis.GM_setValue = (key, value) => store.set(key, value);
+      try {
+        await import('../src/userscript.js?javclub-race-' + id + '-' + Date.now());
+      } finally { restore(); dom.window.close(); }
+    }
+    assert.deepEqual(store.get('x1080x-ex:hdblog-batch-open-history'), ['post:1013750']);
+    for (const id of ['1013749', '1013750']) {
+      assert.ok(store.has('x1080x-ex:visited-id-v3:post:' + id), 'durable marker ' + id);
+      assert.ok(store.has('x1080x-ex:hdblog-visited-id-v2:post:' + id), 'older JavClub marker ' + id);
+    }
+    const list = new JSDOM('<!doctype html><main id="genesis-content">'
+      + '<article class="entry"><h2 class="entry-title"><a href="/1013749.html">A</a></h2></article>'
+      + '<article class="entry"><h2 class="entry-title"><a href="/1013750/slug/">B</a></h2></article>'
+      + '</main>', { url: 'https://javclub.me/category/av-censored/' });
+    const restoreList = installDomGlobals(list.window);
+    globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+    globalThis.GM_listValues = () => [...store.keys()];
+    try {
+      await import('../src/userscript.js?javclub-race-list-' + Date.now());
+      for (const link of list.window.document.querySelectorAll('article.entry .entry-title a[href]')) {
+        assert.equal(link.getAttribute('data-x1080x-batch-opened'), '1');
+      }
+      assert.equal(list.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（0）');
+    } finally { restoreList(); list.window.close(); }
+  } finally {
+    if (oldList === undefined) delete globalThis.GM_listValues;
+    else globalThis.GM_listValues = oldList;
+  }
+});
+
+test('JavClub canonical and short URL variants still record their matching post IDs', async () => {
+  const store = new Map([['x1080x-ex:hdblog-batch-open-history-enabled', true]]);
+  for (const url of ['https://javclub.me/1013766/', 'https://javclub.me/?p=1013766']) {
+    const dom = new JSDOM('<!doctype html><body class="single-post">'
+      + '<main id="genesis-content"><article class="entry"><h1 class="entry-title">Example</h1></article></main></body>', { url });
+    const restore = installDomGlobals(dom.window);
+    globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+    globalThis.GM_setValue = (key, value) => store.set(key, value);
+    try {
+      await import('../src/userscript.js?javclub-url-' + Date.now() + '-' + url.length);
+      assert.ok(store.has('x1080x-ex:visited-id-v3:post:1013766'));
+      assert.ok(store.get('x1080x-ex:hdblog-batch-open-history').includes('post:1013766'));
+    } finally { restore(); dom.window.close(); }
+  }
+});
+
+test('JavClub re-marks late-rendered and replaced article cards without full reload', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><main id="genesis-content"></main></body></html>',
+    { url: 'https://javclub.me/category/av-censored/' });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1013749', 'post:1013750']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  try {
+    await import('../src/userscript.js?javclub-late-cards-' + Date.now());
+    const main = dom.window.document.querySelector('main#genesis-content');
+    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page'), null);
+    main.innerHTML = '<article class="entry"><h3 class="entry-title"><a href="/1013749.html">Late</a></h3></article>';
+    await waitFor(() => main.querySelector('a[href="/1013749.html"]')?.getAttribute('data-x1080x-batch-opened') === '1',
+      'late mounted article must be re-marked');
+    assert.ok(dom.window.document.getElementById('x1080x-ex-open-page'));
+    main.innerHTML = '<article class="entry"><div class="entry-title"><a href="/1013750/roe-573/">Replaced</a></div></article>';
+    await waitFor(() => main.querySelector('a[href="/1013750/roe-573/"]')?.getAttribute('data-x1080x-batch-opened') === '1',
+      'replaced cards must be marked without navigating or switching tabs');
+    await waitFor(() => dom.window.document.getElementById('x1080x-ex-open-page')?.textContent === '批量打开未浏览（0）',
+      'counter must follow replaced cards');
+  } finally { restore(); dom.window.close(); }
+});
