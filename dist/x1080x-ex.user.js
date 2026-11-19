@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         【x1080x 增强】下载附件和主楼图片
 // @namespace    https://github.com/Kesuy/x1080x-ex
-// @version      1.10.56
+// @version      1.10.57
 // @description  一键下载主楼资源，增强 JavClub 预览与搜索，支持 98堂附件定位与下载、可配置短语快捷回复及可拖动浮动按钮
 // @author       Kesuy
 // @homepageURL  https://github.com/Kesuy/x1080x-ex
@@ -144,7 +144,7 @@
       })),
       ...[...document2.querySelectorAll("main#genesis-content article.entry")].map((article) => ({
         kind: "wordpress",
-        link: article.querySelector(".entry-header .entry-title a[href], h2.entry-title a[href]")
+        link: article.querySelector(".entry-header .entry-title a[href], h2.entry-title a[href], .entry-title a[href]")
       })),
       ...[...document2.querySelectorAll("article.thread-row:not(.is-sticky)")].map((article) => ({
         kind: "modern",
@@ -1063,6 +1063,42 @@
     });
   }
 
+  // src/history-ledger.js
+  var HISTORY_LEDGER_PREFIX = "x1080x-ex:visited-id-v3:";
+  var HISTORY_LEDGER_REVISION_KEY = "x1080x-ex:visited-id-v3-revision";
+  function durableVisitMarkerKey(value) {
+    if (typeof value !== "string") return "";
+    const valid = /^(?:resource:[a-z0-9]+|tid:\d+|post:\d+)$/i.test(value) || /^url:\/[^\r\n]{1,500}$/.test(value);
+    return valid ? HISTORY_LEDGER_PREFIX + value : "";
+  }
+  function listedDurableVisitIds(keys) {
+    if (!Array.isArray(keys)) return [];
+    return [...new Set(keys.filter((key) => typeof key === "string" && key.startsWith(HISTORY_LEDGER_PREFIX)).map((key) => key.slice(HISTORY_LEDGER_PREFIX.length)).filter((id) => durableVisitMarkerKey(id)))];
+  }
+  function readRecentHistoryArray(value) {
+    if (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return Array.isArray(value) ? value.filter((id) => typeof id === "string") : [];
+  }
+  function wordpressPostIdFromUrl(value) {
+    try {
+      const url = new URL(value);
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password) return "";
+      const path = url.pathname;
+      const match = path.match(/^\/(\d+)(?:\.html)?\/?$/i) || path.match(/^\/(\d+)\/[^/]+\/?$/i);
+      if (match) return match[1];
+      const queryId = /^\/$/.test(path) ? url.searchParams.get("p") : null;
+      return queryId && /^\d+$/.test(queryId) ? queryId : "";
+    } catch {
+      return "";
+    }
+  }
+
   // src/hdblog-search.js
   var STORAGE_KEY = "x1080x-ex:hdblog-blocked-keywords";
   var HDBLOG_SEARCH_FILTER_ENABLED_KEY = "x1080x-ex:hdblog-search-filter-enabled";
@@ -1109,7 +1145,7 @@
   function isHdblogArticleUrl(value) {
     try {
       const url = new URL(value);
-      return isHdblogUrl(url.href) && (/^\/\d+\.html$/i.test(url.pathname) || /^\/\d+\/[^/]+\/?$/.test(url.pathname));
+      return isHdblogUrl(url.href) && Boolean(wordpressPostIdFromUrl(url.href));
     } catch {
       return false;
     }
@@ -2301,7 +2337,6 @@
   var HDBLOG_BATCH_OPEN_INTERVAL_MAX_KEY = "x1080x-ex:hdblog-batch-open-interval-max-ms";
   var HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY = "x1080x-ex:hdblog-batch-open-history-enabled";
   var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY = "x1080x-ex:hdblog-batch-open-history-limit";
-  var HDBLOG_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:hdblog-batch-open-history";
   var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY = "x1080x-ex:hdblog-batch-open-history-color";
   var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY = "x1080x-ex:hdblog-batch-open-unopened-only";
   var HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY = "x1080x-ex:hdblog-batch-progress-locator-enabled";
@@ -3704,12 +3739,6 @@ body.${ARTICLE_BODY_CLASS} #genesis-content.content {
         GM_setValue(HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY, batchProgressLocatorInput.checked);
         GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
         GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
-        if (typeof GM_getValue === "function") {
-          const existingHistory = GM_getValue(HDBLOG_BATCH_OPEN_HISTORY_KEY, []);
-          if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
-            GM_setValue(HDBLOG_BATCH_OPEN_HISTORY_KEY, existingHistory.slice(-batchHistoryLimit));
-          }
-        }
         GM_setValue(HDBLOG_SEARCH_FILTER_ENABLED_KEY2, searchFilterInput.checked);
         GM_setValue(HDBLOG_BROWSE_FILTER_ENABLED_KEY2, browseFilterInput.checked);
         GM_setValue(HDBLOG_BLOCKED_KEYWORDS_KEY, normalizeBlockedKeywordsText(keywordsInput.value));
@@ -6729,7 +6758,7 @@ ${settings.password}`;
   var AGAGHHH_BATCH_PROGRESS_MAP_KEY = "x1080x-ex:agaghhh-batch-progress-map";
   var HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-open-history-enabled";
   var HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2 = "x1080x-ex:hdblog-batch-open-history-limit";
-  var HDBLOG_BATCH_OPEN_HISTORY_KEY2 = "x1080x-ex:hdblog-batch-open-history";
+  var HDBLOG_BATCH_OPEN_HISTORY_KEY = "x1080x-ex:hdblog-batch-open-history";
   var HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2 = "x1080x-ex:hdblog-batch-open-history-color";
   var HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2 = "x1080x-ex:hdblog-batch-open-unopened-only";
   var HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2 = "x1080x-ex:hdblog-batch-progress-locator-enabled";
@@ -6946,7 +6975,7 @@ ${domains.join("\n")}
       return {
         enabledKey: HDBLOG_BATCH_OPEN_HISTORY_ENABLED_KEY2,
         limitKey: HDBLOG_BATCH_OPEN_HISTORY_LIMIT_KEY2,
-        historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY2,
+        historyKey: HDBLOG_BATCH_OPEN_HISTORY_KEY,
         colorKey: HDBLOG_BATCH_OPEN_HISTORY_COLOR_KEY2,
         unopenedOnlyKey: HDBLOG_BATCH_OPEN_UNOPENED_ONLY_KEY2,
         progressLocatorEnabledKey: HDBLOG_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2,
@@ -6996,8 +7025,8 @@ ${domains.join("\n")}
         const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
         return pathMatch ? `tid:${pathMatch[1]}` : "";
       }
-      const postMatch = url.pathname.match(/^\/(\d+)(?:\/|\.html$)/i);
-      if (postMatch) return `post:${postMatch[1]}`;
+      const postId = wordpressPostIdFromUrl(url.href);
+      if (postId) return `post:${postId}`;
       return `url:${url.pathname}${url.search}`;
     } catch {
       return "";
@@ -7021,17 +7050,6 @@ ${domains.join("\n")}
     if (!key || typeof GM_setValue !== "function") return;
     GM_setValue(key, Date.now());
     GM_setValue(JAVCLUB_VISIT_LEDGER_REVISION, `${id}:${Date.now()}:${Math.random()}`);
-    if (typeof GM_listValues !== "function" || typeof GM_deleteValue !== "function") return;
-    const ids = listJavclubVisitMarkers();
-    const limit = batchOpenHistoryLimit();
-    if (ids.length <= limit) return;
-    const oldest = ids.map((entry) => {
-      const entryKey = javclubVisitMarkerKey(entry);
-      return { entryKey, timestamp: Number(GM_getValue(entryKey, 0)) || 0 };
-    }).sort((a, b) => a.timestamp - b.timestamp);
-    for (const entry of oldest.slice(0, ids.length - limit)) {
-      if (entry.entryKey !== key) GM_deleteValue(entry.entryKey);
-    }
   }
   function forgetJavclubVisitMarker(id) {
     const key = javclubVisitMarkerKey(id);
@@ -7040,28 +7058,51 @@ ${domains.join("\n")}
       GM_setValue(JAVCLUB_VISIT_LEDGER_REVISION, `removed:${id}:${Date.now()}`);
     }
   }
+  function listDurableVisitMarkers() {
+    if (typeof GM_listValues !== "function") return [];
+    try {
+      return listedDurableVisitIds(GM_listValues());
+    } catch {
+      return [];
+    }
+  }
+  function rememberDurableVisitMarker(id) {
+    const key = durableVisitMarkerKey(id);
+    if (!key || typeof GM_setValue !== "function") return false;
+    GM_setValue(key, Date.now());
+    GM_setValue(HISTORY_LEDGER_REVISION_KEY, `${id}:${Date.now()}:${Math.random()}`);
+    return true;
+  }
+  function forgetDurableVisitMarker(id) {
+    const key = durableVisitMarkerKey(id);
+    if (!key || typeof GM_deleteValue !== "function") return;
+    GM_deleteValue(key);
+    GM_setValue(HISTORY_LEDGER_REVISION_KEY, `removed:${id}:${Date.now()}`);
+  }
   function batchThreadHistoryKeys(thread) {
     if (!thread) return [];
     const id = batchOpenHistoryId(thread.url);
-    const title = thread.link?.getAttribute("title") || thread.link?.textContent || "";
-    return [...new Set([id, ...historyAliasesForTitle(title)].filter(Boolean))];
+    const titles = [thread.link?.textContent, thread.link?.getAttribute("title")].filter((value) => typeof value === "string" && value.trim());
+    return [...new Set([id, ...titles.flatMap(historyAliasesForTitle)].filter(Boolean))];
   }
   function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory())) {
-    return batchThreadHistoryKeys(thread).some((key) => history.has(key) || batchOpenHistoryConfig()?.kind === "hdblog" && Boolean(javclubVisitMarkerKey(key)) && typeof GM_getValue === "function" && GM_getValue(javclubVisitMarkerKey(key), null) !== null);
+    return batchThreadHistoryKeys(thread).some((key) => history.has(key) || Boolean(durableVisitMarkerKey(key)) && typeof GM_getValue === "function" && GM_getValue(durableVisitMarkerKey(key), null) !== null || batchOpenHistoryConfig()?.kind === "hdblog" && Boolean(javclubVisitMarkerKey(key)) && typeof GM_getValue === "function" && GM_getValue(javclubVisitMarkerKey(key), null) !== null);
   }
   function readBatchOpenHistory() {
     const config = batchOpenHistoryConfig();
     if (!config || typeof GM_getValue !== "function") return [];
     const rawStored = GM_getValue(config.historyKey, []);
-    const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : rawStored;
+    const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : readRecentHistoryArray(rawStored);
     const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
     const aliases = config.kind === "agaghhh" ? GM_getValue(AGAGHHH_HISTORY_ALIASES_KEY, []) : [];
     const resolvedAliases = config.kind === "agaghhh" ? [
       ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {})),
       ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}))
     ] : [];
+    const independentVisits = listDurableVisitMarkers().filter((id) => config.kind === "hdblog" ? /^(?:post:\d+|url:\/)/.test(id) : config.modern ? /^resource:[a-z0-9]+$/i.test(id) : /^tid:\d+$/.test(id));
     const values = [
       ...Array.isArray(stored) ? stored : [],
+      ...independentVisits,
       ...config.kind === "hdblog" ? listJavclubVisitMarkers() : [],
       ...Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : [],
       ...Array.isArray(aliases) ? aliases : [],
@@ -7125,7 +7166,10 @@ ${domains.join("\n")}
     const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
     const legacyKeys = compatibleHistoryKeys(legacy);
     saveHistoryAliases(legacyKeys.filter(isUsableHistoryAlias));
-    const tids = [...new Set(legacyKeys.map(legacyTidFromHistoryValue).filter(Boolean))];
+    const tids = [...new Set([
+      ...legacyKeys.map(legacyTidFromHistoryValue),
+      ...listDurableVisitMarkers().filter((id) => /^tid:\d+$/.test(id)).map((id) => id.slice(4))
+    ].filter(Boolean))];
     const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
     const attemptedAt = state?.resolverVersion === 2 && state?.attemptedAt && typeof state.attemptedAt === "object" ? { ...state.attemptedAt } : {};
     const resolved = state?.resolved && typeof state.resolved === "object" ? { ...state.resolved } : {};
@@ -7275,12 +7319,17 @@ ${domains.join("\n")}
     if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== "function") return false;
     const id = batchOpenHistoryId(url);
     if (!id) return false;
+    rememberDurableVisitMarker(id);
     if (config.kind === "hdblog") rememberJavclubVisitMarker(id);
     const rawStored = GM_getValue(config.historyKey, []);
-    const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : rawStored;
+    const stored = config.kind === "agaghhh" ? compatibleHistoryKeys(rawStored) : readRecentHistoryArray(rawStored);
     const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
     history.push(id);
-    GM_setValue(config.historyKey, history.slice(-batchOpenHistoryLimit()));
+    const limit = batchOpenHistoryLimit();
+    for (const evicted of history.slice(0, Math.max(0, history.length - limit))) {
+      rememberDurableVisitMarker(evicted);
+    }
+    GM_setValue(config.historyKey, history.slice(-limit));
     let title = titleText;
     try {
       if (!title && new URL(url, location.href).href === location.href) {
@@ -7302,7 +7351,11 @@ ${domains.join("\n")}
     }
     const css = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }
 .thread-list .resource-title:visited, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"],
-.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
+.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }
+main#genesis-content article.entry .entry-title a:visited,
+main#genesis-content article.entry .entry-title a[${BATCH_OPEN_HISTORY_ATTR}="1"],
+main#genesis-content article.entry .entry-title a:visited *,
+main#genesis-content article.entry .entry-title a[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
     if (style.textContent !== css) style.textContent = css;
     document2.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`).forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
     if (!isBatchOpenHistoryEnabled()) return 0;
@@ -7315,10 +7368,11 @@ ${domains.join("\n")}
     });
     return marked;
   }
-  function installJavclubHistoryRefresh(document2) {
-    if (document2.documentElement?.dataset.x1080xJavclubHistoryRefresh) return;
-    if (batchOpenHistoryConfig()?.kind !== "hdblog" || !isBatchOpenPage()) return;
-    document2.documentElement.dataset.x1080xJavclubHistoryRefresh = "1";
+  function installBatchHistoryRefresh(document2) {
+    if (document2.documentElement?.dataset.x1080xBatchHistoryRefresh) return;
+    const config = batchOpenHistoryConfig();
+    if (!config || !isBatchOpenPage()) return;
+    document2.documentElement.dataset.x1080xBatchHistoryRefresh = "1";
     let pending = null;
     const refresh = () => {
       if (pending !== null) return;
@@ -7338,9 +7392,15 @@ ${domains.join("\n")}
       if (!document2.hidden) refresh();
     });
     if (typeof GM_addValueChangeListener === "function") {
-      for (const key of [HDBLOG_BATCH_OPEN_HISTORY_KEY2, JAVCLUB_VISIT_LEDGER_REVISION]) {
-        GM_addValueChangeListener(key, refresh);
-      }
+      const watchedKeys = [config.historyKey, HISTORY_LEDGER_REVISION_KEY];
+      if (config.kind === "hdblog") watchedKeys.push(JAVCLUB_VISIT_LEDGER_REVISION);
+      if (config.modern) watchedKeys.push(
+        AGAGHHH_BATCH_OPEN_HISTORY_KEY,
+        AGAGHHH_HISTORY_ALIASES_KEY,
+        AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY,
+        AGAGHHH_HISTORY_RECOVERED_KEY
+      );
+      for (const key of watchedKeys) GM_addValueChangeListener(key, refresh);
     }
   }
   function isThreadPage2() {
@@ -7743,6 +7803,7 @@ ${domains.join("\n")}
       const historyId = batchOpenHistoryId(event.url);
       if (historyId && !state.previousHistory.has(historyId)) {
         const config = batchOpenHistoryConfig();
+        forgetDurableVisitMarker(historyId);
         if (config?.kind === "hdblog") forgetJavclubVisitMarker(historyId);
         if (config && typeof GM_getValue === "function" && typeof GM_setValue === "function") {
           const raw = GM_getValue(config.historyKey, []);
@@ -8881,7 +8942,8 @@ ${result.pageUrl}`);
     let previousUrl = location.href;
     let previousHistoryTitle = "";
     const rememberCurrentThread = () => {
-      if (!isThreadPage2() || !isBatchOpenHistoryEnabled()) return;
+      if (!isThreadPage2() || !isBatchOpenHistoryEnabled() || isCloudflareChallengePage(document)) return;
+      if (!document.querySelector(".thread-header h1, #first-post, #thread_subject")) return;
       const title = getThreadHeadingText(document);
       const key = `${location.href}
 ${title}`;
@@ -8938,6 +9000,38 @@ ${title}`;
       detectRouteChange();
       schedule();
     });
+    for (const method of ["pushState", "replaceState"]) {
+      const original = window.history[method];
+      if (typeof original !== "function") continue;
+      window.history[method] = function(...args) {
+        const result = original.apply(this, args);
+        if (detectRouteChange()) schedule();
+        return result;
+      };
+    }
+  }
+  function observeJavclubListing() {
+    if (!isAllowedHost(location.hostname, ["javclub.me", "hdblog.me"]) || isHdblogArticleUrl(location.href) || !document.body || typeof window.MutationObserver !== "function") return;
+    let timer = null;
+    const refresh = () => {
+      timer = null;
+      if (!isBatchOpenPage()) return;
+      applyBatchOpenHistory(document);
+      if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
+      installBatchHistoryRefresh(document);
+      const button = document.getElementById(BATCH_BUTTON_ID);
+      if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+    };
+    const observer = new window.MutationObserver((mutations) => {
+      const hasNewEntries = mutations.some((mutation) => [...mutation.addedNodes].some((node) => {
+        if (node.nodeType !== 1) return false;
+        return node.matches?.("main#genesis-content, article.entry, article.entry .entry-title, article.entry .entry-title a[href]") || Boolean(node.querySelector?.("main#genesis-content article.entry .entry-title a[href], article.entry .entry-title a[href]"));
+      }));
+      if (!hasNewEntries) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(refresh, 100);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   }
   registerSettingsMenu();
   if (isAllowedHost(location.hostname, getConfiguredDomains())) {
@@ -8946,7 +9040,7 @@ ${title}`;
       const expandHdblogPreview = typeof GM_getValue !== "function" || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY2, true) !== false;
       if (expandHdblogPreview) expandHdblogPreviewImages2();
       if (isThreadPage2()) {
-        if (isAgaghhhHost(location) && isBatchOpenHistoryEnabled()) {
+        if (isAgaghhhHost(location) && isBatchOpenHistoryEnabled() && (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname) || document.querySelector(".thread-header h1, #first-post"))) {
           rememberBatchOpenedThread(location.href);
         }
         addDownloadButton();
@@ -8958,10 +9052,11 @@ ${title}`;
       if (isBatchOpenPage()) {
         applyBatchOpenHistory(document);
         if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
-        installJavclubHistoryRefresh(document);
+        installBatchHistoryRefresh(document);
       }
       startAutomaticLegacyHistoryMigration();
       observeModernBoard();
+      observeJavclubListing();
       if (/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname) && readPendingModernBoardResume()) {
         resumeModernBoardProgressIfReady();
         window.setTimeout(() => {
@@ -8980,7 +9075,6 @@ ${title}`;
   var AGAGHHH_BATCH_OPEN_INTERVAL_MAX_KEY2 = "x1080x-ex:agaghhh-batch-open-interval-max-ms";
   var AGAGHHH_BATCH_OPEN_HISTORY_ENABLED_KEY2 = "x1080x-ex:agaghhh-batch-open-history-enabled";
   var AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY2 = "x1080x-ex:agaghhh-batch-open-history-limit";
-  var AGAGHHH_BATCH_OPEN_HISTORY_KEY2 = "x1080x-ex:agaghhh-batch-open-history";
   var AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY2 = "x1080x-ex:agaghhh-batch-open-history-color";
   var AGAGHHH_BATCH_OPEN_UNOPENED_ONLY_KEY2 = "x1080x-ex:agaghhh-batch-open-unopened-only";
   var AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2 = "x1080x-ex:agaghhh-batch-progress-locator-enabled";
@@ -8998,7 +9092,6 @@ ${title}`;
   var AGAGHHH_REAL_ACTRESS_ENABLED_KEY = "x1080x-ex:agaghhh-real-actress-enabled";
   var AGAGHHH_HDBLOG_PREVIEW_ENABLED_KEY = "x1080x-ex:agaghhh-hdblog-preview-enabled";
   var LEGACY_AGAGHHH_ENHANCEMENT_ENABLED_KEY = "x1080x-ex:agaghhh-enhancement-enabled";
-  var MODERN_RESOURCE_HISTORY_KEY2 = "x1080x-ex:1080xin-resource-history";
   var SETTINGS_PANEL_ID = "x1080x-ex-settings-panel";
   var DOWNLOAD_BUTTON_ID2 = "x1080x-ex-download";
   var SEARCH_BUTTON_ID2 = "x1080x-ex-agaghhh-hdblog-search";
@@ -9978,14 +10071,6 @@ ${title}`;
         GM_setValue(AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY2, batchProgressLocatorInput.checked);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY2, batchHistoryLimit);
         GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY2, batchHistoryColorInput.value);
-        if (typeof GM_getValue === "function") {
-          const modern = document2.location?.hostname !== "agaghhh.cc" && !/^\/(?:forum|search)\.php$/i.test(document2.location?.pathname || "");
-          const historyKey = modern ? MODERN_RESOURCE_HISTORY_KEY2 : AGAGHHH_BATCH_OPEN_HISTORY_KEY2;
-          const existingHistory = GM_getValue(historyKey, []);
-          if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
-            GM_setValue(historyKey, existingHistory.slice(-batchHistoryLimit));
-          }
-        }
         GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY2, downloadInput.checked);
         GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
         GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
