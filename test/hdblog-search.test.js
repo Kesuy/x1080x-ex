@@ -8,6 +8,7 @@ import {
   filterSearchCandidates,
   isBlockedTitle,
   isHdblogSearchUrl,
+  isHdblogArticleUrl,
   parseBlockedKeywords,
   redirectTargetForSearch,
 } from '../src/hdblog-search.js';
@@ -172,5 +173,20 @@ test('normal-browse filtering leaves hdblog article detail pages untouched', () 
   } finally {
     if (oldGet === undefined) delete globalThis.GM_getValue;
     else globalThis.GM_getValue = oldGet;
+  }
+});
+
+test('JavClub article route detector also accepts short, numeric and ?p post formats', () => {
+  for (const url of [
+    'https://javclub.me/1013749/',
+    'https://javclub.me/1013749',
+    'https://javclub.me/1013749.html',
+    'https://javclub.me/1013749/start-662/',
+    'https://javclub.me/?p=1013749',
+    'https://hdblog.me/1013749/start-662/',
+  ]) assert.equal(isHdblogArticleUrl(url), true, url);
+  for (const url of ['https://javclub.me/category/av-censored/',
+    'https://javclub.me/?page_id=1013749', 'https://not-javclub.example/1013749.html']) {
+    assert.equal(isHdblogArticleUrl(url), false, url);
   }
 });
