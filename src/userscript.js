@@ -55,7 +55,7 @@ import {
   compatibleHistoryKeys,
 } from './history-migration.js';
 import { planHistoryRecovery } from './history-recovery.js';
-import { HISTORY_LEDGER_REVISION_KEY, durableVisitMarkerKey, listedDurableVisitIds, readRecentHistoryArray } from './history-ledger.js';
+import { HISTORY_LEDGER_REVISION_KEY, durableVisitMarkerKey, listedDurableVisitIds, readRecentHistoryArray, wordpressPostIdFromUrl } from './history-ledger.js';
 import { showHistoryImportDialog } from './history-import.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
@@ -373,8 +373,8 @@ function batchOpenHistoryId(value) {
       const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
       return pathMatch ? `tid:${pathMatch[1]}` : '';
     }
-    const postMatch = url.pathname.match(/^\/(\d+)(?=\/|\.html$|$)/i);
-    if (postMatch) return `post:${postMatch[1]}`;
+    const postId = wordpressPostIdFromUrl(url.href);
+    if (postId) return `post:${postId}`;
     return `url:${url.pathname}${url.search}`;
   } catch {
     return '';
