@@ -57,7 +57,7 @@ export function collectForumThreadLinks(document) {
     ...[...document.querySelectorAll('main#genesis-content article.entry')]
       .map((article) => ({
         kind: 'wordpress',
-        link: article.querySelector('.entry-header .entry-title a[href], h2.entry-title a[href]'),
+        link: article.querySelector('.entry-header .entry-title a[href], h2.entry-title a[href], .entry-title a[href]'),
       })),
     ...[...document.querySelectorAll('article.thread-row:not(.is-sticky)')]
       .map((article) => ({

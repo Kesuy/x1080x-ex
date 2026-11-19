@@ -1,3 +1,4 @@
+import { wordpressPostIdFromUrl } from './history-ledger.js';
 const STORAGE_KEY = 'x1080x-ex:hdblog-blocked-keywords';
 export const HDBLOG_SEARCH_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-search-filter-enabled';
 export const HDBLOG_BROWSE_FILTER_ENABLED_KEY = 'x1080x-ex:hdblog-browse-filter-enabled';
@@ -59,7 +60,7 @@ export function isHdblogSearchUrl(value) {
 export function isHdblogArticleUrl(value) {
   try {
     const url = new URL(value);
-    return isHdblogUrl(url.href) && (/^\/\d+\.html$/i.test(url.pathname) || /^\/\d+\/[^/]+\/?$/.test(url.pathname));
+    return isHdblogUrl(url.href) && Boolean(wordpressPostIdFromUrl(url.href));
   } catch {
     return false;
   }

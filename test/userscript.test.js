@@ -123,8 +123,8 @@ test('版块页按钮按 DOM 顺序逐个后台打开普通主题', async () => 
       ['tid:302', 'tid:301']
     );
     assert.equal(
-      dom.window.document.querySelector('a[href*="tid=303"]').hasAttribute('data-x1080x-batch-opened'),
-      false
+      dom.window.document.querySelector('a[href*="tid=303"]').getAttribute('data-x1080x-batch-opened'),
+      '1'
     );
     assert.equal(
       dom.window.document.querySelector('a[href*="tid=302"]').getAttribute('data-x1080x-batch-opened'),
@@ -1594,14 +1594,17 @@ test('split batch button switches between unopened-only and all without visiting
     await waitFor(() => button.textContent === '批量打开本页（2）', 'all mode must become default');
     assert.deepEqual(opened, ['401', '402']);
 
-    // Simulate another unvisited item appearing after the all-mode run.
+    // Simulate a new unvisited item after the all-mode run. Clearing the
+    // recent array must not make previously opened 402 unread again.
     values.set('x1080x-ex:agaghhh-batch-open-history', ['tid:401']);
+    doc.querySelector('#threadlist table').insertAdjacentHTML('beforeend',
+      '<tbody id="normalthread_403"><tr><th><a class="xst" href="forum.php?mod=viewthread&tid=403">新主题</a></th></tr></tbody>');
     trigger.click();
     assert.match(unread.textContent, /仅打开未浏览（1）/);
     unread.click();
     assert.equal(values.get('x1080x-ex:agaghhh-batch-open-unopened-only'), true);
-    await waitFor(() => opened.length === 3, 'unread mode must skip visited 401');
-    assert.deepEqual(opened, ['401', '402', '402']);
+    await waitFor(() => opened.length === 3, 'unread mode must skip visited 401 and 402');
+    assert.deepEqual(opened, ['401', '402', '403']);
   } finally {
     dom.window.setTimeout = oldTimeout;
     dom.window.clearTimeout = oldClearTimeout;
@@ -1864,6 +1867,8 @@ test('JavClub concurrent tabs keep separately keyed records even if the shared h
     const second = doc.querySelector('a[href="/1013750/roe-573/"]');
     assert.equal(first.getAttribute('data-x1080x-batch-opened'), '1');
     assert.equal(second.getAttribute('data-x1080x-batch-opened'), null);
+    assert.match(doc.getElementById('x1080x-ex-batch-open-history-style').textContent,
+      /article\.entry \.entry-title a\[data-x1080x-batch-opened="1"\] \*/);
     // Simulate another background tab having persisted its own visit first,
     // then overwriting the shared array with an older snapshot.
     store.set('x1080x-ex:hdblog-visited-id-v2:post:1013750', Date.now());
@@ -2070,4 +2075,184 @@ test('x1080x resumed board uses actual hydrated document and clears pending stat
     restore();
     dom.window.close();
   }
+});
+
+test('modern board recognizes independent visits after a stale shared-array overwrite and refreshes cross-tab', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div class="thread-list"><div class="pgt"></div>'
+    + '<article class="thread-row"><a class="resource-title" href="/resources/recordA">A</a></article>'
+    + '<article class="thread-row"><a class="resource-title" href="/resources/recordB">B</a></article>'
+    + '</div></body></html>', { url: 'https://1080xin.com/boards/historyLedgerTest' });
+  const restore = installDomGlobals(dom.window);
+  const names = ['GM_listValues', 'GM_deleteValue', 'GM_addValueChangeListener'];
+  const previous = names.map((name) => [name, globalThis[name]]);
+  const marker = 'x1080x-ex:visited-id-v3:';
+  const revision = 'x1080x-ex:visited-id-v3-revision';
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-unopened-only', true],
+    ['x1080x-ex:1080xin-resource-history', []],
+    [marker + 'resource:recordA', Date.now()],
+  ]);
+  const listeners = new Map();
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => {
+    values.set(key, value);
+    for (const callback of listeners.get(key) || []) callback(key, null, value, true);
+  };
+  globalThis.GM_listValues = () => [...values.keys()];
+  globalThis.GM_deleteValue = (key) => values.delete(key);
+  globalThis.GM_addValueChangeListener = (key, callback) => {
+    listeners.set(key, [...(listeners.get(key) || []), callback]);
+    return listeners.size;
+  };
+
+  try {
+    await import('../src/userscript.js?modern-ledger-refresh-' + Date.now());
+    const first = dom.window.document.querySelector('[href="/resources/recordA"]');
+    const second = dom.window.document.querySelector('[href="/resources/recordB"]');
+    assert.equal(first.getAttribute('data-x1080x-batch-opened'), '1');
+    assert.equal(second.getAttribute('data-x1080x-batch-opened'), null);
+    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（1）');
+    // Simulate two tabs both reading the same old array, with the second
+    // tab's write wiping out the first tab's array entry.
+    values.set(marker + 'resource:recordB', Date.now());
+    values.set('x1080x-ex:1080xin-resource-history', []);
+    globalThis.GM_setValue(revision, 'resource:recordB:other-tab');
+    await waitFor(() => second.getAttribute('data-x1080x-batch-opened') === '1',
+      'other-tab visit must appear without reloading the Next.js board');
+    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（0）');
+    assert.deepEqual(values.get('x1080x-ex:1080xin-resource-history'), [],
+      'lost-array simulation must not be repaired by overwriting other tab data');
+  } finally {
+    for (const [name, old] of previous) {
+      if (old === undefined) delete globalThis[name];
+      else globalThis[name] = old;
+    }
+    restore();
+    dom.window.close();
+  }
+});
+
+test('a history cap evicts from the recent array but retains the old record as an independent marker', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div class="thread-list"><div class="pgt"></div>'
+    + '<article class="thread-row"><a class="resource-title" href="/resources/newItem">New</a></article>'
+    + '</div></body></html>', { url: 'https://1080xin.com/boards/historyEvictionTest' });
+  const restore = installDomGlobals(dom.window);
+  const values = new Map([
+    ['x1080x-ex:agaghhh-batch-open-history-enabled', true],
+    ['x1080x-ex:agaghhh-batch-open-history-limit', 1],
+    ['x1080x-ex:1080xin-resource-history', ['resource:oldItem']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => values.has(key) ? values.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => values.set(key, value);
+  globalThis.GM_openInTab = () => {};
+  const oldTimeout = dom.window.setTimeout;
+  const oldClearTimeout = dom.window.clearTimeout;
+  dom.window.setTimeout = (callback) => { queueMicrotask(callback); return 1; };
+  dom.window.clearTimeout = () => {};
+  try {
+    await import('../src/userscript.js?durable-cap-' + Date.now());
+    dom.window.document.getElementById('x1080x-ex-open-page').click();
+    await waitFor(() => values.has('x1080x-ex:visited-id-v3:resource:newItem'),
+      'new page click must write its own independent marker');
+    assert.ok(values.has('x1080x-ex:visited-id-v3:resource:oldItem'),
+      'history-limit eviction must preserve prior saved IDs');
+    assert.deepEqual(values.get('x1080x-ex:1080xin-resource-history'), ['resource:newItem']);
+  } finally {
+    dom.window.setTimeout = oldTimeout;
+    dom.window.clearTimeout = oldClearTimeout;
+    restore();
+    dom.window.close();
+  }
+});
+
+test('two JavClub background tabs keep both visits even if each sees a stale recent array', async () => {
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-history', []],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
+  ]);
+  const oldList = globalThis.GM_listValues;
+  globalThis.GM_listValues = () => [...store.keys()];
+  try {
+    for (const id of ['1013749', '1013750']) {
+      const dom = new JSDOM('<!doctype html><body class="single-post"><main id="genesis-content">'
+        + '<article class="entry"><h1 class="entry-title">Sample article</h1></article></main></body>',
+      { url: 'https://javclub.me/' + id + '.html' });
+      const restore = installDomGlobals(dom.window);
+      // Both tabs read the same stale array snapshot, so the final array
+      // contains only the most recently written item.
+      globalThis.GM_getValue = (key, fallback) => key === 'x1080x-ex:hdblog-batch-open-history'
+        ? [] : store.has(key) ? store.get(key) : fallback;
+      globalThis.GM_setValue = (key, value) => store.set(key, value);
+      try {
+        await import('../src/userscript.js?javclub-race-' + id + '-' + Date.now());
+      } finally { restore(); dom.window.close(); }
+    }
+    assert.deepEqual(store.get('x1080x-ex:hdblog-batch-open-history'), ['post:1013750']);
+    for (const id of ['1013749', '1013750']) {
+      assert.ok(store.has('x1080x-ex:visited-id-v3:post:' + id), 'durable marker ' + id);
+      assert.ok(store.has('x1080x-ex:hdblog-visited-id-v2:post:' + id), 'older JavClub marker ' + id);
+    }
+    const list = new JSDOM('<!doctype html><main id="genesis-content">'
+      + '<article class="entry"><h2 class="entry-title"><a href="/1013749.html">A</a></h2></article>'
+      + '<article class="entry"><h2 class="entry-title"><a href="/1013750/slug/">B</a></h2></article>'
+      + '</main>', { url: 'https://javclub.me/category/av-censored/' });
+    const restoreList = installDomGlobals(list.window);
+    globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+    globalThis.GM_listValues = () => [...store.keys()];
+    try {
+      await import('../src/userscript.js?javclub-race-list-' + Date.now());
+      for (const link of list.window.document.querySelectorAll('article.entry .entry-title a[href]')) {
+        assert.equal(link.getAttribute('data-x1080x-batch-opened'), '1');
+      }
+      assert.equal(list.window.document.getElementById('x1080x-ex-open-page').textContent, '批量打开未浏览（0）');
+    } finally { restoreList(); list.window.close(); }
+  } finally {
+    if (oldList === undefined) delete globalThis.GM_listValues;
+    else globalThis.GM_listValues = oldList;
+  }
+});
+
+test('JavClub canonical and short URL variants still record their matching post IDs', async () => {
+  const store = new Map([['x1080x-ex:hdblog-batch-open-history-enabled', true]]);
+  for (const url of ['https://javclub.me/1013766/', 'https://javclub.me/?p=1013766']) {
+    const dom = new JSDOM('<!doctype html><body class="single-post">'
+      + '<main id="genesis-content"><article class="entry"><h1 class="entry-title">Example</h1></article></main></body>', { url });
+    const restore = installDomGlobals(dom.window);
+    globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+    globalThis.GM_setValue = (key, value) => store.set(key, value);
+    try {
+      await import('../src/userscript.js?javclub-url-' + Date.now() + '-' + url.length);
+      assert.ok(store.has('x1080x-ex:visited-id-v3:post:1013766'));
+      assert.ok(store.get('x1080x-ex:hdblog-batch-open-history').includes('post:1013766'));
+    } finally { restore(); dom.window.close(); }
+  }
+});
+
+test('JavClub re-marks late-rendered and replaced article cards without full reload', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><main id="genesis-content"></main></body></html>',
+    { url: 'https://javclub.me/category/av-censored/' });
+  const restore = installDomGlobals(dom.window);
+  const store = new Map([
+    ['x1080x-ex:hdblog-batch-open-history-enabled', true],
+    ['x1080x-ex:hdblog-batch-open-unopened-only', true],
+    ['x1080x-ex:hdblog-batch-open-history', ['post:1013749', 'post:1013750']],
+  ]);
+  globalThis.GM_getValue = (key, fallback) => store.has(key) ? store.get(key) : fallback;
+  globalThis.GM_setValue = (key, value) => store.set(key, value);
+  try {
+    await import('../src/userscript.js?javclub-late-cards-' + Date.now());
+    const main = dom.window.document.querySelector('main#genesis-content');
+    assert.equal(dom.window.document.getElementById('x1080x-ex-open-page'), null);
+    main.innerHTML = '<article class="entry"><h3 class="entry-title"><a href="/1013749.html">Late</a></h3></article>';
+    await waitFor(() => main.querySelector('a[href="/1013749.html"]')?.getAttribute('data-x1080x-batch-opened') === '1',
+      'late mounted article must be re-marked');
+    assert.ok(dom.window.document.getElementById('x1080x-ex-open-page'));
+    main.innerHTML = '<article class="entry"><div class="entry-title"><a href="/1013750/roe-573/">Replaced</a></div></article>';
+    await waitFor(() => main.querySelector('a[href="/1013750/roe-573/"]')?.getAttribute('data-x1080x-batch-opened') === '1',
+      'replaced cards must be marked without navigating or switching tabs');
+    await waitFor(() => dom.window.document.getElementById('x1080x-ex-open-page')?.textContent === '批量打开未浏览（0）',
+      'counter must follow replaced cards');
+  } finally { restore(); dom.window.close(); }
 });

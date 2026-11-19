@@ -55,6 +55,7 @@ import {
   compatibleHistoryKeys,
 } from './history-migration.js';
 import { planHistoryRecovery } from './history-recovery.js';
+import { HISTORY_LEDGER_REVISION_KEY, durableVisitMarkerKey, listedDurableVisitIds, readRecentHistoryArray, wordpressPostIdFromUrl } from './history-ledger.js';
 import { showHistoryImportDialog } from './history-import.js';
 import { alternateImageUrls } from './image-fallbacks.js';
 import { saveDownloadBlob } from './blob-download.js';
@@ -372,8 +373,8 @@ function batchOpenHistoryId(value) {
       const pathMatch = url.pathname.match(/(?:thread|viewthread)[-_](\d+)/i);
       return pathMatch ? `tid:${pathMatch[1]}` : '';
     }
-    const postMatch = url.pathname.match(/^\/(\d+)(?:\/|\.html$)/i);
-    if (postMatch) return `post:${postMatch[1]}`;
+    const postId = wordpressPostIdFromUrl(url.href);
+    if (postId) return `post:${postId}`;
     return `url:${url.pathname}${url.search}`;
   } catch {
     return '';
@@ -408,19 +409,8 @@ function rememberJavclubVisitMarker(id) {
   // Writing this independent key first protects against later lost-array writes.
   GM_setValue(key, Date.now());
   GM_setValue(JAVCLUB_VISIT_LEDGER_REVISION, `${id}:${Date.now()}:${Math.random()}`);
-  if (typeof GM_listValues !== 'function' || typeof GM_deleteValue !== 'function') return;
-  // Respect the record limit without repeatedly scanning timestamps for normal
-  // small histories. Pruning only applies when the independent ledger is full.
-  const ids = listJavclubVisitMarkers();
-  const limit = batchOpenHistoryLimit();
-  if (ids.length <= limit) return;
-  const oldest = ids.map((entry) => {
-    const entryKey = javclubVisitMarkerKey(entry);
-    return { entryKey, timestamp: Number(GM_getValue(entryKey, 0)) || 0 };
-  }).sort((a, b) => a.timestamp - b.timestamp);
-  for (const entry of oldest.slice(0, ids.length - limit)) {
-    if (entry.entryKey !== key) GM_deleteValue(entry.entryKey);
-  }
+  // Independent records are not pruned with the bounded recent-history cache.
+  // Otherwise previously opened articles become unmarked over time.
 }
 
 function forgetJavclubVisitMarker(id) {
@@ -431,16 +421,41 @@ function forgetJavclubVisitMarker(id) {
   }
 }
 
+function listDurableVisitMarkers() {
+  if (typeof GM_listValues !== 'function') return [];
+  try { return listedDurableVisitIds(GM_listValues()); } catch { return []; }
+}
+
+function rememberDurableVisitMarker(id) {
+  const key = durableVisitMarkerKey(id);
+  if (!key || typeof GM_setValue !== 'function') return false;
+  GM_setValue(key, Date.now());
+  GM_setValue(HISTORY_LEDGER_REVISION_KEY, `${id}:${Date.now()}:${Math.random()}`);
+  return true;
+}
+
+function forgetDurableVisitMarker(id) {
+  const key = durableVisitMarkerKey(id);
+  if (!key || typeof GM_deleteValue !== 'function') return;
+  GM_deleteValue(key);
+  GM_setValue(HISTORY_LEDGER_REVISION_KEY, `removed:${id}:${Date.now()}`);
+}
+
 function batchThreadHistoryKeys(thread) {
   if (!thread) return [];
   const id = batchOpenHistoryId(thread.url);
-  const title = thread.link?.getAttribute('title') || thread.link?.textContent || '';
-  return [...new Set([id, ...historyAliasesForTitle(title)].filter(Boolean))];
+  // Tooltips may hide the actual code in link text; inspect both for aliases.
+  const titles = [thread.link?.textContent, thread.link?.getAttribute('title')]
+    .filter((value) => typeof value === 'string' && value.trim());
+  return [...new Set([id, ...titles.flatMap(historyAliasesForTitle)].filter(Boolean))];
 }
 
 function isBatchThreadVisited(thread, history = new Set(readBatchOpenHistory())) {
   return batchThreadHistoryKeys(thread).some((key) => (
     history.has(key)
+    || (Boolean(durableVisitMarkerKey(key))
+      && typeof GM_getValue === 'function'
+      && GM_getValue(durableVisitMarkerKey(key), null) !== null)
     || (batchOpenHistoryConfig()?.kind === 'hdblog'
       && Boolean(javclubVisitMarkerKey(key))
       && typeof GM_getValue === 'function'
@@ -452,7 +467,7 @@ function readBatchOpenHistory() {
   const config = batchOpenHistoryConfig();
   if (!config || typeof GM_getValue !== 'function') return [];
   const rawStored = GM_getValue(config.historyKey, []);
-  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
+  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : readRecentHistoryArray(rawStored);
   // Previous beta releases temporarily saved modern resource IDs in the old key.
   const legacy = config.modern ? compatibleHistoryKeys(GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, [])) : [];
   const aliases = config.kind === 'agaghhh'
@@ -462,8 +477,14 @@ function readBatchOpenHistory() {
     ? [...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {})),
       ...resolvedLegacyHistoryAliases(GM_getValue(AGAGHHH_HISTORY_RECOVERED_KEY, {}))]
     : [];
+  const independentVisits = listDurableVisitMarkers().filter((id) => (
+    config.kind === 'hdblog'
+      ? /^(?:post:\d+|url:\/)/.test(id)
+      : config.modern ? /^resource:[a-z0-9]+$/i.test(id) : /^tid:\d+$/.test(id)
+  ));
   const values = [
     ...(Array.isArray(stored) ? stored : []),
+    ...independentVisits,
     ...(config.kind === 'hdblog' ? listJavclubVisitMarkers() : []),
     ...(Array.isArray(legacy) ? legacy.filter(isUsableHistoryAlias) : []),
     ...(Array.isArray(aliases) ? aliases : []),
@@ -545,9 +566,10 @@ async function migrateLegacyHistory({ limit = LEGACY_HISTORY_AUTO_MIGRATION_LIMI
   const legacy = GM_getValue(AGAGHHH_BATCH_OPEN_HISTORY_KEY, []);
   const legacyKeys = compatibleHistoryKeys(legacy);
   saveHistoryAliases(legacyKeys.filter(isUsableHistoryAlias));
-  const tids = [...new Set(legacyKeys
-    .map(legacyTidFromHistoryValue)
-    .filter(Boolean))];
+  const tids = [...new Set([
+    ...legacyKeys.map(legacyTidFromHistoryValue),
+    ...listDurableVisitMarkers().filter((id) => /^tid:\d+$/.test(id)).map((id) => id.slice(4)),
+  ].filter(Boolean))];
   const state = GM_getValue(AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, {});
   const attemptedAt = state?.resolverVersion === 2 && state?.attemptedAt && typeof state.attemptedAt === 'object'
     ? { ...state.attemptedAt } : {};
@@ -742,12 +764,19 @@ function rememberBatchOpenedThread(url, titleText = '') {
   if (!config || !isBatchOpenHistoryEnabled() || typeof GM_setValue !== 'function') return false;
   const id = batchOpenHistoryId(url);
   if (!id) return false;
+  // Persist independently before the non-atomic read/modify/write array.
+  rememberDurableVisitMarker(id);
   if (config.kind === 'hdblog') rememberJavclubVisitMarker(id);
   const rawStored = GM_getValue(config.historyKey, []);
-  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : rawStored;
+  const stored = config.kind === 'agaghhh' ? compatibleHistoryKeys(rawStored) : readRecentHistoryArray(rawStored);
   const history = (Array.isArray(stored) ? stored : []).filter((item) => item !== id);
   history.push(id);
-  GM_setValue(config.historyKey, history.slice(-batchOpenHistoryLimit()));
+  const limit = batchOpenHistoryLimit();
+  // Promote every evicted ID to independent storage before the cache trims it.
+  for (const evicted of history.slice(0, Math.max(0, history.length - limit))) {
+    rememberDurableVisitMarker(evicted);
+  }
+  GM_setValue(config.historyKey, history.slice(-limit));
 
   let title = titleText;
   try {
@@ -773,8 +802,12 @@ function applyBatchOpenHistory(document) {
   }
   const css = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }
 .thread-list .resource-title:visited, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"],
-.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
-  if (style.textContent !== css) style.textContent = css;
+.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }
+main#genesis-content article.entry .entry-title a:visited,
+main#genesis-content article.entry .entry-title a[${BATCH_OPEN_HISTORY_ATTR}="1"],
+main#genesis-content article.entry .entry-title a:visited *,
+main#genesis-content article.entry .entry-title a[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
+    if (style.textContent !== css) style.textContent = css;
 
   document.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`)
     .forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
@@ -791,12 +824,12 @@ function applyBatchOpenHistory(document) {
   return marked;
 }
 
-// React to visits recorded in other tabs without requiring the user to reload
-// the JavClub listing. Focus/pageshow also cover suspended background tabs.
-function installJavclubHistoryRefresh(document) {
-  if (document.documentElement?.dataset.x1080xJavclubHistoryRefresh) return;
-  if (batchOpenHistoryConfig()?.kind !== 'hdblog' || !isBatchOpenPage()) return;
-  document.documentElement.dataset.x1080xJavclubHistoryRefresh = '1';
+// Refresh all supported list pages after other tabs record a visit.
+function installBatchHistoryRefresh(document) {
+  if (document.documentElement?.dataset.x1080xBatchHistoryRefresh) return;
+  const config = batchOpenHistoryConfig();
+  if (!config || !isBatchOpenPage()) return;
+  document.documentElement.dataset.x1080xBatchHistoryRefresh = '1';
   let pending = null;
   const refresh = () => {
     if (pending !== null) return;
@@ -816,9 +849,13 @@ function installJavclubHistoryRefresh(document) {
     if (!document.hidden) refresh();
   });
   if (typeof GM_addValueChangeListener === 'function') {
-    for (const key of [HDBLOG_BATCH_OPEN_HISTORY_KEY, JAVCLUB_VISIT_LEDGER_REVISION]) {
-      GM_addValueChangeListener(key, refresh);
-    }
+    const watchedKeys = [config.historyKey, HISTORY_LEDGER_REVISION_KEY];
+    if (config.kind === 'hdblog') watchedKeys.push(JAVCLUB_VISIT_LEDGER_REVISION);
+    if (config.modern) watchedKeys.push(
+      AGAGHHH_BATCH_OPEN_HISTORY_KEY, AGAGHHH_HISTORY_ALIASES_KEY,
+      AGAGHHH_LEGACY_HISTORY_MIGRATION_KEY, AGAGHHH_HISTORY_RECOVERED_KEY
+    );
+    for (const key of watchedKeys) GM_addValueChangeListener(key, refresh);
   }
 }
 
@@ -1278,6 +1315,7 @@ async function openCurrentPageThreads(button) {
     const historyId = batchOpenHistoryId(event.url);
     if (historyId && !state.previousHistory.has(historyId)) {
       const config = batchOpenHistoryConfig();
+      forgetDurableVisitMarker(historyId);
       if (config?.kind === 'hdblog') forgetJavclubVisitMarker(historyId);
       if (config && typeof GM_getValue === 'function' && typeof GM_setValue === 'function') {
         const raw = GM_getValue(config.historyKey, []);
@@ -2510,7 +2548,9 @@ function observeModernBoard() {
   let previousUrl = location.href;
   let previousHistoryTitle = '';
   const rememberCurrentThread = () => {
-    if (!isThreadPage() || !isBatchOpenHistoryEnabled()) return;
+    if (!isThreadPage() || !isBatchOpenHistoryEnabled() || isCloudflareChallengePage(document)) return;
+    // React can change the URL before the destination thread has hydrated.
+    if (!document.querySelector('.thread-header h1, #first-post, #thread_subject')) return;
     const title = getThreadHeadingText(document);
     const key = `${location.href}\n${title}`;
     if (key === previousHistoryTitle) return;
@@ -2578,6 +2618,47 @@ function observeModernBoard() {
     detectRouteChange();
     schedule();
   });
+  // pushState/replaceState do not trigger popstate; cached SPA routes can
+  // change without an observable list mutation.
+  for (const method of ['pushState', 'replaceState']) {
+    const original = window.history[method];
+    if (typeof original !== 'function') continue;
+    window.history[method] = function (...args) {
+      const result = original.apply(this, args);
+      if (detectRouteChange()) schedule();
+      return result;
+    };
+  }
+}
+
+// JavClub is usually server-rendered, but archive/search results can be
+// replaced or appended after document-idle. Re-mark new anchors without
+// watching script-owned attributes, which would cause a mutation loop.
+function observeJavclubListing() {
+  if (!isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me'])
+    || isHdblogArticleUrl(location.href)
+    || !document.body || typeof window.MutationObserver !== 'function') return;
+  let timer = null;
+  const refresh = () => {
+    timer = null;
+    if (!isBatchOpenPage()) return;
+    applyBatchOpenHistory(document);
+    if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
+    installBatchHistoryRefresh(document);
+    const button = document.getElementById(BATCH_BUTTON_ID);
+    if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+  };
+  const observer = new window.MutationObserver((mutations) => {
+    const hasNewEntries = mutations.some((mutation) => [...mutation.addedNodes].some((node) => {
+      if (node.nodeType !== 1) return false;
+      return node.matches?.('main#genesis-content, article.entry, article.entry .entry-title, article.entry .entry-title a[href]')
+        || Boolean(node.querySelector?.('main#genesis-content article.entry .entry-title a[href], article.entry .entry-title a[href]'));
+    }));
+    if (!hasNewEntries) return;
+    if (timer !== null) window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 100);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 
 registerSettingsMenu();
@@ -2590,7 +2671,9 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
     || GM_getValue(HDBLOG_EXPAND_PREVIEW_IMAGES_KEY, true) !== false;
   if (expandHdblogPreview) expandHdblogPreviewImages();
   if (isThreadPage()) {
-    if (isAgaghhhHost(location) && isBatchOpenHistoryEnabled()) {
+    if (isAgaghhhHost(location) && isBatchOpenHistoryEnabled()
+      && (!/^\/resources\/[a-z0-9]+\/?$/i.test(location.pathname)
+        || document.querySelector('.thread-header h1, #first-post'))) {
       rememberBatchOpenedThread(location.href);
     }
     addDownloadButton();
@@ -2604,10 +2687,11 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   if (isBatchOpenPage()) {
     applyBatchOpenHistory(document);
     if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
-    installJavclubHistoryRefresh(document);
+    installBatchHistoryRefresh(document);
   }
   startAutomaticLegacyHistoryMigration();
   observeModernBoard();
+  observeJavclubListing();
   if (/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname) && readPendingModernBoardResume()) {
     // The page might already be hydrated at document-idle. Otherwise the
     // MutationObserver resumes as soon as React renders the list.

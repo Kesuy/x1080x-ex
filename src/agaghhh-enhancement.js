@@ -1166,16 +1166,8 @@ export function openX1080xSettingsPanel(document = globalThis.document, { embedd
       GM_setValue(AGAGHHH_BATCH_PROGRESS_LOCATOR_ENABLED_KEY, batchProgressLocatorInput.checked);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_LIMIT_KEY, batchHistoryLimit);
       GM_setValue(AGAGHHH_BATCH_OPEN_HISTORY_COLOR_KEY, batchHistoryColorInput.value);
-      if (typeof GM_getValue === 'function') {
-        const modern = document.location?.hostname !== 'agaghhh.cc'
-          && !/^\/(?:forum|search)\.php$/i.test(document.location?.pathname || '');
-        const historyKey = modern ? MODERN_RESOURCE_HISTORY_KEY : AGAGHHH_BATCH_OPEN_HISTORY_KEY;
-        const existingHistory = GM_getValue(historyKey, []);
-        if (Array.isArray(existingHistory) && existingHistory.length > batchHistoryLimit) {
-          GM_setValue(historyKey, existingHistory.slice(-batchHistoryLimit));
-        }
-        // Do not trim old numeric TIDs when editing the redesigned site's settings.
-      }
+      // Saving preferences never prunes existing history. The limit bounds only
+      // the recent array cache when subsequent visits are appended.
       GM_setValue(AGAGHHH_DOWNLOAD_ENABLED_KEY, downloadInput.checked);
       GM_setValue(AGAGHHH_DOWNLOAD_GUARD_ENABLED_KEY, downloadGuardInput.checked);
       GM_setValue(AGAGHHH_CROSS_SEARCH_ENABLED_KEY, crossSearchInput.checked);
