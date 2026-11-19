@@ -2627,6 +2627,36 @@ function observeModernBoard() {
   }
 }
 
+// JavClub is usually server-rendered, but archive/search results can be
+// replaced or appended after document-idle. Re-mark new anchors without
+// watching script-owned attributes, which would cause a mutation loop.
+function observeJavclubListing() {
+  if (!isAllowedHost(location.hostname, ['javclub.me', 'hdblog.me'])
+    || isHdblogArticleUrl(location.href)
+    || !document.body || typeof window.MutationObserver !== 'function') return;
+  let timer = null;
+  const refresh = () => {
+    timer = null;
+    if (!isBatchOpenPage()) return;
+    applyBatchOpenHistory(document);
+    if (isBatchOpenEnabledForCurrentHost()) addBatchOpenButton();
+    installBatchHistoryRefresh(document);
+    const button = document.getElementById(BATCH_BUTTON_ID);
+    if (button && !batchOpenState) setBatchButtonIdle(button, collectBatchOpenThreads(document).length);
+  };
+  const observer = new window.MutationObserver((mutations) => {
+    const hasNewEntries = mutations.some((mutation) => [...mutation.addedNodes].some((node) => {
+      if (node.nodeType !== 1) return false;
+      return node.matches?.('main#genesis-content, article.entry, article.entry .entry-title, article.entry .entry-title a[href]')
+        || Boolean(node.querySelector?.('main#genesis-content article.entry .entry-title a[href], article.entry .entry-title a[href]'));
+    }));
+    if (!hasNewEntries) return;
+    if (timer !== null) window.clearTimeout(timer);
+    timer = window.setTimeout(refresh, 100);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
 registerSettingsMenu();
 
 if (isAllowedHost(location.hostname, getConfiguredDomains())) {
@@ -2657,6 +2687,7 @@ if (isAllowedHost(location.hostname, getConfiguredDomains())) {
   }
   startAutomaticLegacyHistoryMigration();
   observeModernBoard();
+  observeJavclubListing();
   if (/^\/boards\/[a-z0-9]+\/?$/i.test(location.pathname) && readPendingModernBoardResume()) {
     // The page might already be hydrated at document-idle. Otherwise the
     // MutationObserver resumes as soon as React renders the list.
