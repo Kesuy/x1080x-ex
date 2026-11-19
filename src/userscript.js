@@ -802,8 +802,12 @@ function applyBatchOpenHistory(document) {
   }
   const css = `a:visited, a[${BATCH_OPEN_HISTORY_ATTR}="1"] { color: ${batchOpenHistoryColor()} !important; }
 .thread-list .resource-title:visited, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"],
-.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
-  if (style.textContent !== css) style.textContent = css;
+.thread-list .resource-title:visited *, .thread-list .resource-title[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }
+main#genesis-content article.entry .entry-title a:visited,
+main#genesis-content article.entry .entry-title a[${BATCH_OPEN_HISTORY_ATTR}="1"],
+main#genesis-content article.entry .entry-title a:visited *,
+main#genesis-content article.entry .entry-title a[${BATCH_OPEN_HISTORY_ATTR}="1"] * { color: ${batchOpenHistoryColor()} !important; }`;
+    if (style.textContent !== css) style.textContent = css;
 
   document.querySelectorAll(`a[${BATCH_OPEN_HISTORY_ATTR}="1"]`)
     .forEach((link) => link.removeAttribute(BATCH_OPEN_HISTORY_ATTR));
