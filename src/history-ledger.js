@@ -25,3 +25,22 @@ export function readRecentHistoryArray(value) {
   }
   return Array.isArray(value) ? value.filter((id) => typeof id === 'string') : [];
 }
+
+/** Canonical WordPress post ID shared by JavClub list and detail pages.
+ * Support old HDblog permalinks as well as WordPress ?p=ID links.
+ * The URL's host must be checked by the caller before treating it as a visit.
+ */
+export function wordpressPostIdFromUrl(value) {
+  try {
+    const url = new URL(value);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return '';
+    const path = url.pathname;
+    const match = path.match(/^\/(\d+)(?:\.html)?\/?$/i)
+      || path.match(/^\/(\d+)\/[^/]+\/?$/i);
+    if (match) return match[1];
+    const queryId = /^\/$/.test(path) ? url.searchParams.get('p') : null;
+    return queryId && /^\d+$/.test(queryId) ? queryId : '';
+  } catch {
+    return '';
+  }
+}
