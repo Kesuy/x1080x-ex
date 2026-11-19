@@ -530,3 +530,16 @@ test('SVSHA-036 modern resource retains code and numbered image filenames with J
     dom.window.close();
   }
 });
+
+test('JavClub list parser recognizes entry-title links outside an entry-header', () => {
+  const dom = new JSDOM('<!doctype html><html><body><main id="genesis-content">'
+    + '<article class="entry"><h3 class="entry-title"><a href="/1013750/roe-573/">ROE-573</a></h3></article>'
+    + '<article class="entry"><div class="entry-title"><a href="/1013749.html">START-662</a></div></article>'
+    + '</main><aside><article class="entry"><h2 class="entry-title"><a href="/999999.html">sidebar</a></h2></article></aside>'
+    + '</body></html>', { url: 'https://javclub.me/category/av-censored/' });
+  assert.deepEqual(collectForumThreadLinks(dom.window.document).map(({url}) => url), [
+    'https://javclub.me/1013750/roe-573/',
+    'https://javclub.me/1013749.html',
+  ]);
+  dom.window.close();
+});
