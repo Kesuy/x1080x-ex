@@ -1867,6 +1867,8 @@ test('JavClub concurrent tabs keep separately keyed records even if the shared h
     const second = doc.querySelector('a[href="/1013750/roe-573/"]');
     assert.equal(first.getAttribute('data-x1080x-batch-opened'), '1');
     assert.equal(second.getAttribute('data-x1080x-batch-opened'), null);
+    assert.match(doc.getElementById('x1080x-ex-batch-open-history-style').textContent,
+      /article\.entry \.entry-title a\[data-x1080x-batch-opened="1"\] \*/);
     // Simulate another background tab having persisted its own visit first,
     // then overwriting the shared array with an older snapshot.
     store.set('x1080x-ex:hdblog-visited-id-v2:post:1013750', Date.now());
